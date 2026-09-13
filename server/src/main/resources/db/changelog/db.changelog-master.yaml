@@ -1,0 +1,29 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0001-control-plane
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0001-control-plane.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0002-raw-event
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0002-raw-event.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0003-analytics-facts
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0003-analytics-facts.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0004-analytics-aggregates
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0004-analytics-aggregates.sql
+            relativeToChangelogFile: false

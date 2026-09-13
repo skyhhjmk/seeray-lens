@@ -1,0 +1,10 @@
+.gradle/
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+tracker/node_modules/
+tracker/dist/
+.idea/
+.vscode/
+.env
