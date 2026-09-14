@@ -55,4 +55,20 @@ public class AnalyticsResource {
         var range = analytics.range(site, from, to);
         return analytics.events(site, range);
     }
+
+    @GET
+    @Path("/visitors")
+    public AnalyticsQueryService.VisitorOverview visitors(
+            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+        var range = analytics.range(site, from, to);
+        return analytics.visitors(site, range);
+    }
+
+    @GET
+    @Path("/goals")
+    public List<AnalyticsQueryService.Goal> goals(
+            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+        var range = analytics.range(site, from, to);
+        return analytics.goals(site, range);
+    }
 }

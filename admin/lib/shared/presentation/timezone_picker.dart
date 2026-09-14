@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/i18n/app_i18n.dart';
+
 /// Searchable convenience choices; the backend remains the authority for the
 /// complete IANA timezone database and validates manually entered values.
 class TimezonePicker extends StatelessWidget {
@@ -31,10 +33,11 @@ class TimezonePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DropdownMenu<String>(
+    expandedInsets: EdgeInsets.zero,
     controller: controller,
     enableFilter: true,
     requestFocusOnTap: true,
-    label: const Text('IANA timezone'),
+    label: Text(context.tr('IANA timezone', 'IANA 时区')),
     dropdownMenuEntries: _zones
         .map((zone) => DropdownMenuEntry<String>(value: zone, label: zone))
         .toList(growable: false),

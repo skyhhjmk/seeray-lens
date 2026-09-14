@@ -34,6 +34,7 @@ public class AnalyticsAggregationService {
             pages(c, siteId, from, to, timezone);
             traffic(c, siteId, from, to, timezone);
             events(c, siteId, from, to, timezone);
+            goals(c, siteId, from, to, timezone);
         } catch (SQLException e) {
             throw new IllegalStateException("Could not rebuild analytics aggregates", e);
         }
@@ -60,7 +61,11 @@ public class AnalyticsAggregationService {
 
     private static void delete(Connection c, UUID site, LocalDate from, LocalDate to) throws SQLException {
         for (String table : List.of(
-                "analytics_site_daily", "analytics_page_daily", "analytics_traffic_daily", "analytics_event_daily")) {
+                "analytics_site_daily",
+                "analytics_page_daily",
+                "analytics_traffic_daily",
+                "analytics_event_daily",
+                "analytics_goal_daily")) {
             try (PreparedStatement p =
                     c.prepareStatement("delete from " + table + " where site_id=? and business_date between ? and ?")) {
                 p.setObject(1, site);
@@ -116,6 +121,24 @@ public class AnalyticsAggregationService {
                 insert into analytics_event_daily(site_id,business_date,event_type,event_count)
                 select * from (select site_id, ((case when occurred_at < received_at - interval '24 hours' or occurred_at > received_at + interval '24 hours' then received_at else occurred_at end) at time zone ?)::date business_date, event_type, count(*) event_count
                 from raw_event where site_id=? group by site_id,business_date,event_type) events
+                where business_date between ? and ?
+                """;
+        try (PreparedStatement p = c.prepareStatement(sql)) {
+            p.setString(1, tz);
+            p.setObject(2, site);
+            p.setObject(3, from);
+            p.setObject(4, to);
+            p.executeUpdate();
+        }
+    }
+
+    private static void goals(Connection c, UUID site, LocalDate from, LocalDate to, String tz) throws SQLException {
+        String sql =
+                """
+                insert into analytics_goal_daily(site_id,business_date,goal_name,goal_count)
+                select * from (select site_id, ((case when occurred_at < received_at - interval '24 hours' or occurred_at > received_at + interval '24 hours' then received_at else occurred_at end) at time zone ?)::date business_date,
+                coalesce(nullif(event_data->>'name',''),nullif(event_data->'data'->>'name',''),'Unnamed goal') goal_name, count(*) goal_count
+                from raw_event where site_id=? and event_type='goal' group by site_id,business_date,goal_name) goals
                 where business_date between ? and ?
                 """;
         try (PreparedStatement p = c.prepareStatement(sql)) {

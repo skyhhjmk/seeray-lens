@@ -4,11 +4,19 @@ import 'package:go_router/go_router.dart';
 
 import '../application/site_controller.dart';
 import '../../../shared/presentation/timezone_picker.dart';
+import '../../../core/i18n/app_i18n.dart';
+import '../../../shared/presentation/app_back_button.dart';
+import '../../../shared/presentation/page_help_button.dart';
 
 class SiteDetailPage extends ConsumerStatefulWidget {
-  const SiteDetailPage({required this.siteId, super.key});
+  const SiteDetailPage({
+    required this.siteId,
+    this.embedded = false,
+    super.key,
+  });
 
   final String siteId;
+  final bool embedded;
 
   @override
   ConsumerState<SiteDetailPage> createState() => _SiteDetailPageState();
@@ -61,9 +69,9 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
         'aggregateRetentionDays': int.parse(_aggregate.text),
       });
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Site saved')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.tr('Site saved', '站点已保存'))),
+        );
       }
     } on Exception catch (error) {
       if (mounted) {
@@ -83,11 +91,70 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
     final sites = ref.watch(sitesProvider).value ?? const <Site>[];
     final site = sites.where((item) => item.id == widget.siteId).firstOrNull;
     if (site == null) {
-      return const Scaffold(body: Center(child: Text('Site not found')));
+      return Scaffold(
+        body: Center(child: Text(context.tr('Site not found', '未找到站点'))),
+      );
     }
     _load(site);
     return Scaffold(
-      appBar: AppBar(title: Text(site.name)),
+      appBar: widget.embedded
+          ? null
+          : AppBar(
+              backgroundColor: const Color(0xff202b3b),
+              foregroundColor: Colors.white,
+              leading: AppBackButton(fallback: '/sites/${site.id}/dashboard'),
+              title: Text(site.name),
+              actions: const [
+                PageHelpButton(
+                  englishTitle: 'Site settings',
+                  chineseTitle: '站点设置',
+                  englishBody:
+                      'The site time zone determines reporting dates. Keep the tracking ID private to your integration, and allow only domains that are permitted to send events.',
+                  chineseBody: '站点时区决定统计日期。请仅在集成中使用追踪 ID，并只允许获准发送事件的域名。',
+                ),
+                LanguageMenu(),
+              ],
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(48),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(left: 12, bottom: 8),
+                  child: Row(
+                    children: [
+                      _SiteTab(
+                        context.tr('Dashboard', '仪表盘'),
+                        '/sites/${site.id}/dashboard',
+                      ),
+                      _SiteTab(
+                        context.tr('Visitors', '访客'),
+                        '/sites/${site.id}/visitors',
+                      ),
+                      _SiteTab(
+                        context.tr('Acquisition', '流量获取'),
+                        '/sites/${site.id}/acquisition',
+                      ),
+                      _SiteTab(
+                        context.tr('Behaviour', '用户行为'),
+                        '/sites/${site.id}/behaviour',
+                      ),
+                      _SiteTab(
+                        context.tr('Goals', '目标'),
+                        '/sites/${site.id}/goals',
+                      ),
+                      _SiteTab(
+                        context.tr('Integration', '集成'),
+                        '/sites/${site.id}/integration',
+                      ),
+                      _SiteTab(
+                        context.tr('Settings', '站点设置'),
+                        '/sites/${site.id}',
+                        selected: true,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 680),
@@ -101,44 +168,53 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
                   children: [
                     TextFormField(
                       controller: _name,
-                      decoration: const InputDecoration(labelText: 'Site name'),
+                      decoration: InputDecoration(
+                        labelText: context.tr('Site name', '站点名称'),
+                      ),
                       validator: _required,
                     ),
                     TimezonePicker(controller: _timezone),
                     TextField(
                       controller: _language,
-                      decoration: const InputDecoration(
-                        labelText: 'Default language',
+                      decoration: InputDecoration(
+                        labelText: context.tr('Default language', '默认语言'),
                       ),
                     ),
                     SwitchListTile(
                       value: _enabled,
                       onChanged: (value) => setState(() => _enabled = value),
-                      title: const Text('Tracking enabled'),
+                      title: Text(context.tr('Tracking enabled', '启用追踪')),
                     ),
                     TextFormField(
                       controller: _raw,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Raw retention days',
+                      decoration: InputDecoration(
+                        labelText: context.tr('Raw retention days', '原始事件保留天数'),
                       ),
                       validator: _positive,
                     ),
                     TextFormField(
                       controller: _aggregate,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Aggregate retention days',
+                      decoration: InputDecoration(
+                        labelText: context.tr(
+                          'Aggregate retention days',
+                          '聚合数据保留天数',
+                        ),
                       ),
                       validator: _positive,
                     ),
                     const SizedBox(height: 12),
-                    const Text('Tracking ID'),
+                    Text(context.tr('Tracking ID', '追踪 ID')),
                     SelectableText(site.trackingId),
                     const SizedBox(height: 20),
                     FilledButton(
                       onPressed: _saving ? null : _save,
-                      child: Text(_saving ? 'Saving…' : 'Save changes'),
+                      child: Text(
+                        _saving
+                            ? context.tr('Saving…', '正在保存…')
+                            : context.tr('Save changes', '保存修改'),
+                      ),
                     ),
                   ],
                 ),
@@ -147,14 +223,19 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
               OutlinedButton.icon(
                 onPressed: () => context.go('/sites/${site.id}/domains'),
                 icon: const Icon(Icons.language),
-                label: const Text('Allowed domains'),
+                label: Text(context.tr('Allowed domains', '允许的域名')),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => context.go('/sites/${site.id}/integration'),
+                icon: const Icon(Icons.integration_instructions_outlined),
+                label: Text(context.tr('Tracking integration', '追踪集成')),
               ),
               TextButton(
                 onPressed: () async {
                   await ref.read(sitesProvider.notifier).delete(site.id);
                   if (context.mounted) context.go('/sites');
                 },
-                child: const Text('Delete site'),
+                child: Text(context.tr('Delete site', '删除站点')),
               ),
             ],
           ),
@@ -162,6 +243,28 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
       ),
     );
   }
+}
+
+class _SiteTab extends StatelessWidget {
+  const _SiteTab(this.label, this.route, {this.selected = false});
+  final String label;
+  final String route;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: 6),
+    child: TextButton(
+      onPressed: selected ? null : () => context.go(route, extra: -1),
+      style: TextButton.styleFrom(
+        foregroundColor: selected ? Colors.white : const Color(0xffc7d1df),
+        backgroundColor: selected
+            ? const Color(0xff385172)
+            : Colors.transparent,
+      ),
+      child: Text(label),
+    ),
+  );
 }
 
 String? _required(String? value) =>

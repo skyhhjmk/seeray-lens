@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/i18n/app_i18n.dart';
+import '../../../shared/presentation/app_back_button.dart';
+import '../../../shared/presentation/page_help_button.dart';
 import '../application/domain_controller.dart';
 
 class DomainsPage extends ConsumerWidget {
@@ -12,22 +15,39 @@ class DomainsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final domains = ref.watch(domainsProvider(siteId));
     return Scaffold(
-      appBar: AppBar(title: const Text('Allowed domains')),
+      appBar: AppBar(
+        leading: AppBackButton(fallback: '/sites/$siteId'),
+        title: Text(context.tr('Allowed domains', '允许的域名')),
+        actions: const [
+          PageHelpButton(
+            englishTitle: 'Allowed domains',
+            chineseTitle: '允许的域名',
+            englishBody:
+                'Only configured domains may send browser tracking events for this site. Enable subdomains only when they are part of the same tracked website.',
+            chineseBody: '只有配置过的域名可以为本站点发送浏览器追踪事件。仅当子域名属于同一被追踪网站时，才启用子域名。',
+          ),
+          LanguageMenu(),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _add(context, ref),
         icon: const Icon(Icons.add),
-        label: const Text('Add domain'),
+        label: Text(context.tr('Add domain', '添加域名')),
       ),
       body: domains.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stackTrace) => Center(
           child: FilledButton.tonal(
             onPressed: () => ref.invalidate(domainsProvider(siteId)),
-            child: const Text('Retry loading domains'),
+            child: Text(context.tr('Retry loading domains', '重新加载域名')),
           ),
         ),
         data: (items) => items.isEmpty
-            ? const Center(child: Text('No allowed domains configured.'))
+            ? Center(
+                child: Text(
+                  context.tr('No allowed domains configured.', '尚未配置允许的域名。'),
+                ),
+              )
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: items
@@ -37,8 +57,8 @@ class DomainsPage extends ConsumerWidget {
                           title: Text(domain.host),
                           subtitle: Text(
                             domain.allowSubdomains
-                                ? 'Includes subdomains'
-                                : 'Exact host only',
+                                ? context.tr('Includes subdomains', '包含子域名')
+                                : context.tr('Exact host only', '仅精确主机名'),
                           ),
                           leading: Switch(
                             value: domain.enabled,
@@ -51,7 +71,7 @@ class DomainsPage extends ConsumerWidget {
                                 ),
                           ),
                           trailing: IconButton(
-                            tooltip: 'Delete domain',
+                            tooltip: context.tr('Delete domain', '删除域名'),
                             icon: const Icon(Icons.delete_outline),
                             onPressed: () => ref
                                 .read(domainsProvider(siteId).notifier)
@@ -145,7 +165,9 @@ class _DomainDialogState extends State<_DomainDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(
-      widget.initial == null ? 'Add allowed domain' : 'Edit allowed domain',
+      widget.initial == null
+          ? context.tr('Add allowed domain', '添加允许的域名')
+          : context.tr('Edit allowed domain', '编辑允许的域名'),
     ),
     content: Column(
       mainAxisSize: MainAxisSize.min,
@@ -153,28 +175,30 @@ class _DomainDialogState extends State<_DomainDialog> {
         TextField(
           controller: _host,
           enabled: widget.initial == null,
-          decoration: const InputDecoration(
-            labelText: 'Host or URL',
-            helperText:
-                'For example https://Example.com:443/path is saved as example.com.',
+          decoration: InputDecoration(
+            labelText: context.tr('Host or URL', '主机名或 URL'),
+            helperText: context.tr(
+              'For example https://Example.com:443/path is saved as example.com.',
+              '例如 https://Example.com:443/path 会保存为 example.com。',
+            ),
           ),
         ),
         SwitchListTile(
           value: _subdomains,
           onChanged: (value) => setState(() => _subdomains = value),
-          title: const Text('Allow subdomains'),
+          title: Text(context.tr('Allow subdomains', '允许子域名')),
         ),
         SwitchListTile(
           value: _enabled,
           onChanged: (value) => setState(() => _enabled = value),
-          title: const Text('Enabled'),
+          title: Text(context.tr('Enabled', '启用')),
         ),
       ],
     ),
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
+        child: Text(context.tr('Cancel', '取消')),
       ),
       FilledButton(
         onPressed: () {
@@ -182,7 +206,7 @@ class _DomainDialogState extends State<_DomainDialog> {
           if (host.isEmpty) return;
           Navigator.pop(context, _DomainInput(host, _subdomains, _enabled));
         },
-        child: const Text('Save'),
+        child: Text(context.tr('Save', '保存')),
       ),
     ],
   );

@@ -1,4 +1,5 @@
 enum AuthPhase {
+  restoring,
   unauthenticated,
   authenticating,
   authenticated,

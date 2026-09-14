@@ -104,6 +104,38 @@ public class AnalyticsQueryService {
                 r -> new Event(r.getString(1), r.getLong(2)));
     }
 
+    public VisitorOverview visitors(UUID site, Range range) {
+        String sql =
+                "select coalesce(sum(session_count),0),coalesce(sum(new_session_count),0),coalesce(sum(returning_session_count),0),coalesce(sum(bounced_session_count),0),coalesce(sum(session_duration_sum_ms),0),coalesce(sum(session_duration_count),0) from analytics_site_daily where site_id=? and business_date between ? and ?";
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement p = c.prepareStatement(sql)) {
+            p.setObject(1, site);
+            p.setObject(2, range.from);
+            p.setObject(3, range.to);
+            try (ResultSet r = p.executeQuery()) {
+                r.next();
+                long sessions = r.getLong(1), durationCount = r.getLong(6);
+                return new VisitorOverview(
+                        visitors(c, site, range),
+                        sessions,
+                        r.getLong(2),
+                        r.getLong(3),
+                        ratio(r.getLong(4), sessions),
+                        durationCount == 0 ? 0 : r.getLong(5) / durationCount);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not query visitors", e);
+        }
+    }
+
+    public List<Goal> goals(UUID site, Range range) {
+        return list(
+                site,
+                range,
+                "select goal_name,sum(goal_count) n from analytics_goal_daily where site_id=? and business_date between ? and ? group by goal_name order by n desc,goal_name asc",
+                r -> new Goal(r.getString(1), r.getLong(2)));
+    }
+
     private long visitors(Connection c, UUID site, Range range) throws SQLException {
         try (PreparedStatement p = c.prepareStatement(
                 "select count(distinct visitor_id) from visitor_day_fact where site_id=? and business_date between ? and ?")) {
@@ -167,4 +199,14 @@ public class AnalyticsQueryService {
     public record Traffic(String channel, String source, String medium, String campaign, long sessions) {}
 
     public record Event(String eventType, long count) {}
+
+    public record VisitorOverview(
+            long uniqueVisitors,
+            long sessions,
+            long newSessions,
+            long returningSessions,
+            double bounceRate,
+            long averageSessionDurationMs) {}
+
+    public record Goal(String name, long count) {}
 }

@@ -59,6 +59,16 @@ class WorkspaceController extends AsyncNotifier<List<Workspace>> {
     return items;
   }
 
+  Future<Workspace> create(String name) async {
+    final data = await ref
+        .read(apiProvider)
+        .request('POST', '/api/v1/workspaces', body: {'name': name});
+    final workspace = Workspace.fromJson(data as Map<String, dynamic>);
+    state = AsyncData([...(state.value ?? const <Workspace>[]), workspace]);
+    ref.read(currentWorkspaceProvider.notifier).select(workspace);
+    return workspace;
+  }
+
   void select(Workspace workspace) {
     ref.read(currentWorkspaceProvider.notifier).select(workspace);
   }

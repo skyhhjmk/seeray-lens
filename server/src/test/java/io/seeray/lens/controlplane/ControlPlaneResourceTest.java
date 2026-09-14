@@ -172,6 +172,20 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void createsWorkspaceAndMakesCreatorOwner() {
+        Tokens tokens = register("workspace" + System.nanoTime() + "@example.test");
+        given().header("Authorization", "Bearer " + tokens.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Product team\"}")
+                .post("/api/v1/workspaces")
+                .then()
+                .statusCode(201)
+                .body("name", is("Product team"))
+                .body("role", is("owner"));
+        workspace(tokens.access()).statusCode(200).body("size()", is(2));
+    }
+
+    @Test
     void collectPublishesAndPersistsSanitizedEventIdempotently() throws Exception {
         Tokens tokens = register("collect" + System.nanoTime() + "@example.test");
         var workspace = workspace(tokens.access()).extract().path("[0].id");
@@ -239,6 +253,18 @@ class ControlPlaneResourceTest {
                 assertEquals(1, result.getLong(1));
             }
         }
+    }
+
+    @Test
+    void collectorAcceptsCrossOriginBrowserPreflight() {
+        given().header("Origin", "https://windblog.example")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "content-type")
+                .options("/api/v1/collect")
+                .then()
+                .statusCode(200)
+                .header("Access-Control-Allow-Origin", "https://windblog.example")
+                .header("Access-Control-Allow-Methods", containsString("POST"));
     }
 
     @Test

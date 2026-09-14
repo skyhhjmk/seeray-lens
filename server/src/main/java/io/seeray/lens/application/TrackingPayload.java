@@ -28,6 +28,9 @@ public record TrackingPayload(
                             regexp =
                                     "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
                     String sessionId,
+            @Size(max = 120) String category,
+            @Size(max = 120) String action,
+            @Size(max = 256) String name,
             Map<String, Object> data,
             JsonNode properties) {}
 }

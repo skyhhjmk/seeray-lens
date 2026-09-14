@@ -116,6 +116,9 @@ public class TrackingResource {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("visitorId", event.visitorId() == null ? "" : event.visitorId());
         value.put("sessionId", event.sessionId() == null ? "" : event.sessionId());
+        value.put("category", event.category() == null ? "" : event.category());
+        value.put("action", event.action() == null ? "" : event.action());
+        value.put("name", event.name() == null ? "" : event.name());
         value.put(
                 "data",
                 event.data() == null && event.properties() == null

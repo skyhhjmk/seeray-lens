@@ -13,6 +13,9 @@ export interface TrackOptions {
   referrer?: string;
   durationMs?: number;
   properties?: Record<string, unknown>;
+  category?: string;
+  action?: string;
+  name?: string;
 }
 
 interface EventPayload extends TrackOptions {
@@ -59,6 +62,7 @@ export class Tracker {
   private queue: EventPayload[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private currentPageStartedAt: number | undefined;
+  private readonly pageViewUrls = new Set<string>();
 
   constructor(private readonly options: TrackerOptions) {
     this.endpoint = options.endpoint ?? '/api/v1/collect';
@@ -73,9 +77,17 @@ export class Tracker {
   }
 
   trackPageView(options: TrackOptions = {}): void {
+    const pageUrl = options.url ?? globalThis.location?.href ?? '';
+    if (this.pageViewUrls.has(pageUrl)) return;
+    this.pageViewUrls.add(pageUrl);
     const durationMs = this.currentPageStartedAt === undefined ? options.durationMs : Math.max(0, Date.now() - this.currentPageStartedAt);
     this.currentPageStartedAt = Date.now();
     this.track('page_view', { ...options, durationMs });
+  }
+
+  trackGoal(name: string, options: Omit<TrackOptions, 'name'> = {}): void {
+    if (!name.trim()) return;
+    this.track('goal', { ...options, name: name.trim() });
   }
 
   track(type: string, options: TrackOptions = {}): void {
@@ -89,6 +101,9 @@ export class Tracker {
       referrer: options.referrer ?? globalThis.document?.referrer,
       durationMs: options.durationMs,
       properties: options.properties,
+      category: options.category,
+      action: options.action,
+      name: options.name,
       visitorId: this.visitorId,
       sessionId: this.sessionId,
     };
@@ -121,16 +136,20 @@ export class Tracker {
   }
 }
 
-let singleton: Tracker | undefined;
+const trackers = new Map<string, Tracker>();
 
 export const SeeRay = {
   init(options: TrackerOptions): Tracker {
-    singleton = new Tracker(options);
-    return singleton;
+    const existing = trackers.get(options.siteId);
+    if (existing) return existing;
+    const tracker = new Tracker(options);
+    trackers.set(options.siteId, tracker);
+    return tracker;
   },
-  trackPageView(options?: TrackOptions): void { singleton?.trackPageView(options); },
-  track(type: string, options?: TrackOptions): void { singleton?.track(type, options); },
-  flush(): Promise<void> { return singleton?.flush() ?? Promise.resolve(); },
+  trackPageView(options?: TrackOptions): void { trackers.forEach((tracker) => tracker.trackPageView(options)); },
+  track(type: string, options?: TrackOptions): void { trackers.forEach((tracker) => tracker.track(type, options)); },
+  trackGoal(name: string, options?: Omit<TrackOptions, 'name'>): void { trackers.forEach((tracker) => tracker.trackGoal(name, options)); },
+  flush(): Promise<void> { return Promise.all([...trackers.values()].map((tracker) => tracker.flush())).then(() => undefined); },
 };
 
 export const init = (options: TrackerOptions): Tracker => SeeRay.init(options);

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../auth/application/auth_controller.dart';
+import '../../../core/i18n/app_i18n.dart';
+import '../../../shared/presentation/page_help_button.dart';
 import '../application/workspace_controller.dart';
 
 class WorkspacePage extends ConsumerWidget {
@@ -13,29 +15,43 @@ class WorkspacePage extends ConsumerWidget {
     final state = ref.watch(workspaceProvider);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Workspaces'),
+        title: Text(context.tr('Workspaces', '工作区')),
         actions: [
+          const PageHelpButton(
+            englishTitle: 'About workspaces',
+            chineseTitle: '工作区是什么？',
+            englishBody:
+                'A workspace is the boundary for a team or project. It owns its sites, members and API tokens. Create a separate workspace when data or access should be isolated.',
+            chineseBody:
+                '工作区是一个团队或项目的隔离边界，包含其站点、成员和 API 令牌。当数据或访问权限需要隔离时，请创建新的工作区。',
+          ),
+          const LanguageMenu(),
           TextButton(
             onPressed: () async {
               await ref.read(authProvider.notifier).logout();
-              if (context.mounted) context.go('/login');
+              if (context.mounted) context.go('/');
             },
-            child: const Text('Log out'),
+            child: Text(context.tr('Log out', '退出登录')),
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _createWorkspace(context, ref),
+        icon: const Icon(Icons.add),
+        label: Text(context.tr('Create workspace', '创建工作区')),
       ),
       body: state.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stackTrace) => Center(
           child: FilledButton.tonal(
             onPressed: () => ref.read(workspaceProvider.notifier).load(),
-            child: const Text('Retry loading workspaces'),
+            child: Text(context.tr('Retry loading workspaces', '重新加载工作区')),
           ),
         ),
         data: (items) => ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text('Choose a workspace'),
+            Text(context.tr('Choose a workspace', '选择工作区')),
             const SizedBox(height: 8),
             ...items.map(
               (workspace) => Card(
@@ -55,4 +71,71 @@ class WorkspacePage extends ConsumerWidget {
       ),
     );
   }
+
+  Future<void> _createWorkspace(BuildContext context, WidgetRef ref) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => const _CreateWorkspaceDialog(),
+    );
+    if (name == null) return;
+    try {
+      await ref.read(workspaceProvider.notifier).create(name);
+      if (context.mounted) context.go('/sites');
+    } on Exception catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$error')));
+      }
+    }
+  }
+}
+
+class _CreateWorkspaceDialog extends StatefulWidget {
+  const _CreateWorkspaceDialog();
+  @override
+  State<_CreateWorkspaceDialog> createState() => _CreateWorkspaceDialogState();
+}
+
+class _CreateWorkspaceDialogState extends State<_CreateWorkspaceDialog> {
+  final _form = GlobalKey<FormState>();
+  final _name = TextEditingController();
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(context.tr('Create workspace', '创建工作区')),
+    content: Form(
+      key: _form,
+      child: TextFormField(
+        controller: _name,
+        autofocus: true,
+        maxLength: 120,
+        decoration: InputDecoration(
+          labelText: context.tr('Workspace name', '工作区名称'),
+        ),
+        validator: (value) => value == null || value.trim().isEmpty
+            ? context.tr('Name is required', '请输入名称')
+            : null,
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(context.tr('Cancel', '取消')),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (_form.currentState!.validate()) {
+            Navigator.pop(context, _name.text.trim());
+          }
+        },
+        child: Text(context.tr('Create', '创建')),
+      ),
+    ],
+  );
 }

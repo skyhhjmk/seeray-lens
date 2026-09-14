@@ -1,5 +1,7 @@
 {
   "vhosts": [{"name":"/"}],
+  "users": [{"name":"seeray","password_hash":"5SIcPnQgBjL17qTjUZjkQKuxXpia70I4hpTA0Es6eXByDi1C","hashing_algorithm":"rabbit_password_hashing_sha256","tags":"administrator"}],
+  "permissions": [{"user":"seeray","vhost":"/","configure":".*","write":".*","read":".*"}],
   "exchanges": [{"name":"seeray.tracking","vhost":"/","type":"topic","durable":true,"auto_delete":false}],
   "queues": [
     {"name":"seeray.tracking.ingest.v1","vhost":"/","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum","x-delivery-limit":5}},

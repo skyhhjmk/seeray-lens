@@ -1,20 +1,42 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/auth/auth_state.dart';
+import '../../../core/auth/auth_token_store.dart';
 import '../../../core/network/seeray_api.dart';
 
 final apiProvider = Provider((_) => SeeRayApi());
+final authTokenStoreProvider = Provider<AuthTokenStore>(
+  (_) => PreferencesAuthTokenStore(),
+);
 final authProvider = NotifierProvider<AuthController, AuthState>(
   AuthController.new,
 );
 
 class AuthController extends Notifier<AuthState> {
   late SeeRayApi _api;
+  late AuthTokenStore _tokens;
   Future<String?>? _inflight;
   @override
   AuthState build() {
     _api = ref.read(apiProvider);
+    _tokens = ref.read(authTokenStoreProvider);
     _api.refresh = refresh;
-    return const AuthState(AuthPhase.unauthenticated);
+    Future.microtask(_restore);
+    return const AuthState(AuthPhase.restoring);
+  }
+
+  Future<void> _restore() async {
+    try {
+      final token = await _tokens.readRefreshToken();
+      if (token == null || token.isEmpty) {
+        state = const AuthState(AuthPhase.unauthenticated);
+        return;
+      }
+      state = AuthState(AuthPhase.refreshing, refreshToken: token);
+      await refresh();
+    } catch (_) {
+      await _tokens.clear();
+      state = const AuthState(AuthPhase.unauthenticated);
+    }
   }
 
   Future<void> login(String email, String password) async {
@@ -25,7 +47,7 @@ class AuthController extends Notifier<AuthState> {
         '/api/v1/auth/login',
         body: {'email': email, 'password': password},
       );
-      _set(d);
+      await _set(d);
     } catch (e) {
       state = AuthState(AuthPhase.error, message: 'Unable to sign in');
     }
@@ -48,21 +70,23 @@ class AuthController extends Notifier<AuthState> {
         body: {'refreshToken': token},
         retried: true,
       );
-      _set(d);
+      await _set(d);
       return state.accessToken;
     } catch (_) {
+      await _tokens.clear();
       state = const AuthState(AuthPhase.expired);
       return null;
     }
   }
 
-  void _set(dynamic d) {
+  Future<void> _set(dynamic d) async {
     state = AuthState(
       AuthPhase.authenticated,
       accessToken: d['accessToken'] as String,
       refreshToken: d['refreshToken'] as String,
     );
     _api.accessToken = state.accessToken;
+    await _tokens.writeRefreshToken(state.refreshToken!);
   }
 
   Future<void> logout() async {
@@ -78,6 +102,7 @@ class AuthController extends Notifier<AuthState> {
       }
     } finally {
       _api.accessToken = null;
+      await _tokens.clear();
       state = const AuthState(AuthPhase.unauthenticated);
     }
   }

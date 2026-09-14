@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:seeray_lens_admin/core/auth/auth_state.dart';
+import 'package:seeray_lens_admin/core/auth/auth_token_store.dart';
 import 'package:seeray_lens_admin/core/network/seeray_api.dart';
 import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 
@@ -29,7 +30,10 @@ void main() {
       '{"accessToken":"access-b","refreshToken":"refresh-b"}',
     ]);
     final container = ProviderContainer(
-      overrides: [apiProvider.overrideWithValue(SeeRayApi(client: client))],
+      overrides: [
+        apiProvider.overrideWithValue(SeeRayApi(client: client)),
+        authTokenStoreProvider.overrideWithValue(_MemoryTokenStore()),
+      ],
     );
     addTearDown(container.dispose);
     await container
@@ -51,7 +55,10 @@ void main() {
       statuses: [200, 401],
     );
     final container = ProviderContainer(
-      overrides: [apiProvider.overrideWithValue(SeeRayApi(client: client))],
+      overrides: [
+        apiProvider.overrideWithValue(SeeRayApi(client: client)),
+        authTokenStoreProvider.overrideWithValue(_MemoryTokenStore()),
+      ],
     );
     addTearDown(container.dispose);
     await container
@@ -60,13 +67,45 @@ void main() {
     await container.read(authProvider.notifier).refresh();
     expect(container.read(authProvider).phase, AuthPhase.expired);
   });
+
+  test('restores a persisted refresh token after app restart', () async {
+    final store = _MemoryTokenStore()..value = 'saved-refresh';
+    final client = _Client([
+      '{"accessToken":"new-access","refreshToken":"rotated-refresh"}',
+    ]);
+    final container = ProviderContainer(
+      overrides: [
+        apiProvider.overrideWithValue(SeeRayApi(client: client)),
+        authTokenStoreProvider.overrideWithValue(store),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(authProvider);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(authProvider).phase, AuthPhase.authenticated);
+    expect(container.read(authProvider).accessToken, 'new-access');
+    expect(store.value, 'rotated-refresh');
+    expect(client.requests, 1);
+  });
 }
 
 ProviderContainer _container(List<String> bodies) => ProviderContainer(
   overrides: [
     apiProvider.overrideWithValue(SeeRayApi(client: _Client(bodies))),
+    authTokenStoreProvider.overrideWithValue(_MemoryTokenStore()),
   ],
 );
+
+class _MemoryTokenStore implements AuthTokenStore {
+  String? value;
+  @override
+  Future<void> clear() async => value = null;
+  @override
+  Future<String?> readRefreshToken() async => value;
+  @override
+  Future<void> writeRefreshToken(String token) async => value = token;
+}
 
 class _Client extends http.BaseClient {
   _Client(List<String> bodies, {List<int>? statuses})

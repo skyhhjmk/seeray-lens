@@ -27,3 +27,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0004-analytics-aggregates.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0005-event-goals
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0005-event-goals.sql
+            relativeToChangelogFile: false

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/i18n/app_i18n.dart';
+import '../../../shared/presentation/app_back_button.dart';
+import '../../../shared/presentation/page_help_button.dart';
 import '../application/token_controller.dart';
 
 class TokenSettingsPage extends ConsumerWidget {
@@ -11,18 +14,31 @@ class TokenSettingsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tokens = ref.watch(apiTokensProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Workspace API tokens')),
+      appBar: AppBar(
+        leading: const AppBackButton(fallback: '/sites'),
+        title: Text(context.tr('Workspace API tokens', '工作区 API 令牌')),
+        actions: const [
+          PageHelpButton(
+            englishTitle: 'API tokens',
+            chineseTitle: 'API 令牌',
+            englishBody:
+                'API tokens allow server-to-server access to this workspace. Choose the least privilege needed, copy a new token immediately, and revoke it if it is no longer needed.',
+            chineseBody: 'API 令牌用于服务端访问当前工作区。请按最小权限创建、立即保存新令牌，并在不再需要时撤销。',
+          ),
+          LanguageMenu(),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _create(context, ref),
         icon: const Icon(Icons.key),
-        label: const Text('Create token'),
+        label: Text(context.tr('Create token', '创建令牌')),
       ),
       body: tokens.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stackTrace) => Center(
           child: FilledButton.tonal(
             onPressed: () => ref.invalidate(apiTokensProvider),
-            child: const Text('Retry loading tokens'),
+            child: Text(context.tr('Retry loading tokens', '重新加载令牌')),
           ),
         ),
         data: (items) => ListView(
@@ -40,9 +56,9 @@ class TokenSettingsPage extends ConsumerWidget {
                             onPressed: () => ref
                                 .read(apiTokensProvider.notifier)
                                 .revoke(token.id),
-                            child: const Text('Revoke'),
+                            child: Text(context.tr('Revoke', '撤销')),
                           )
-                        : const Chip(label: Text('Revoked')),
+                        : Chip(label: Text(context.tr('Revoked', '已撤销'))),
                   ),
                 ),
               )
@@ -68,13 +84,16 @@ class TokenSettingsPage extends ConsumerWidget {
       await showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(
-          title: const Text('Copy this token now'),
+          title: Text(context.tr('Copy this token now', '立即复制此令牌')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Save this token now. You cannot view it again after closing this dialog.',
+              Text(
+                context.tr(
+                  'Save this token now. You cannot view it again after closing this dialog.',
+                  '请立即保存此令牌。关闭此对话框后将无法再次查看。',
+                ),
               ),
               const SizedBox(height: 12),
               SelectableText(created.plainToken),
@@ -83,7 +102,7 @@ class TokenSettingsPage extends ConsumerWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
+              child: Text(context.tr('Close', '关闭')),
             ),
             TextButton(
               onPressed: () async {
@@ -92,7 +111,7 @@ class TokenSettingsPage extends ConsumerWidget {
                 );
                 if (context.mounted) Navigator.pop(context);
               },
-              child: const Text('Copy and close'),
+              child: Text(context.tr('Copy and close', '复制并关闭')),
             ),
           ],
         ),
@@ -133,30 +152,32 @@ class _CreateTokenDialogState extends State<_CreateTokenDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Create API token'),
+    title: Text(context.tr('Create API token', '创建 API 令牌')),
     content: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         TextField(
           controller: _name,
-          decoration: const InputDecoration(labelText: 'Token name'),
+          decoration: InputDecoration(
+            labelText: context.tr('Token name', '令牌名称'),
+          ),
         ),
         CheckboxListTile(
           value: _read,
           onChanged: (value) => setState(() => _read = value ?? false),
-          title: const Text('Sites: read'),
+          title: Text(context.tr('Sites: read', '站点：读取')),
         ),
         CheckboxListTile(
           value: _write,
           onChanged: (value) => setState(() => _write = value ?? false),
-          title: const Text('Sites: write'),
+          title: Text(context.tr('Sites: write', '站点：写入')),
         ),
       ],
     ),
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
+        child: Text(context.tr('Cancel', '取消')),
       ),
       FilledButton(
         onPressed: () {
@@ -169,7 +190,7 @@ class _CreateTokenDialogState extends State<_CreateTokenDialog> {
             ]),
           );
         },
-        child: const Text('Create'),
+        child: Text(context.tr('Create', '创建')),
       ),
     ],
   );

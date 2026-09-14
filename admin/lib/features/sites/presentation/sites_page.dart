@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../workspaces/application/workspace_controller.dart';
 import '../../../shared/presentation/timezone_picker.dart';
+import '../../../core/i18n/app_i18n.dart';
+import '../../../shared/presentation/page_help_button.dart';
 import '../application/site_controller.dart';
 
 class SitesPage extends ConsumerWidget {
@@ -21,14 +23,22 @@ class SitesPage extends ConsumerWidget {
     }
     return Scaffold(
       appBar: AppBar(
-        title: Text('${workspace.name} sites'),
+        title: Text('${workspace.name} ${context.tr('sites', '站点')}'),
         leading: IconButton(
           onPressed: () => context.go('/workspaces'),
           icon: const Icon(Icons.business),
         ),
         actions: [
+          const PageHelpButton(
+            englishTitle: 'Sites',
+            chineseTitle: '站点管理',
+            englishBody:
+                'A site represents one tracked website. Open a site to see its analytics, then use settings to manage its time zone, tracker ID and allowed domains.',
+            chineseBody: '一个站点对应一个被追踪的网站。打开站点可查看分析数据；在设置中管理时区、追踪 ID 和允许的域名。',
+          ),
+          const LanguageMenu(),
           IconButton(
-            tooltip: 'Workspace API tokens',
+            tooltip: context.tr('Workspace API tokens', '工作区 API 令牌'),
             onPressed: () => context.go('/settings'),
             icon: const Icon(Icons.key),
           ),
@@ -37,18 +47,25 @@ class SitesPage extends ConsumerWidget {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showSiteForm(context, ref),
         icon: const Icon(Icons.add),
-        label: const Text('Create site'),
+        label: Text(context.tr('Create site', '创建站点')),
       ),
       body: sites.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stackTrace) => Center(
           child: FilledButton.tonal(
             onPressed: () => ref.invalidate(sitesProvider),
-            child: const Text('Retry loading sites'),
+            child: Text(context.tr('Retry loading sites', '重新加载站点')),
           ),
         ),
         data: (items) => items.isEmpty
-            ? const Center(child: Text('No sites yet. Create your first site.'))
+            ? Center(
+                child: Text(
+                  context.tr(
+                    'No sites yet. Create your first site.',
+                    '暂无站点，创建你的第一个站点。',
+                  ),
+                ),
+              )
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: items
@@ -65,7 +82,8 @@ class SitesPage extends ConsumerWidget {
                                 ? Theme.of(context).colorScheme.primary
                                 : null,
                           ),
-                          onTap: () => context.go('/sites/${site.id}'),
+                          onTap: () =>
+                              context.go('/sites/${site.id}/dashboard'),
                         ),
                       ),
                     )
@@ -84,7 +102,7 @@ class SitesPage extends ConsumerWidget {
     try {
       final site = await ref.read(sitesProvider.notifier).create(result);
       if (context.mounted) {
-        context.go('/sites/${site.id}');
+        context.go('/sites/${site.id}/dashboard');
       }
     } on Exception catch (error) {
       if (context.mounted) {
