@@ -14,9 +14,11 @@ import java.util.*;
 @ApplicationScoped
 public class SiteService {
     private final WorkspaceAccess access;
+    private final HeatmapFileCleanupService heatmapFileCleanup;
 
-    public SiteService(WorkspaceAccess access) {
+    public SiteService(WorkspaceAccess access, HeatmapFileCleanupService heatmapFileCleanup) {
         this.access = access;
+        this.heatmapFileCleanup = heatmapFileCleanup;
     }
 
     @Transactional
@@ -48,6 +50,7 @@ public class SiteService {
     public void delete(UUID id) {
         Site s = site(id);
         access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
+        heatmapFileCleanup.queueSite(id);
         s.delete();
     }
 

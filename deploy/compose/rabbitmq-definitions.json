@@ -6,7 +6,12 @@
   "queues": [
     {"name":"seeray.tracking.ingest.v1","vhost":"/","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum","x-delivery-limit":5}},
     {"name":"seeray.tracking.retry.v1","vhost":"/","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum","x-message-ttl":5000}},
-    {"name":"seeray.tracking.dlq.v1","vhost":"/","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum"}}
+    {"name":"seeray.tracking.dlq.v1","vhost":"/","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum"}},
+    {"name":"seeray.heatmap.ingest.v1","vhost":"/","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum","x-delivery-limit":5}},
+    {"name":"seeray.heatmap.dlq.v1","vhost":"/","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum"}}
   ],
-  "bindings": [{"source":"seeray.tracking","vhost":"/","destination":"seeray.tracking.ingest.v1","destination_type":"queue","routing_key":"event.v1"}]
+  "bindings": [
+    {"source":"seeray.tracking","vhost":"/","destination":"seeray.tracking.ingest.v1","destination_type":"queue","routing_key":"event.v1"},
+    {"source":"seeray.tracking","vhost":"/","destination":"seeray.heatmap.ingest.v1","destination_type":"queue","routing_key":"heatmap.v1"}
+  ]
 }

@@ -10,6 +10,7 @@ import 'features/auth/application/auth_controller.dart';
 import 'features/auth/presentation/login_page.dart';
 import 'features/analytics/presentation/analytics_dashboard_page.dart';
 import 'features/analytics/presentation/analytics_detail_page.dart';
+import 'features/analytics/presentation/heatmap_page.dart';
 import 'features/analytics/presentation/site_tab_shell.dart';
 import 'features/landing/presentation/landing_page.dart';
 import 'features/integration/presentation/integration_page.dart';
@@ -109,6 +110,18 @@ class SeeRayLensAdminApp extends ConsumerWidget {
                 child: AnalyticsDetailPage(
                   siteId: state.pathParameters['siteId']!,
                   view: AnalyticsView.behaviour,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/behaviour/heatmaps',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: HeatmapPage(
+                  siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),
               ),

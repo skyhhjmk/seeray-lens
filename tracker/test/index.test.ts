@@ -3,7 +3,7 @@ import { SeeRay, TRACKER_VERSION, Tracker } from '../src/index.js';
 
 describe('tracker package', () => {
   it('exposes the tracker version', () => {
-    expect(TRACKER_VERSION).toBe('0.2.0');
+    expect(TRACKER_VERSION).toBe('0.3.0');
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -44,6 +44,104 @@ describe('tracker package', () => {
     await first.flush();
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(JSON.parse(call[1].body as string).events).toHaveLength(1);
+  });
+
+  it('de-duplicates only within one page lifecycle and permits same-URL navigation', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 202 }));
+    const tracker = new Tracker({ siteId: 'srl_lifecycle', flushInterval: 100 });
+    tracker.pageReady({ url: 'https://example.com/catalog' });
+    tracker.pageReady({ url: 'https://example.com/catalog' });
+    tracker.beginNavigation();
+    tracker.pageReady({ url: 'https://example.com/catalog' });
+    await tracker.flush();
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const events = JSON.parse(call[1].body as string).events;
+    expect(events.filter((event: { type: string }) => event.type === 'page_view')).toHaveLength(2);
+  });
+
+  it('cancels a PJAX navigation without recording another page view', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 202 }));
+    const tracker = new Tracker({ siteId: 'srl_cancel_navigation', flushInterval: 100 });
+    tracker.pageReady({ url: 'https://example.com/catalog' });
+    tracker.beginNavigation();
+    tracker.cancelNavigation();
+    tracker.trackPageView({ url: 'https://example.com/catalog' });
+    await tracker.flush();
+    const events = JSON.parse((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string).events;
+    expect(events.filter((event: { type: string }) => event.type === 'page_view')).toHaveLength(1);
+  });
+
+  it('exposes navigation lifecycle methods through the global facade', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 202 }));
+    const tracker = SeeRay.init({ siteId: 'srl_global_lifecycle', flushInterval: 100 });
+    SeeRay.pageReady({ url: 'https://example.com/pjax' });
+    SeeRay.beginNavigation();
+    SeeRay.pageReady({ url: 'https://example.com/pjax' });
+    await tracker.flush();
+    const events = JSON.parse((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string).events;
+    expect(events.filter((event: { type: string }) => event.type === 'page_view')).toHaveLength(2);
+  });
+
+  it('keeps the same heatmap batch id when a retry follows a transient failure', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const fetch = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const tracker = new Tracker({ siteId: 'srl_heatmap_retry' });
+    const internal = tracker as unknown as { heatmapQueue: unknown[]; flushHeatmap: () => Promise<void>; heatmapTimer?: ReturnType<typeof setTimeout> };
+    internal.heatmapQueue.push({ type: 'start', instanceId: '00000000-0000-4000-8000-000000000001', url: 'https://example.com/', layoutVersion: 'v1', targetId: 'page', viewportWidth: 100, viewportHeight: 100, contentWidth: 100, contentHeight: 100 });
+    await internal.flushHeatmap();
+    if (internal.heatmapTimer) clearTimeout(internal.heatmapTimer);
+    await internal.flushHeatmap();
+    const first = JSON.parse(fetch.mock.calls[0][1].body as string);
+    const second = JSON.parse(fetch.mock.calls[1][1].body as string);
+    expect(second.clientBatchId).toBe(first.clientBatchId);
+    expect(second.events).toEqual(first.events);
+  });
+
+  it('uses a registered container viewport rather than the window viewport', () => {
+    const tracker = new Tracker({ siteId: 'srl_container_geometry' });
+    const internal = tracker as unknown as { geometry: (targetId: string, element?: HTMLElement) => { viewportWidth: number; viewportHeight: number; contentWidth: number; contentHeight: number } };
+    const element = { clientWidth: 320, clientHeight: 180, scrollWidth: 640, scrollHeight: 720 } as HTMLElement;
+    expect(internal.geometry('results', element)).toEqual({ targetId: 'results', viewportWidth: 320, viewportHeight: 180, contentWidth: 640, contentHeight: 720 });
+  });
+
+  it('starts a new geometry segment only after an observed target size changes', () => {
+    const tracker = new Tracker({ siteId: 'srl_layout_segment' });
+    const internal = tracker as unknown as {
+      heatmapInstance: string;
+      heatmapSelected: boolean;
+      heatmapUrl: string;
+      heatmapLayoutVersion: string;
+      heatmapQueue: Array<{ type: string; contentHeight: number }>;
+      heatmapTimer?: ReturnType<typeof setTimeout>;
+      containers: Map<string, { element: HTMLElement; remove: () => void }>;
+      captureTargetStart: (targetId: string, element: HTMLElement, force?: boolean) => void;
+    };
+    internal.heatmapInstance = '00000000-0000-4000-8000-000000000001';
+    internal.heatmapSelected = true;
+    internal.heatmapUrl = 'https://example.com/long';
+    internal.heatmapLayoutVersion = 'v1';
+    const element = {
+      clientWidth: 320,
+      clientHeight: 180,
+      scrollWidth: 320,
+      scrollHeight: 720,
+      scrollTop: 0,
+      getBoundingClientRect: () => ({ top: 0, bottom: 180 }),
+    };
+    internal.containers.set('results', {
+      element: element as unknown as HTMLElement,
+      remove: () => undefined,
+    });
+    internal.captureTargetStart('results', element as unknown as HTMLElement);
+    internal.captureTargetStart('results', element as unknown as HTMLElement);
+    element.scrollHeight = 960;
+    internal.captureTargetStart('results', element as unknown as HTMLElement);
+    expect(internal.heatmapQueue.filter((event) => event.type === 'start').map((event) => event.contentHeight)).toEqual([720, 960]);
+    if (internal.heatmapTimer) clearTimeout(internal.heatmapTimer);
   });
 
   it('sends goal name and dimensions as event fields', async () => {

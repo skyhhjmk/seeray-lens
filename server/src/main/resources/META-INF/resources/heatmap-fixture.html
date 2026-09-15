@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SeeRay heatmap fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: #f4f6fb; color: #192033; }
+    header { position: fixed; inset: 0 0 auto; z-index: 2; height: 62px; display: flex; gap: 12px; align-items: center; padding: 0 24px; background: #172554; color: white; }
+    button { border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    main { width: min(900px, calc(100% - 32px)); margin: 0 auto; padding: 88px 0 80px; }
+    .hero, .section, .panel { background: white; border-radius: 12px; box-shadow: 0 4px 24px #17255412; padding: 24px; margin-bottom: 24px; }
+    .target { display: grid; place-items: center; min-height: 96px; border-radius: 8px; background: #dbeafe; color: #1e3a8a; font-weight: 700; }
+    #results { max-height: 190px; overflow: auto; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; }
+    .row { height: 68px; margin: 8px 0; padding: 20px; border-radius: 6px; background: #eff6ff; }
+    #async-content { min-height: 24px; }
+  </style>
+</head>
+<body>
+  <header data-seeray-heatmap-ignore>
+    <strong>Heatmap fixture</strong>
+    <button id="page-a" type="button">PJAX page A</button>
+    <button id="page-b" type="button">PJAX page B</button>
+    <button id="grow" type="button">Add async height</button>
+  </header>
+  <main id="pjax-root" data-layout-version="fixture-a-v1">
+    <section class="hero"><h1>Fixed-layout heatmap fixture</h1><p>Use this page only for local browser acceptance. It deliberately has a fixed header, a long document, and a registered partial scroll container.</p></section>
+    <section class="section"><button class="target" id="known-target" type="button">Known page click target</button></section>
+    <section class="panel"><h2>Registered independent scroll container</h2><div id="results" aria-label="Fixture results"></div></section>
+    <section class="section"><h2>Long document region</h2><div id="long-content"></div><div id="async-content"></div></section>
+  </main>
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const siteId = params.get('siteId');
+      const root = document.getElementById('pjax-root');
+      const results = document.getElementById('results');
+      const longContent = document.getElementById('long-content');
+      let unregister = () => {};
+      for (let i = 1; i <= 40; i++) longContent.insertAdjacentHTML('beforeend', `<p>Long fixture block ${i}: CSS-pixel geometry remains intentionally stable.</p>`);
+      for (let i = 1; i <= 16; i++) results.insertAdjacentHTML('beforeend', `<div class="row">Container item ${i}</div>`);
+      function registerContainer() {
+        unregister();
+        unregister = window.SeeRay?.registerScrollContainer({ id: 'fixture-results', element: results }) || (() => {});
+      }
+      function ready() {
+        window.SeeRay?.pageReady({ url: location.href, layoutVersion: root.dataset.layoutVersion });
+        registerContainer();
+      }
+      function replace(page) {
+        window.SeeRay?.beginNavigation();
+        root.dataset.layoutVersion = page === 'a' ? 'fixture-a-v1' : 'fixture-b-v1';
+        document.getElementById('known-target').textContent = page === 'a' ? 'Known page A click target' : 'Known page B click target';
+        history.pushState({ page }, '', `${location.pathname}?siteId=${encodeURIComponent(siteId || '')}&page=${page}`);
+        window.scrollTo(0, 0);
+        ready();
+      }
+      document.getElementById('page-a').addEventListener('click', () => replace('a'));
+      document.getElementById('page-b').addEventListener('click', () => replace('b'));
+      document.getElementById('grow').addEventListener('click', () => {
+        setTimeout(() => {
+          document.getElementById('async-content').insertAdjacentHTML('beforeend', '<p>Asynchronously appended fixture height.</p>'.repeat(30));
+          window.SeeRay?.refreshHeatmapLayout();
+        }, 250);
+      });
+      addEventListener('popstate', ready);
+      if (siteId) {
+        const tracker = document.createElement('script');
+        tracker.src = '/tracker.js';
+        tracker.dataset.siteId = siteId;
+        tracker.dataset.heatmap = '';
+        tracker.dataset.navigationMode = 'manual';
+        tracker.addEventListener('load', () => {
+          document.documentElement.dataset.trackerState = typeof window.SeeRay === 'object' ? 'ready' : 'missing-api';
+          ready();
+        }, { once: true });
+        tracker.addEventListener('error', () => {
+          document.documentElement.dataset.trackerState = 'load-error';
+        }, { once: true });
+        document.head.appendChild(tracker);
+      }
+    })();
+  </script>
+</body>
+</html>

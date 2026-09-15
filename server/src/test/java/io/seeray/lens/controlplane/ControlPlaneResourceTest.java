@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.quarkus.test.junit.QuarkusTest;
 import io.seeray.lens.application.AnalyticsAggregationService;
 import io.seeray.lens.application.AnalyticsFactBuilder;
+import io.seeray.lens.application.HeatmapAggregationService;
 import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.auth.AuthSession;
 import io.seeray.lens.domain.auth.UserStatus;
@@ -14,6 +15,7 @@ import jakarta.inject.Inject;
 import jakarta.transaction.UserTransaction;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -35,6 +37,9 @@ class ControlPlaneResourceTest {
 
     @Inject
     AnalyticsAggregationService aggregation;
+
+    @Inject
+    HeatmapAggregationService heatmapAggregation;
 
     @Test
     void registerLoginRefreshAndProtectedWorkspaceWork() throws Exception {
@@ -268,6 +273,137 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void heatmapConfigUsesTheHeatmapResourcePrefix() {
+        Tokens owner = register("heatmap-config" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Heatmap config\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String path = "/api/v1/sites/" + site + "/heatmaps/config";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"enabled\":true,\"sampleRate\":37,\"rawRetentionDays\":30,\"aggregateRetentionDays\":180}")
+                .put(path)
+                .then()
+                .statusCode(200)
+                .body("enabled", is(true))
+                .body("sampleRate", is(37));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path)
+                .then()
+                .statusCode(200)
+                .body("enabled", is(true))
+                .body("sampleRate", is(37));
+    }
+
+    @Test
+    void heatmapCollectorRejectsPayloadsOverFortyEightKiB() {
+        String event = "{\"type\":\"move\",\"instanceId\":\"00000000-0000-4000-8000-000000000001\","
+                + "\"url\":\"https://example.test/heatmap\",\"layoutVersion\":\"v1\",\"targetId\":\"page\","
+                + "\"viewportWidth\":1000,\"viewportHeight\":800,\"contentWidth\":1000,\"contentHeight\":2400,"
+                + "\"x\":320,\"y\":960,\"truncated\":false,\"dropped\":0}";
+        String payload =
+                "{\"schemaVersion\":1,\"siteId\":\"srl_public\",\"clientBatchId\":\"00000000-0000-4000-8000-000000000002\",\"events\":["
+                        + String.join(",", java.util.Collections.nCopies(500, event)) + "]}";
+        given().contentType("application/json")
+                .body(payload)
+                .post("/api/v1/collect/heatmaps")
+                .then()
+                .statusCode(413)
+                .body("code", is("HEATMAP_PAYLOAD_TOO_LARGE"));
+    }
+
+    @Test
+    void heatmapScrollDenominatorRequiresAnInitialStartEvent() throws Exception {
+        Tokens owner = register("heatmap-denominator" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Heatmap denominator\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        UUID siteId = UUID.fromString(site);
+        String instance = "00000000-0000-4000-8000-000000000001";
+        String common = "\"instanceId\":\"" + instance + "\",\"url\":\"https://example.test/heatmap\","
+                + "\"layoutVersion\":\"v1\",\"targetId\":\"page\",\"viewportWidth\":1000,\"viewportHeight\":800,"
+                + "\"contentWidth\":1000,\"contentHeight\":2400,\"truncated\":false,\"dropped\":0";
+        insertHeatmapRaw(siteId, "[{\"type\":\"scroll\"," + common + ",\"scrollBins\":[50]}]");
+        heatmapAggregation.processPending(100);
+        try (var c = dataSource.getConnection();
+                var p = c.prepareStatement("select count(*) from heatmap_instance_fact where site_id=?")) {
+            p.setObject(1, siteId);
+            try (var rows = p.executeQuery()) {
+                rows.next();
+                assertEquals(0, rows.getLong(1));
+            }
+        }
+        insertHeatmapRaw(siteId, "[{\"type\":\"start\"," + common + "}]");
+        heatmapAggregation.processPending(100);
+        try (var c = dataSource.getConnection();
+                var p = c.prepareStatement("select count(*) from heatmap_instance_fact where site_id=?")) {
+            p.setObject(1, siteId);
+            try (var rows = p.executeQuery()) {
+                rows.next();
+                assertEquals(1, rows.getLong(1));
+            }
+        }
+    }
+
+    @Test
+    void heatmapScrollStatsUseAllStartedInstancesAsTheDenominator() throws Exception {
+        Tokens owner = register("heatmap-scroll-ratio" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Heatmap ratio\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        UUID siteId = UUID.fromString(site);
+        String common = "\"url\":\"https://example.test/heatmap\",\"layoutVersion\":\"v1\","
+                + "\"targetId\":\"page\",\"viewportWidth\":1000,\"viewportHeight\":800,"
+                + "\"contentWidth\":1000,\"contentHeight\":2400,\"truncated\":false,\"dropped\":0";
+        String first = "00000000-0000-4000-8000-000000000011";
+        String second = "00000000-0000-4000-8000-000000000012";
+        insertHeatmapRaw(
+                siteId,
+                "[{\"type\":\"start\",\"instanceId\":\"" + first + "\"," + common
+                        + "},{\"type\":\"scroll\",\"instanceId\":\"" + first + "\"," + common
+                        + ",\"scrollBins\":[50]}]");
+        insertHeatmapRaw(siteId, "[{\"type\":\"start\",\"instanceId\":\"" + second + "\"," + common + "}]");
+        heatmapAggregation.processPending(100);
+        UUID variantId;
+        try (var c = dataSource.getConnection();
+                var p = c.prepareStatement("select id from heatmap_variant where site_id=?")) {
+            p.setObject(1, siteId);
+            try (var rows = p.executeQuery()) {
+                assertTrue(rows.next());
+                variantId = rows.getObject(1, UUID.class);
+            }
+        }
+        String day = LocalDate.now().toString();
+        var response = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/heatmaps/stats?variantId=" + variantId + "&from=" + day + "&to=" + day
+                        + "&type=scroll")
+                .then()
+                .statusCode(200)
+                .extract();
+        assertEquals(2, ((Number) response.path("instances")).intValue());
+        assertEquals(2, ((Number) response.path("depth.find { it.bin == 50 }.instances")).intValue());
+        assertEquals(0.5d, ((Number) response.path("depth.find { it.bin == 50 }.ratio")).doubleValue());
+    }
+
+    @Test
     void factsSplitTimeoutAndCountExactDailyVisitors() throws Exception {
         Tokens tokens = register("facts" + System.nanoTime() + "@example.test");
         String workspace = workspace(tokens.access()).extract().path("[0].id");
@@ -446,6 +582,18 @@ class ControlPlaneResourceTest {
             p.setTimestamp(7, java.sql.Timestamp.from(occurred));
             p.setString(8, type);
             p.setString(9, path);
+            p.executeUpdate();
+        }
+    }
+
+    private void insertHeatmapRaw(UUID siteId, String payload) throws Exception {
+        try (var c = dataSource.getConnection();
+                var p = c.prepareStatement(
+                        "insert into heatmap_raw_batch(id,site_id,client_batch_id,received_at,payload,effective_sample_rate) values(?,?,?,now(),?::jsonb,100)")) {
+            p.setObject(1, UUID.randomUUID());
+            p.setObject(2, siteId);
+            p.setObject(3, UUID.randomUUID());
+            p.setString(4, payload);
             p.executeUpdate();
         }
     }

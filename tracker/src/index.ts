@@ -1,155 +1,68 @@
-export const TRACKER_VERSION = '0.2.0';
+export const TRACKER_VERSION = '0.3.0';
 
-export interface TrackerOptions {
-  siteId: string;
-  endpoint?: string;
-  maxBatchSize?: number;
-  flushInterval?: number;
-}
+export interface HeatmapOptions { enabled?: boolean; sampleRate?: number; navigationMode?: 'auto' | 'manual'; layoutVersion?: string; }
+export interface PageReadyOptions { url?: string; layoutVersion?: string; }
+export interface ScrollContainerOptions { id: string; element: HTMLElement; }
+export interface TrackerOptions { siteId: string; endpoint?: string; maxBatchSize?: number; flushInterval?: number; heatmap?: HeatmapOptions; }
+export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; }
+interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId: string; sessionId: string; }
+interface HeatmapConfig { enabled: boolean; sampleRate: number; version?: number; }
+interface HeatmapEvent { type: 'start' | 'click' | 'move' | 'scroll'; instanceId: string; url: string; layoutVersion: string; targetId: string; viewportWidth: number; viewportHeight: number; contentWidth: number; contentHeight: number; x?: number; y?: number; scrollBins?: number[]; truncated?: boolean; dropped?: number; }
+interface ContainerRegistration { element: HTMLElement; remove: () => void; }
+interface HeatmapBatch { clientBatchId: string; events: HeatmapEvent[]; }
 
-export interface TrackOptions {
-  url?: string;
-  title?: string;
-  referrer?: string;
-  durationMs?: number;
-  properties?: Record<string, unknown>;
-  category?: string;
-  action?: string;
-  name?: string;
-}
-
-interface EventPayload extends TrackOptions {
-  eventId: string;
-  type: string;
-  occurredAt: string;
-  visitorId: string;
-  sessionId: string;
-}
-
-const uuid = (): string => {
-  const cryptoObject = globalThis.crypto as Crypto & { randomUUID?: () => string } | undefined;
-  if (cryptoObject?.randomUUID) return cryptoObject.randomUUID();
-  const bytes = new Uint8Array(16);
-  cryptoObject?.getRandomValues?.(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  return [...bytes].map((byte, index) => `${[4, 6, 8, 10].includes(index) ? '-' : ''}${byte.toString(16).padStart(2, '0')}`).join('');
-};
-
-const doNotTrack = (): boolean => {
-  const value = globalThis.navigator?.doNotTrack;
-  return value === '1' || value === 'yes';
-};
-
-const storageId = (storage: Storage | undefined, key: string): string => {
-  try {
-    const existing = storage?.getItem(key);
-    if (existing) return existing;
-    const created = uuid();
-    storage?.setItem(key, created);
-    return created;
-  } catch {
-    return uuid();
-  }
-};
+const uuid = (): string => { const c = globalThis.crypto as Crypto & { randomUUID?: () => string } | undefined; if (c?.randomUUID) return c.randomUUID(); const b = new Uint8Array(16); c?.getRandomValues?.(b); b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80; return [...b].map((x, i) => `${[4, 6, 8, 10].includes(i) ? '-' : ''}${x.toString(16).padStart(2, '0')}`).join(''); };
+const doNotTrack = (): boolean => ['1', 'yes'].includes(globalThis.navigator?.doNotTrack ?? '');
+const storageId = (storage: Storage | undefined, key: string): string => { try { const old = storage?.getItem(key); if (old) return old; const value = uuid(); storage?.setItem(key, value); return value; } catch { return uuid(); } };
+const rate = (value: number | undefined): number => Math.max(0, Math.min(100, value ?? 10));
+const ignored = (target: EventTarget | null): boolean => target instanceof Element && !!target.closest('[data-seeray-heatmap-ignore]');
+const fixed = (target: EventTarget | null): boolean => { for (let e = target instanceof Element ? target : null; e; e = e.parentElement) { const p = globalThis.getComputedStyle?.(e).position; if (p === 'fixed' || p === 'sticky') return true; } return false; };
 
 export class Tracker {
-  private readonly endpoint: string;
-  private readonly maxBatchSize: number;
-  private readonly flushInterval: number;
-  private readonly visitorId: string;
-  private readonly sessionId: string;
-  private queue: EventPayload[] = [];
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private currentPageStartedAt: number | undefined;
-  private readonly pageViewUrls = new Set<string>();
+  private readonly endpoint: string; private readonly maxBatchSize: number; private readonly flushInterval: number; private readonly visitorId: string; private readonly sessionId: string;
+  private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false;
+  private heatmapConfig: HeatmapConfig | undefined; private heatmapQueue: HeatmapEvent[] = []; private heatmapTimer: ReturnType<typeof setTimeout> | undefined; private heatmapInstance: string | undefined; private heatmapUrl = ''; private heatmapLayoutVersion = 'unversioned'; private heatmapSelected = false; private heatmapNavigating = false;
+  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined;
+  private readonly containers = new Map<string, ContainerRegistration>(); private readonly scrollBins = new Map<string, Set<number>>(); private readonly lastScroll = new Map<string, number>();
+  private readonly layoutSegments = new Map<string, string>();
 
   constructor(private readonly options: TrackerOptions) {
-    this.endpoint = options.endpoint ?? '/api/v1/collect';
-    this.maxBatchSize = Math.max(1, Math.min(options.maxBatchSize ?? 10, 100));
-    this.flushInterval = Math.max(100, options.flushInterval ?? 2000);
-    this.visitorId = storageId(globalThis.localStorage, `seeray:${options.siteId}:visitor_id`);
-    this.sessionId = storageId(globalThis.sessionStorage, `seeray:${options.siteId}:session_id`);
-    globalThis.addEventListener?.('pagehide', () => void this.flush(true));
-    globalThis.addEventListener?.('visibilitychange', () => {
-      if (globalThis.document?.visibilityState === 'hidden') void this.flush(true);
-    });
+    this.endpoint = options.endpoint ?? '/api/v1/collect'; this.maxBatchSize = Math.max(1, Math.min(options.maxBatchSize ?? 10, 100)); this.flushInterval = Math.max(100, options.flushInterval ?? 2000); this.visitorId = storageId(globalThis.localStorage, `seeray:${options.siteId}:visitor_id`); this.sessionId = storageId(globalThis.sessionStorage, `seeray:${options.siteId}:session_id`);
+    globalThis.addEventListener?.('pagehide', () => { void this.flush(true); void this.flushHeatmap(true); }); globalThis.addEventListener?.('visibilitychange', () => { if (globalThis.document?.visibilityState === 'hidden') { void this.flush(true); void this.flushHeatmap(true); } else this.refreshHeatmapLayout(); });
+    if (options.heatmap?.enabled && !doNotTrack()) void this.loadHeatmapConfig();
   }
+  trackPageView(options: TrackOptions = {}): void { if (this.pageViewRecorded) return; this.pageViewRecorded = true; const durationMs = this.currentPageStartedAt === undefined ? options.durationMs : Math.max(0, Date.now() - this.currentPageStartedAt); this.currentPageStartedAt = Date.now(); this.track('page_view', { ...options, durationMs }); }
+  trackGoal(name: string, options: Omit<TrackOptions, 'name'> = {}): void { if (name.trim()) this.track('goal', { ...options, name: name.trim() }); }
+  track(type: string, options: TrackOptions = {}): void { if (doNotTrack() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title ?? globalThis.document?.title, referrer: options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: this.visitorId, sessionId: this.sessionId }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
+  async flush(unload = false): Promise<void> { if (this.timer) clearTimeout(this.timer); this.timer = undefined; if (!this.queue.length || doNotTrack()) return; const events = this.queue.splice(0, this.maxBatchSize); const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events }); if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return; try { const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok) throw new Error(`collector returned ${response.status}`); } catch { this.queue.unshift(...events); this.schedule(); } }
 
-  trackPageView(options: TrackOptions = {}): void {
-    const pageUrl = options.url ?? globalThis.location?.href ?? '';
-    if (this.pageViewUrls.has(pageUrl)) return;
-    this.pageViewUrls.add(pageUrl);
-    const durationMs = this.currentPageStartedAt === undefined ? options.durationMs : Math.max(0, Date.now() - this.currentPageStartedAt);
-    this.currentPageStartedAt = Date.now();
-    this.track('page_view', { ...options, durationMs });
-  }
-
-  trackGoal(name: string, options: Omit<TrackOptions, 'name'> = {}): void {
-    if (!name.trim()) return;
-    this.track('goal', { ...options, name: name.trim() });
-  }
-
-  track(type: string, options: TrackOptions = {}): void {
-    if (doNotTrack() || !type || type.length > 64) return;
-    const event: EventPayload = {
-      eventId: uuid(),
-      type,
-      occurredAt: new Date().toISOString(),
-      url: options.url ?? globalThis.location?.href,
-      title: options.title ?? globalThis.document?.title,
-      referrer: options.referrer ?? globalThis.document?.referrer,
-      durationMs: options.durationMs,
-      properties: options.properties,
-      category: options.category,
-      action: options.action,
-      name: options.name,
-      visitorId: this.visitorId,
-      sessionId: this.sessionId,
-    };
-    this.queue.push(event);
-    if (this.queue.length >= this.maxBatchSize) void this.flush();
-    else this.schedule();
-  }
-
-  async flush(unload = false): Promise<void> {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
-    if (!this.queue.length || doNotTrack()) return;
-    const events = this.queue.splice(0, this.maxBatchSize);
-    const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events });
-    if (unload && globalThis.navigator?.sendBeacon) {
-      if (globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return;
-    }
-    try {
-      const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload });
-      if (!response.ok) throw new Error(`collector returned ${response.status}`);
-    } catch {
-      this.queue.unshift(...events);
-      this.schedule();
-    }
-  }
-
-  private schedule(): void {
-    if (this.timer) return;
-    this.timer = setTimeout(() => void this.flush(), this.flushInterval);
-  }
+  beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); } this.pageViewRecorded = false; }
+  cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); }
+  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); } if (!this.heatmapEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = Math.random() * 100 < this.heatmapConfig!.sampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (!this.heatmapSelected) return; this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); }
+  registerScrollContainer(options: ScrollContainerOptions): () => void { if (!options.id.trim() || this.containers.has(options.id)) return () => undefined; const listener = () => this.recordScroll(options.id); options.element.addEventListener('scroll', listener, { passive: true }); this.containers.set(options.id, { element: options.element, remove: () => options.element.removeEventListener('scroll', listener) }); this.resizeObserver?.observe(options.element); if (this.heatmapInstance && this.heatmapSelected) this.captureTargetStart(options.id, options.element, true); return () => { const entry = this.containers.get(options.id); entry?.remove(); this.resizeObserver?.unobserve(options.element); this.containers.delete(options.id); this.scrollBins.delete(options.id); this.lastScroll.delete(options.id); this.layoutSegments.delete(options.id); }; }
+  refreshHeatmapLayout(): void { if (!this.heatmapInstance || !this.heatmapSelected) return; if (this.layoutTimer) clearTimeout(this.layoutTimer); this.layoutTimer = setTimeout(() => this.captureStart(), 200); }
+  private heatmapEnabled(): boolean { return !!this.heatmapConfig?.enabled && this.heatmapConfig.sampleRate > 0 && !doNotTrack(); }
+  private async loadHeatmapConfig(): Promise<void> { try { const response = await fetch(`/api/v1/heatmap-config/${encodeURIComponent(this.options.siteId)}`); if (!response.ok) return; const config = await response.json() as Partial<HeatmapConfig>; this.heatmapConfig = { enabled: config.enabled === true, sampleRate: Math.min(rate(config.sampleRate), rate(this.options.heatmap?.sampleRate)), version: config.version }; if (this.options.heatmap?.navigationMode !== 'manual') this.installHistory(); this.pageReady(); } catch { /* Heatmap failure never disables ordinary tracking. */ } }
+  private installHistory(): void { if (this.historyInstalled || !globalThis.history) return; this.historyInstalled = true; const wrap = (name: 'pushState' | 'replaceState') => { const original = globalThis.history[name]; globalThis.history[name] = ((...args: Parameters<History['pushState']>) => { const before = globalThis.location?.href; const result = original.apply(globalThis.history, args); if (before !== globalThis.location?.href) this.autoNavigation(); return result; }) as History['pushState']; }; wrap('pushState'); wrap('replaceState'); globalThis.addEventListener?.('popstate', () => this.autoNavigation()); globalThis.addEventListener?.('pageshow', event => { if ((event as PageTransitionEvent).persisted) { this.beginNavigation(); this.pageReady(); } }); }
+  private autoNavigation(): void { this.beginNavigation(); const serial = ++this.navigationSerial; let stable = Date.now(); let previous = this.layoutKey(); const wait = () => { if (serial !== this.navigationSerial) return; const current = this.layoutKey(); if (current !== previous) stable = Date.now(); previous = current; if (Date.now() - stable >= 200) this.pageReady(); else if (Date.now() - stable < 2000) setTimeout(wait, 50); }; setTimeout(wait, 50); }
+  private installHeatmapListeners(): void { if (this.listenersInstalled) return; this.listenersInstalled = true; globalThis.document?.addEventListener('click', event => this.capturePoint('click', event as MouseEvent), { passive: true }); globalThis.document?.addEventListener('pointermove', event => { const pointer = event as PointerEvent; if (pointer.pointerType === 'mouse') this.capturePoint('move', pointer); }, { passive: true }); globalThis.addEventListener?.('scroll', () => this.recordScroll('page'), { passive: true }); globalThis.addEventListener?.('resize', () => this.refreshHeatmapLayout(), { passive: true }); }
+  private capturePoint(type: 'click' | 'move', event: MouseEvent): void { if (!this.heatmapInstance || !this.heatmapSelected || this.heatmapNavigating || ignored(event.target) || fixed(event.target)) return; if (type === 'move') { if (Date.now() - this.lastMove < 100 || this.moveCount >= 1000) { if (this.moveCount >= 1000) this.moveTruncated = true; return; } this.lastMove = Date.now(); this.moveCount++; } else { if (this.clickCount >= 500) { this.clickTruncated = true; return; } this.clickCount++; } const container = this.containerFor(event.target); if (!container && this.inUnregisteredScrollable(event.target)) return; const geometry = this.geometry(container?.[0] ?? 'page', container?.[1]); const x = container ? event.clientX - container[1].getBoundingClientRect().left - container[1].clientLeft + container[1].scrollLeft : event.clientX + (globalThis.scrollX ?? 0); const y = container ? event.clientY - container[1].getBoundingClientRect().top - container[1].clientTop + container[1].scrollTop : event.clientY + (globalThis.scrollY ?? 0); if (x < 0 || y < 0 || x > geometry.contentWidth || y > geometry.contentHeight) return; this.enqueueHeatmap({ type, ...this.identity(geometry), x: Math.round(x), y: Math.round(y) }); }
+  private recordScroll(targetId: string): void { if (!this.heatmapInstance || !this.heatmapSelected || this.heatmapNavigating || Date.now() - (this.lastScroll.get(targetId) ?? 0) < 250) return; this.lastScroll.set(targetId, Date.now()); const element = targetId === 'page' ? undefined : this.containers.get(targetId)?.element; if (element && !this.pageVisible(element)) return; const g = this.geometry(targetId, element); const top = targetId === 'page' ? globalThis.scrollY ?? 0 : element!.scrollTop; const visible = targetId === 'page' ? globalThis.innerHeight ?? 0 : element!.clientHeight; const bins = this.scrollBins.get(targetId) ?? new Set<number>(); const first = Math.max(0, Math.floor((top / Math.max(1, g.contentHeight)) * 100)); const last = Math.min(99, Math.floor(((top + visible - 1) / Math.max(1, g.contentHeight)) * 100)); for (let i = first; i <= last; i++) bins.add(i); this.scrollBins.set(targetId, bins); this.enqueueHeatmap({ type: 'scroll', ...this.identity(g), scrollBins: [...bins] }); }
+  private observeLayouts(): void { if (this.resizeObserver || typeof ResizeObserver === 'undefined') return; this.resizeObserver = new ResizeObserver(() => this.refreshHeatmapLayout()); if (globalThis.document?.documentElement) this.resizeObserver.observe(globalThis.document.documentElement); if (globalThis.document?.body) this.resizeObserver.observe(globalThis.document.body); for (const entry of this.containers.values()) this.resizeObserver.observe(entry.element); }
+  private captureStart(force = false): void { if (this.heatmapNavigating) return; this.captureTargetStart('page', undefined, force); for (const [id, entry] of this.containers) this.captureTargetStart(id, entry.element, force); }
+  private captureTargetStart(targetId: string, element?: HTMLElement, force = false): void { const geometry = this.geometry(targetId, element); const segment = `${geometry.viewportWidth}x${geometry.viewportHeight}:${geometry.contentWidth}x${geometry.contentHeight}`; if (!force && this.layoutSegments.get(targetId) === segment) return; this.layoutSegments.set(targetId, segment); this.scrollBins.delete(targetId); this.lastScroll.delete(targetId); this.enqueueHeatmap({ type: 'start', ...this.identity(geometry) }); this.recordScroll(targetId); }
+  private identity(g: ReturnType<Tracker['geometry']>) { return { instanceId: this.heatmapInstance!, url: this.heatmapUrl, layoutVersion: this.heatmapLayoutVersion, ...g, truncated: this.moveTruncated || this.clickTruncated, dropped: this.dropped }; }
+  private geometry(targetId: string, element?: HTMLElement) { return { targetId, viewportWidth: Math.round(element?.clientWidth ?? globalThis.innerWidth ?? 0), viewportHeight: Math.round(element?.clientHeight ?? globalThis.innerHeight ?? 0), contentWidth: Math.round(element?.scrollWidth ?? globalThis.document?.documentElement?.scrollWidth ?? 0), contentHeight: Math.round(element?.scrollHeight ?? globalThis.document?.documentElement?.scrollHeight ?? 0) }; }
+  private layoutKey(): string { const g = this.geometry('page'); return `${globalThis.location?.href}|${g.viewportWidth}x${g.viewportHeight}|${g.contentWidth}x${g.contentHeight}`; }
+  private containerFor(target: EventTarget | null): [string, HTMLElement] | undefined { for (const [id, entry] of this.containers) if (target instanceof Node && entry.element.contains(target)) return [id, entry.element]; return undefined; }
+  private inUnregisteredScrollable(target: EventTarget | null): boolean { for (let e = target instanceof Element ? target.parentElement : null; e; e = e.parentElement) { const s = globalThis.getComputedStyle?.(e); if ((s?.overflowY === 'auto' || s?.overflowY === 'scroll') && e.scrollHeight > e.clientHeight) return true; } return false; }
+  private pageVisible(element: HTMLElement): boolean { const r = element.getBoundingClientRect(); return r.bottom > 0 && r.top < (globalThis.innerHeight ?? 0); }
+  private enqueueHeatmap(event: HeatmapEvent): void { const size = JSON.stringify(event).length; while (this.heatmapQueue.length && this.heatmapQueue.reduce((sum, value) => sum + JSON.stringify(value).length, size) > 256 * 1024) { this.heatmapQueue.shift(); this.dropped++; } this.heatmapQueue.push(event); if (this.heatmapQueue.length >= 20) void this.flushHeatmap(); else if (!this.heatmapTimer) this.heatmapTimer = setTimeout(() => void this.flushHeatmap(), 2000); }
+  private async flushHeatmap(unload = false): Promise<void> { if (this.heatmapTimer) clearTimeout(this.heatmapTimer); this.heatmapTimer = undefined; if (this.heatmapFlushInFlight || doNotTrack()) return; const batch = this.heatmapRetry ?? this.nextHeatmapBatch(); if (!batch) return; this.heatmapFlushInFlight = true; const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, clientBatchId: batch.clientBatchId, events: batch.events }); const endpoint = '/api/v1/collect/heatmaps'; if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json'}))) { this.heatmapRetry = undefined; this.heatmapFlushInFlight = false; return; } try { const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok && response.status < 500 && response.status !== 429) { this.heatmapRetry = undefined; return; } if (!response.ok) throw new Error('collector unavailable'); this.heatmapRetry = undefined; } catch { this.heatmapRetry = batch; if (!unload) this.heatmapTimer = setTimeout(() => void this.flushHeatmap(), 1000 + Math.random() * 1000); } finally { this.heatmapFlushInFlight = false; if (!unload && this.heatmapQueue.length && !this.heatmapRetry && !this.heatmapTimer) this.heatmapTimer = setTimeout(() => void this.flushHeatmap(), 0); } }
+  private nextHeatmapBatch(): HeatmapBatch | undefined { if (!this.heatmapQueue.length) return undefined; const events: HeatmapEvent[] = []; while (this.heatmapQueue.length) { const event = this.heatmapQueue[0]; const candidate = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, clientBatchId: '00000000-0000-4000-8000-000000000000', events: [...events, event] }); if (candidate.length > 48 * 1024) break; events.push(this.heatmapQueue.shift()!); } if (!events.length) { this.heatmapQueue.shift(); this.dropped++; return this.nextHeatmapBatch(); } return { clientBatchId: uuid(), events }; }
+  private schedule(): void { if (!this.timer) this.timer = setTimeout(() => void this.flush(), this.flushInterval); }
 }
 
 const trackers = new Map<string, Tracker>();
-
-export const SeeRay = {
-  init(options: TrackerOptions): Tracker {
-    const existing = trackers.get(options.siteId);
-    if (existing) return existing;
-    const tracker = new Tracker(options);
-    trackers.set(options.siteId, tracker);
-    return tracker;
-  },
-  trackPageView(options?: TrackOptions): void { trackers.forEach((tracker) => tracker.trackPageView(options)); },
-  track(type: string, options?: TrackOptions): void { trackers.forEach((tracker) => tracker.track(type, options)); },
-  trackGoal(name: string, options?: Omit<TrackOptions, 'name'>): void { trackers.forEach((tracker) => tracker.trackGoal(name, options)); },
-  flush(): Promise<void> { return Promise.all([...trackers.values()].map((tracker) => tracker.flush())).then(() => undefined); },
-};
-
+export const SeeRay = { init(options: TrackerOptions): Tracker { const old = trackers.get(options.siteId); if (old) return old; const tracker = new Tracker(options); trackers.set(options.siteId, tracker); return tracker; }, trackPageView(options?: TrackOptions): void { trackers.forEach(t => t.trackPageView(options)); }, track(type: string, options?: TrackOptions): void { trackers.forEach(t => t.track(type, options)); }, trackGoal(name: string, options?: Omit<TrackOptions, 'name'>): void { trackers.forEach(t => t.trackGoal(name, options)); }, beginNavigation(): void { trackers.forEach(t => t.beginNavigation()); }, cancelNavigation(): void { trackers.forEach(t => t.cancelNavigation()); }, pageReady(options?: PageReadyOptions): void { trackers.forEach(t => t.pageReady(options)); }, registerScrollContainer(options: ScrollContainerOptions): () => void { const unregister = [...trackers.values()].map(t => t.registerScrollContainer(options)); return () => unregister.forEach(remove => remove()); }, refreshHeatmapLayout(): void { trackers.forEach(t => t.refreshHeatmapLayout()); }, flush(): Promise<void> { return Promise.all([...trackers.values()].map(t => t.flush())).then(() => undefined); } };
 export const init = (options: TrackerOptions): Tracker => SeeRay.init(options);

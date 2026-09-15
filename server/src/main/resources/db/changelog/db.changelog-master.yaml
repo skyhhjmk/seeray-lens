@@ -34,3 +34,38 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0005-event-goals.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0006-heatmaps
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0006-heatmaps.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0007-heatmap-scroll-bins
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0007-heatmap-scroll-bins.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0008-heatmap-snapshots
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0008-heatmap-snapshots.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0009-heatmap-effective-sampling
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0009-heatmap-effective-sampling.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0010-heatmap-file-cleanup
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0010-heatmap-file-cleanup.sql
+            relativeToChangelogFile: false
