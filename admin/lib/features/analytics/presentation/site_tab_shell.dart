@@ -22,6 +22,10 @@ class SiteTabShell extends ConsumerWidget {
         ? SiteTopTab.visitors
         : path.endsWith('/acquisition')
         ? SiteTopTab.acquisition
+        : path.endsWith('/behaviour/heatmaps')
+        ? SiteTopTab.heatmaps
+        : path.endsWith('/behaviour/recordings')
+        ? SiteTopTab.recordings
         : path.contains('/behaviour')
         ? SiteTopTab.behaviour
         : path.endsWith('/goals')

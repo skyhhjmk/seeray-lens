@@ -6,6 +6,7 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include <webview_cef/webview_cef_plugin.h>
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -59,10 +60,12 @@ static void my_application_activate(GApplication* application) {
       project, self->dart_entrypoint_arguments);
 
   FlView* view = fl_view_new(project);
+  g_signal_connect(view, "key_press_event", G_CALLBACK(processKeyEventForCEF), nullptr);
+  g_signal_connect(view, "key_release_event", G_CALLBACK(processKeyEventForCEF), nullptr);
   GdkRGBA background_color;
   // Background defaults to black, override it here if necessary, e.g. #00000000
   // for transparent.
-  gdk_rgba_parse(&background_color, "#000000");
+  gdk_rgba_parse(&background_color, "#FFFFFF");
   fl_view_set_background_color(view, &background_color);
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));

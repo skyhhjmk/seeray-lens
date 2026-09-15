@@ -7,6 +7,7 @@ import '../../../shared/presentation/timezone_picker.dart';
 import '../../../core/i18n/app_i18n.dart';
 import '../../../shared/presentation/app_back_button.dart';
 import '../../../shared/presentation/page_help_button.dart';
+import 'heatmap_settings_section.dart';
 
 class SiteDetailPage extends ConsumerStatefulWidget {
   const SiteDetailPage({
@@ -216,6 +217,7 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
                             : context.tr('Save changes', '保存修改'),
                       ),
                     ),
+                    HeatmapSettingsSection(siteId: site.id),
                   ],
                 ),
               ),

@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -5,7 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../../core/i18n/app_i18n.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/analytics_range.dart';
-import 'heatmap_config_card.dart';
+import 'capture_view.dart';
 
 enum _HeatmapType { click, move, scroll }
 
@@ -22,14 +25,19 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
   List<Map<String, dynamic>> _variants = const [];
   Map<String, dynamic>? _selected;
   Map<String, dynamic>? _stats;
-  Map<String, dynamic>? _config;
   List<Map<String, dynamic>> _snapshots = const [];
   Map<String, dynamic>? _snapshot;
+  Map<String, dynamic>? _domSnapshot;
+  bool _useDomSnapshot = true;
+  bool _toolsOpen = false;
   Object? _error;
   bool _loading = true;
   _HeatmapType _type = _HeatmapType.click;
   double _overlayOpacity = .75;
-  final TransformationController _canvasTransform = TransformationController();
+  int _variantPage = 0;
+  static const _variantPageSize = 6;
+  final TextEditingController _variantPageInput = TextEditingController();
+  final ScrollController _previewScrollController = ScrollController();
   int _variantsRequest = 0;
   int _snapshotsRequest = 0;
   int _statsRequest = 0;
@@ -50,14 +58,33 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
       _variants = const [];
       _selected = null;
       _stats = null;
+      _domSnapshot = null;
       _loadVariants();
     }
   }
 
   @override
   void dispose() {
-    _canvasTransform.dispose();
+    _previewScrollController.dispose();
+    _variantPageInput.dispose();
     super.dispose();
+  }
+
+  void _scrollPreview(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_previewScrollController.hasClients) {
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(event, (
+      resolvedEvent,
+    ) {
+      final scrollEvent = resolvedEvent as PointerScrollEvent;
+      final position = _previewScrollController.position;
+      final next = (position.pixels + scrollEvent.scrollDelta.dy).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      _previewScrollController.jumpTo(next.toDouble());
+    });
   }
 
   Future<void> _loadVariants() async {
@@ -67,15 +94,14 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
       _error = null;
     });
     try {
-      final responses = await Future.wait<dynamic>([
-        ref
-            .read(apiProvider)
-            .request('GET', '/api/v1/sites/${widget.siteId}/heatmaps/variants'),
-        ref
-            .read(apiProvider)
-            .request('GET', '/api/v1/sites/${widget.siteId}/heatmaps/config'),
-      ]);
-      final response = responses[0] as List;
+      final response =
+          await ref
+                  .read(apiProvider)
+                  .request(
+                    'GET',
+                    '/api/v1/sites/${widget.siteId}/heatmaps/variants',
+                  )
+              as List;
       final variants = response
           .cast<Map>()
           .map((x) => x.cast<String, dynamic>())
@@ -84,7 +110,6 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
       setState(() {
         _variants = variants;
         _selected = variants.isEmpty ? null : variants.first;
-        _config = (responses[1] as Map).cast<String, dynamic>();
         _loading = false;
       });
       await _loadStats();
@@ -116,14 +141,34 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
           .cast<Map>()
           .map((item) => item.cast<String, dynamic>())
           .toList();
-      if (mounted && request == _snapshotsRequest && identical(variant, _selected)) {
+      Map<String, dynamic>? domSnapshot;
+      try {
+        final metadata =
+            await ref
+                    .read(apiProvider)
+                    .request(
+                      'GET',
+                      '/api/v1/sites/${widget.siteId}/heatmaps/dom-snapshots/${variant['id']}/metadata',
+                    )
+                as Map;
+        domSnapshot = metadata.cast<String, dynamic>();
+      } catch (_) {
+        domSnapshot = null;
+      }
+      if (mounted &&
+          request == _snapshotsRequest &&
+          identical(variant, _selected)) {
         setState(() {
           _snapshots = snapshots;
           _snapshot = snapshots.isEmpty ? null : snapshots.first;
+          _domSnapshot = domSnapshot;
+          _useDomSnapshot = domSnapshot != null;
         });
       }
     } catch (error) {
-      if (mounted && request == _snapshotsRequest) setState(() => _error = error);
+      if (mounted && request == _snapshotsRequest) {
+        setState(() => _error = error);
+      }
     }
   }
 
@@ -170,32 +215,6 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
     }
   }
 
-  Future<void> _saveConfig({bool? enabled, int? sampleRate}) async {
-    final config = _config;
-    if (config == null) return;
-    final next = <String, dynamic>{
-      'enabled': enabled ?? config['enabled'] == true,
-      'sampleRate': sampleRate ?? (config['sampleRate'] as num?)?.toInt() ?? 10,
-      'rawRetentionDays': (config['rawRetentionDays'] as num?)?.toInt() ?? 30,
-      'aggregateRetentionDays':
-          (config['aggregateRetentionDays'] as num?)?.toInt() ?? 180,
-    };
-    try {
-      final response =
-          await ref
-                  .read(apiProvider)
-                  .request(
-                    'PUT',
-                    '/api/v1/sites/${widget.siteId}/heatmaps/config',
-                    body: next,
-                  )
-              as Map;
-      if (mounted) setState(() => _config = response.cast<String, dynamic>());
-    } catch (error) {
-      if (mounted) setState(() => _error = error);
-    }
-  }
-
   Future<void> _loadStats() async {
     final variant = _selected;
     if (variant == null) return;
@@ -210,7 +229,9 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
                     '/api/v1/sites/${widget.siteId}/heatmaps/stats?variantId=${variant['id']}&from=${_date(range.from)}&to=${_date(range.to)}&type=${_type.name}',
                   )
               as Map;
-      if (mounted && request == _statsRequest && identical(variant, _selected)) {
+      if (mounted &&
+          request == _statsRequest &&
+          identical(variant, _selected)) {
         setState(() {
           _stats = result.cast<String, dynamic>();
           _error = null;
@@ -219,6 +240,157 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
     } catch (error) {
       if (mounted && request == _statsRequest) setState(() => _error = error);
     }
+  }
+
+  Future<void> _selectVariant(Map<String, dynamic>? value) async {
+    if (value == null || identical(value, _selected)) return;
+    setState(() {
+      _snapshotsRequest++;
+      _statsRequest++;
+      _selected = value;
+      _variantPage = _variants.indexOf(value) ~/ _variantPageSize;
+      _stats = null;
+      _snapshots = const [];
+      _snapshot = null;
+      _domSnapshot = null;
+      _useDomSnapshot = true;
+    });
+    await _loadStats();
+    await _loadSnapshots();
+  }
+
+  Future<void> _selectType(Set<_HeatmapType> value) async {
+    final type = value.first;
+    if (type == _type) return;
+    setState(() {
+      _type = type;
+      _stats = null;
+    });
+    await _loadStats();
+  }
+
+  void _goToVariantPage(int page) {
+    final pageCount = (_variants.length / _variantPageSize).ceil();
+    if (pageCount == 0) return;
+    setState(() => _variantPage = page.clamp(0, pageCount - 1));
+  }
+
+  Widget _buildVariantPane(BuildContext context) {
+    final tr = context.tr;
+    final pageCount = (_variants.length / _variantPageSize).ceil();
+    final pageItems = _variants
+        .skip(_variantPage * _variantPageSize)
+        .take(_variantPageSize)
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          tr('Page instances', '页面实例'),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Expanded(
+          child: ListView.builder(
+            itemCount: pageItems.length,
+            itemBuilder: (context, index) {
+              final item = pageItems[index];
+              final active = identical(item, _selected);
+              return ListTile(
+                dense: true,
+                selected: active,
+                title: Text(
+                  '${item['pageUrl']}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${item['contentWidth']}×${item['contentHeight']} · ${_readableDateTime(item['createdAt'])}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => _selectVariant(item),
+              );
+            },
+          ),
+        ),
+        const Divider(height: 12),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 0,
+          children: [
+            IconButton(
+              tooltip: tr('First page', '第一页'),
+              onPressed: _variantPage > 0 ? () => _goToVariantPage(0) : null,
+              icon: const Icon(Icons.first_page),
+            ),
+            IconButton(
+              tooltip: tr('Previous page', '上一页'),
+              onPressed: _variantPage > 0
+                  ? () => _goToVariantPage(_variantPage - 1)
+                  : null,
+              icon: const Icon(Icons.chevron_left),
+            ),
+            DropdownButton<int>(
+              value: pageCount == 0 ? null : _variantPage,
+              hint: const Text('—'),
+              items: List.generate(
+                pageCount,
+                (index) => DropdownMenuItem(
+                  value: index,
+                  child: Text('${index + 1} / $pageCount'),
+                ),
+              ),
+              onChanged: (value) {
+                if (value != null) _goToVariantPage(value);
+              },
+            ),
+            IconButton(
+              tooltip: tr('Next page', '下一页'),
+              onPressed: _variantPage + 1 < pageCount
+                  ? () => _goToVariantPage(_variantPage + 1)
+                  : null,
+              icon: const Icon(Icons.chevron_right),
+            ),
+            IconButton(
+              tooltip: tr('Last page', '最后一页'),
+              onPressed: _variantPage + 1 < pageCount
+                  ? () => _goToVariantPage(pageCount - 1)
+                  : null,
+              icon: const Icon(Icons.last_page),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _variantPageInput,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  isDense: true,
+                  labelText: tr('Go to page', '跳转页码'),
+                ),
+                onSubmitted: (value) {
+                  final page = int.tryParse(value);
+                  if (page != null) _goToVariantPage(page - 1);
+                },
+              ),
+            ),
+            IconButton(
+              tooltip: tr('Go', '跳转'),
+              onPressed: () {
+                final page = int.tryParse(_variantPageInput.text);
+                if (page != null) _goToVariantPage(page - 1);
+              },
+              icon: const Icon(Icons.arrow_forward),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        _Summary(stats: _stats, compact: true),
+      ],
+    );
   }
 
   @override
@@ -239,12 +411,6 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
       return ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          if (_config != null)
-            ConfigCard(
-              config: _config!,
-              onEnabled: (value) => _saveConfig(enabled: value),
-              onRate: (value) => _saveConfig(sampleRate: value),
-            ),
           _Empty(
             title: tr('No matched page layouts yet', '尚无匹配的页面布局'),
             message: tr(
@@ -260,217 +426,332 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
     final selected = _selected!;
     final cells = ((_stats?['cells'] as List?) ?? const []).cast<Map>();
     final depth = ((_stats?['depth'] as List?) ?? const []).cast<Map>();
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          tr('Behaviour heatmaps', '页面行为热图'),
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          tr(
-            'Coordinates are sampled CSS pixels. Mouse points are samples, not attention time; scroll reach is geometric and may be non-monotonic.',
-            '坐标采用采样 CSS 像素。鼠标点是采样而非注意力时长；滚动到达表示几何可见区域，曲线可能不单调。',
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (_config != null)
-          ConfigCard(
-            config: _config!,
-            onEnabled: (value) => _saveConfig(enabled: value),
-            onRate: (value) => _saveConfig(sampleRate: value),
-          ),
-        if (_config != null) const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
+    return LayoutBuilder(
+      builder: (context, constraints) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DropdownButton<Map<String, dynamic>>(
-              value: selected,
-              items: _variants
-                  .map(
-                    (variant) => DropdownMenuItem(
-                      value: variant,
-                      child: Text(
-                        '${variant['pageUrl']} · ${variant['layoutVersion']} · ${variant['contentWidth']}×${variant['contentHeight']}',
-                      ),
+            if (_error != null)
+              Card(
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: ListTile(
+                  title: Text(
+                    tr(
+                      'Could not refresh heatmap; the last visible result is retained.',
+                      '热图刷新失败；已显示的结果仍会保留。',
                     ),
-                  )
-                  .toList(),
-              onChanged: (value) async {
-                if (value == null) return;
-                setState(() {
-                  _snapshotsRequest++;
-                  _statsRequest++;
-                  _selected = value;
-                  _stats = null;
-                  _snapshots = const [];
-                  _snapshot = null;
-                });
-                await _loadStats();
-                await _loadSnapshots();
-              },
-            ),
-            SegmentedButton<_HeatmapType>(
-              segments: [
-                ButtonSegment(
-                  value: _HeatmapType.click,
-                  label: Text(tr('Clicks', '点击')),
-                ),
-                ButtonSegment(
-                  value: _HeatmapType.move,
-                  label: Text(tr('Mouse moves', '鼠标移动')),
-                ),
-                ButtonSegment(
-                  value: _HeatmapType.scroll,
-                  label: Text(tr('Scroll depth', '滚动深度')),
-                ),
-              ],
-              selected: {_type},
-              onSelectionChanged: (value) async {
-                setState(() {
-                  _type = value.first;
-                  _stats = null;
-                });
-                await _loadStats();
-              },
-            ),
-            FilledButton.icon(
-              onPressed: _loadStats,
-              icon: const Icon(Icons.refresh),
-              label: Text(tr('Refresh', '刷新')),
-            ),
-            OutlinedButton.icon(
-              onPressed: _uploadSnapshot,
-              icon: const Icon(Icons.upload_file_outlined),
-              label: Text(tr('Upload snapshot', '上传截图')),
-            ),
-            if (_snapshots.isNotEmpty)
-              DropdownButton<Map<String, dynamic>>(
-                value: _snapshot,
-                items: _snapshots
-                    .map(
-                      (snapshot) => DropdownMenuItem(
-                        value: snapshot,
-                        child: Text(
-                          '${snapshot['width']}×${snapshot['height']} · ${snapshot['createdAt']}',
-                        ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) => setState(() => _snapshot = value),
-              ),
-            if (_snapshot != null)
-              IconButton(
-                tooltip: tr('Delete selected snapshot', '删除选中截图'),
-                onPressed: _deleteSnapshot,
-                icon: const Icon(Icons.delete_outline),
-              ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        if (_error != null)
-          Card(
-            color: Theme.of(context).colorScheme.errorContainer,
-            child: ListTile(
-              title: Text(
-                tr(
-                  'Could not refresh heatmap; the last visible result is retained.',
-                  '热图刷新失败；已显示的结果仍会保留。',
-                ),
-              ),
-              trailing: TextButton(
-                onPressed: _loadStats,
-                child: Text(tr('Retry', '重试')),
-              ),
-            ),
-          ),
-        _Summary(stats: _stats),
-        const SizedBox(height: 16),
-        if (_type == _HeatmapType.scroll)
-          _ScrollDepth(depth: depth)
-        else ...[
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            children: [
-              Text(tr('Overlay opacity', '覆盖层透明度')),
-              SizedBox(
-                width: 180,
-                child: Slider(
-                  value: _overlayOpacity,
-                  min: .1,
-                  max: 1,
-                  onChanged: (value) => setState(() => _overlayOpacity = value),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => setState(() {
-                  _canvasTransform.value = Matrix4.identity();
-                }),
-                icon: const Icon(Icons.center_focus_strong),
-                label: Text(tr('Reset view', '重置视图')),
-              ),
-              _HeatLegend(type: _type),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 560,
-            child: Card(
-              clipBehavior: Clip.antiAlias,
-              child: InteractiveViewer(
-                transformationController: _canvasTransform,
-                minScale: .25,
-                maxScale: 4,
-                boundaryMargin: const EdgeInsets.all(240),
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio:
-                        (selected['contentWidth'] as num).toDouble() /
-                        (selected['contentHeight'] as num).toDouble(),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (_snapshot != null)
-                          _SnapshotTiles(
-                            baseUrl: ref.read(apiProvider).baseUrl,
-                            siteId: widget.siteId,
-                            snapshot: _snapshot!,
-                            accessToken: ref.read(apiProvider).accessToken,
-                          )
-                        else
-                          Center(
-                            child: Text(
-                              tr('No snapshot uploaded for this layout', '此布局尚未上传截图'),
-                            ),
-                          ),
-                        Opacity(
-                          opacity: _overlayOpacity,
-                          child: CustomPaint(
-                            painter: _GridPainter(
-                              cells,
-                              (selected['contentWidth'] as num).toDouble(),
-                              (selected['contentHeight'] as num).toDouble(),
-                              (_stats?['gridSize'] as num?)?.toDouble() ?? 16,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                  ),
+                  trailing: TextButton(
+                    onPressed: _loadStats,
+                    child: Text(tr('Retry', '重试')),
                   ),
                 ),
               ),
+            if (_type == _HeatmapType.scroll) ...[
+              _ScrollDepth(depth: depth),
+              const SizedBox(height: 8),
+            ] else
+              _HeatLegend(type: _type),
+            const SizedBox(height: 8),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: Listener(
+                        onPointerSignal: _scrollPreview,
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final contentWidth =
+                                (selected['contentWidth'] as num).toDouble();
+                            final contentHeight =
+                                (selected['contentHeight'] as num).toDouble();
+                            final scale = math
+                                .min(1.0, constraints.maxWidth / contentWidth)
+                                .toDouble();
+                            final previewWidth = contentWidth * scale;
+                            final previewHeight = contentHeight * scale;
+                            return Scrollbar(
+                              controller: _previewScrollController,
+                              thumbVisibility: true,
+                              child: SingleChildScrollView(
+                                controller: _previewScrollController,
+                                primary: false,
+                                child: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: SizedBox(
+                                    width: previewWidth,
+                                    height: previewHeight,
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        if (_useDomSnapshot &&
+                                            _domSnapshot != null)
+                                          CaptureView(
+                                            apiBase: ref
+                                                .read(apiProvider)
+                                                .baseUrl,
+                                            siteId: widget.siteId,
+                                            resourceId: '${selected['id']}',
+                                            accessToken:
+                                                ref
+                                                    .read(apiProvider)
+                                                    .accessToken ??
+                                                '',
+                                            mode: 'snapshot',
+                                          )
+                                        else if (_snapshot != null)
+                                          _SnapshotTiles(
+                                            baseUrl: ref
+                                                .read(apiProvider)
+                                                .baseUrl,
+                                            siteId: widget.siteId,
+                                            snapshot: _snapshot!,
+                                            accessToken: ref
+                                                .read(apiProvider)
+                                                .accessToken,
+                                            scale: scale,
+                                          )
+                                        else
+                                          Center(
+                                            child: Text(
+                                              tr(
+                                                'No automatic or manual snapshot for this layout',
+                                                '此布局暂无自动或手动快照',
+                                              ),
+                                            ),
+                                          ),
+                                        Opacity(
+                                          opacity: _overlayOpacity,
+                                          child: CustomPaint(
+                                            painter: _GridPainter(
+                                              cells,
+                                              contentWidth,
+                                              contentHeight,
+                                              (_stats?['gridSize'] as num?)
+                                                      ?.toDouble() ??
+                                                  16,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: 16,
+                    bottom: 16,
+                    child: AnimatedContainer(
+                      // Rendering the expanded controls while this container is
+                      // still constrained to 56×56 produces a transient Flex
+                      // overflow. Swap the two layouts atomically instead.
+                      duration: Duration.zero,
+                      width: _toolsOpen ? 760 : 56,
+                      height: _toolsOpen ? 528 : 56,
+                      padding: EdgeInsets.all(_toolsOpen ? 12 : 0),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(
+                          _toolsOpen ? 20 : 28,
+                        ),
+                        boxShadow: const [
+                          BoxShadow(blurRadius: 18, color: Color(0x44000000)),
+                        ],
+                      ),
+                      child: _toolsOpen
+                          ? Row(
+                              children: [
+                                SizedBox(
+                                  width: 310,
+                                  child: _buildVariantPane(context),
+                                ),
+                                const VerticalDivider(width: 25),
+                                Expanded(
+                                  child: SingleChildScrollView(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                tr(
+                                                  'Heatmap controls',
+                                                  '热图快捷设置',
+                                                ),
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.titleMedium,
+                                              ),
+                                            ),
+                                            IconButton(
+                                              onPressed: () => setState(
+                                                () => _toolsOpen = false,
+                                              ),
+                                              icon: const Icon(Icons.close),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        SegmentedButton<_HeatmapType>(
+                                          segments: [
+                                            ButtonSegment(
+                                              value: _HeatmapType.click,
+                                              label: Text(tr('Clicks', '点击')),
+                                              icon: const Icon(Icons.ads_click),
+                                            ),
+                                            ButtonSegment(
+                                              value: _HeatmapType.move,
+                                              label: Text(tr('Moves', '鼠标')),
+                                              icon: const Icon(Icons.mouse),
+                                            ),
+                                            ButtonSegment(
+                                              value: _HeatmapType.scroll,
+                                              label: Text(tr('Scroll', '滚动')),
+                                              icon: const Icon(Icons.swap_vert),
+                                            ),
+                                          ],
+                                          selected: {_type},
+                                          onSelectionChanged: _selectType,
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: [
+                                            OutlinedButton.icon(
+                                              onPressed: _loadStats,
+                                              icon: const Icon(Icons.refresh),
+                                              label: Text(tr('Refresh', '刷新')),
+                                            ),
+                                            OutlinedButton.icon(
+                                              onPressed: _uploadSnapshot,
+                                              icon: const Icon(
+                                                Icons.upload_file,
+                                              ),
+                                              label: Text(
+                                                tr('Upload image', '上传图片'),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Text(tr('Preview source', '预览来源')),
+                                        if (_domSnapshot != null)
+                                          ChoiceChip(
+                                            label: Text(
+                                              '${tr('Automatic DOM', '自动 DOM')} · ${_readableDateTime(_domSnapshot!['createdAt'])}',
+                                            ),
+                                            selected: _useDomSnapshot,
+                                            onSelected: (_) => setState(
+                                              () => _useDomSnapshot = true,
+                                            ),
+                                          ),
+                                        if (_snapshots.isNotEmpty)
+                                          DropdownButton<Map<String, dynamic>>(
+                                            isExpanded: true,
+                                            value: _useDomSnapshot
+                                                ? null
+                                                : _snapshot,
+                                            hint: Text(
+                                              tr('Manual image', '手动图片'),
+                                            ),
+                                            items: _snapshots
+                                                .map(
+                                                  (
+                                                    snapshot,
+                                                  ) => DropdownMenuItem(
+                                                    value: snapshot,
+                                                    child: Text(
+                                                      _readableDateTime(
+                                                        snapshot['createdAt'],
+                                                      ),
+                                                    ),
+                                                  ),
+                                                )
+                                                .toList(),
+                                            onChanged: (value) => setState(() {
+                                              _snapshot = value;
+                                              _useDomSnapshot = false;
+                                            }),
+                                          ),
+                                        if (!_useDomSnapshot &&
+                                            _snapshot != null)
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: TextButton.icon(
+                                              onPressed: _deleteSnapshot,
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                              ),
+                                              label: Text(
+                                                tr('Delete image', '删除图片'),
+                                              ),
+                                            ),
+                                          ),
+                                        const Divider(height: 24),
+                                        Row(
+                                          children: [
+                                            Text(tr('Opacity', '透明度')),
+                                            Expanded(
+                                              child: Slider(
+                                                value: _overlayOpacity,
+                                                min: .1,
+                                                max: 1,
+                                                onChanged: (value) => setState(
+                                                  () => _overlayOpacity = value,
+                                                ),
+                                              ),
+                                            ),
+                                            IconButton(
+                                              tooltip: tr(
+                                                'Back to top',
+                                                '回到顶部',
+                                              ),
+                                              onPressed: () =>
+                                                  _previewScrollController
+                                                      .jumpTo(0),
+                                              icon: const Icon(
+                                                Icons.vertical_align_top,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : IconButton(
+                              tooltip: tr('Heatmap controls', '热图快捷设置'),
+                              onPressed: () =>
+                                  setState(() => _toolsOpen = true),
+                              icon: const Icon(Icons.tune),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
-        if (_stats == null)
-          const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: CircularProgressIndicator()),
-          ),
-      ],
+            if (_stats == null)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -495,7 +776,11 @@ class _HeatLegend extends StatelessWidget {
       const SizedBox(width: 6),
       Text(context.tr('High', '高')),
       const SizedBox(width: 6),
-      Text(type == _HeatmapType.move ? context.tr('sample count', '采样点数') : context.tr('count', '次数')),
+      Text(
+        type == _HeatmapType.move
+            ? context.tr('sample count', '采样点数')
+            : context.tr('count', '次数'),
+      ),
     ],
   );
 }
@@ -506,11 +791,13 @@ class _SnapshotTiles extends StatelessWidget {
     required this.siteId,
     required this.snapshot,
     required this.accessToken,
+    required this.scale,
   });
   final String baseUrl;
   final String siteId;
   final Map<String, dynamic> snapshot;
   final String? accessToken;
+  final double scale;
 
   @override
   Widget build(BuildContext context) {
@@ -521,8 +808,8 @@ class _SnapshotTiles extends StatelessWidget {
       children: List.generate(tiles, (index) {
         final top = index * 2048;
         final tileHeight = (height - top).clamp(1, 2048).toInt();
-        return Expanded(
-          flex: tileHeight,
+        return SizedBox(
+          height: tileHeight * scale,
           child: Image.network(
             '$baseUrl/api/v1/sites/$siteId/heatmaps/snapshots/${snapshot['id']}/tiles/$index',
             headers: {
@@ -538,12 +825,13 @@ class _SnapshotTiles extends StatelessWidget {
 }
 
 class _Summary extends StatelessWidget {
-  const _Summary({required this.stats});
+  const _Summary({required this.stats, this.compact = false});
   final Map<String, dynamic>? stats;
+  final bool compact;
   @override
   Widget build(BuildContext context) => Wrap(
-    spacing: 12,
-    runSpacing: 12,
+    spacing: compact ? 4 : 12,
+    runSpacing: compact ? 4 : 12,
     children: [
       _metric(
         context,
@@ -558,7 +846,7 @@ class _Summary extends StatelessWidget {
       _metric(
         context,
         context.tr('Updated', '数据更新'),
-        stats?['updatedAt']?.toString() ?? '—',
+        _readableDateTime(stats?['updatedAt']),
       ),
       _metric(
         context,
@@ -573,16 +861,22 @@ class _Summary extends StatelessWidget {
     ],
   );
   Widget _metric(BuildContext context, String label, String value) => SizedBox(
-    width: 180,
+    width: compact ? 148 : 180,
     child: Card(
+      margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(compact ? 7 : 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(label),
-            const SizedBox(height: 4),
-            Text(value, style: Theme.of(context).textTheme.titleMedium),
+            SizedBox(height: compact ? 1 : 4),
+            Text(
+              value,
+              style: compact
+                  ? Theme.of(context).textTheme.bodyMedium
+                  : Theme.of(context).textTheme.titleMedium,
+            ),
           ],
         ),
       ),
@@ -591,7 +885,12 @@ class _Summary extends StatelessWidget {
 }
 
 class _GridPainter extends CustomPainter {
-  const _GridPainter(this.cells, this.contentWidth, this.contentHeight, this.gridSize);
+  const _GridPainter(
+    this.cells,
+    this.contentWidth,
+    this.contentHeight,
+    this.gridSize,
+  );
   final List<Map> cells;
   final double contentWidth;
   final double contentHeight;
@@ -616,7 +915,10 @@ class _GridPainter extends CustomPainter {
       canvas.drawRect(
         Rect.fromLTWH(
           (cell['x'] as num).toDouble() * gridSize / contentWidth * size.width,
-          (cell['y'] as num).toDouble() * gridSize / contentHeight * size.height,
+          (cell['y'] as num).toDouble() *
+              gridSize /
+              contentHeight *
+              size.height,
           gridSize / contentWidth * size.width,
           gridSize / contentHeight * size.height,
         ),
@@ -692,3 +994,16 @@ class _Empty extends StatelessWidget {
 
 String _date(DateTime value) =>
     '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+
+String _readableDateTime(Object? value) {
+  if (value == null) return '—';
+  final parsed = DateTime.tryParse(value.toString());
+  if (parsed == null) return value.toString();
+  final local = parsed.toLocal();
+  return '${local.year.toString().padLeft(4, '0')}-'
+      '${local.month.toString().padLeft(2, '0')}-'
+      '${local.day.toString().padLeft(2, '0')} '
+      '${local.hour.toString().padLeft(2, '0')}:'
+      '${local.minute.toString().padLeft(2, '0')}:'
+      '${local.second.toString().padLeft(2, '0')}';
+}

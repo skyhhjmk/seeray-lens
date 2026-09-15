@@ -37,6 +37,9 @@ dependencies:
   http: ^1.5.0
   file_picker: ^10.3.10
   shared_preferences: ^2.5.4
+  web: ^1.1.1
+  webview_flutter: ^4.14.1
+  webview_cef: ^0.6.2
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -63,6 +66,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/replayer.js
 
   # To add assets to your application, add an assets section, like this:
   # assets:

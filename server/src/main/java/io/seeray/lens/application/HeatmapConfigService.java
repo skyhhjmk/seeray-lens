@@ -27,7 +27,7 @@ public class HeatmapConfigService {
 
     public Config publicConfig(String trackingId) {
         Site site = Site.find("trackingId", trackingId).firstResult();
-        if (site == null || !site.trackingEnabled) return new Config(false, 0, 0, 30, 180);
+        if (site == null || !site.trackingEnabled) return new Config(false, 0, 0, 30, 180, false, false, 0, 14);
         return view(config(site));
     }
 
@@ -37,6 +37,10 @@ public class HeatmapConfigService {
         access.require(site.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
         if (update.sampleRate() < 0
                 || update.sampleRate() > 100
+                || update.recordingSampleRate() < 0
+                || update.recordingSampleRate() > 100
+                || update.recordingRetentionDays() < 1
+                || update.recordingRetentionDays() > 365
                 || update.rawRetentionDays() < 1
                 || update.aggregateRetentionDays() < update.rawRetentionDays())
             throw new ControlPlaneException(400, "INVALID_HEATMAP_CONFIG", "Heatmap configuration is invalid");
@@ -46,6 +50,10 @@ public class HeatmapConfigService {
         config.sampleRate = update.sampleRate();
         config.rawRetentionDays = update.rawRetentionDays();
         config.aggregateRetentionDays = update.aggregateRetentionDays();
+        config.autoSnapshotEnabled = update.autoSnapshotEnabled();
+        config.recordingEnabled = update.recordingEnabled();
+        config.recordingSampleRate = update.recordingSampleRate();
+        config.recordingRetentionDays = update.recordingRetentionDays();
         config.configVersion++;
         config.updatedAt = Instant.now();
         return view(config);
@@ -61,6 +69,10 @@ public class HeatmapConfigService {
         config.sampleRate = 10;
         config.rawRetentionDays = 30;
         config.aggregateRetentionDays = 180;
+        config.autoSnapshotEnabled = true;
+        config.recordingEnabled = false;
+        config.recordingSampleRate = 1;
+        config.recordingRetentionDays = 14;
         config.configVersion = 1;
         config.updatedAt = Instant.now();
         return config;
@@ -72,11 +84,31 @@ public class HeatmapConfigService {
                 config.sampleRate,
                 config.configVersion,
                 config.rawRetentionDays,
-                config.aggregateRetentionDays);
+                config.aggregateRetentionDays,
+                config.autoSnapshotEnabled,
+                config.recordingEnabled,
+                config.recordingSampleRate,
+                config.recordingRetentionDays);
     }
 
     public record Config(
-            boolean enabled, int sampleRate, long version, int rawRetentionDays, int aggregateRetentionDays) {}
+            boolean enabled,
+            int sampleRate,
+            long version,
+            int rawRetentionDays,
+            int aggregateRetentionDays,
+            boolean autoSnapshotEnabled,
+            boolean recordingEnabled,
+            int recordingSampleRate,
+            int recordingRetentionDays) {}
 
-    public record Update(boolean enabled, int sampleRate, int rawRetentionDays, int aggregateRetentionDays) {}
+    public record Update(
+            boolean enabled,
+            int sampleRate,
+            int rawRetentionDays,
+            int aggregateRetentionDays,
+            boolean autoSnapshotEnabled,
+            boolean recordingEnabled,
+            int recordingSampleRate,
+            int recordingRetentionDays) {}
 }

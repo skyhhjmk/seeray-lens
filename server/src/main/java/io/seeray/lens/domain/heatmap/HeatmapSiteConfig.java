@@ -35,4 +35,16 @@ public class HeatmapSiteConfig extends PanacheEntityBase {
 
     @Column(name = "updated_at", nullable = false)
     public Instant updatedAt;
+
+    @Column(name = "auto_snapshot_enabled", nullable = false)
+    public boolean autoSnapshotEnabled;
+
+    @Column(name = "recording_enabled", nullable = false)
+    public boolean recordingEnabled;
+
+    @Column(name = "recording_sample_rate", nullable = false)
+    public int recordingSampleRate;
+
+    @Column(name = "recording_retention_days", nullable = false)
+    public int recordingRetentionDays;
 }

@@ -33,6 +33,18 @@ describe('tracker package', () => {
     expect(envelope.events[0].eventId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('derives absolute collector URLs from the tracker script origin', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 202 }));
+    const tracker = new Tracker({ siteId: 'srl_absolute', apiOrigin: 'https://lens.example.test/tracker.js' });
+    tracker.track('page_view');
+    await tracker.flush();
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('https://lens.example.test/api/v1/collect');
+    const internal = tracker as unknown as { heatmapEndpoint: string; heatmapConfigEndpoint: string };
+    expect(internal.heatmapEndpoint).toBe('https://lens.example.test/api/v1/collect/heatmaps');
+    expect(internal.heatmapConfigEndpoint).toBe('https://lens.example.test/api/v1/heatmap-config/srl_absolute');
+  });
+
   it('reuses a site tracker and de-duplicates page views from repeated embeds', async () => {
     vi.stubGlobal('navigator', { doNotTrack: '0' });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 202 }));

@@ -8,7 +8,11 @@
   "types": "./dist/index.d.ts",
   "files": ["dist"],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,iife --global-name SeeRayLens --dts --minify --sourcemap && npm run size",
+    "build": "npm run build:tracker && npm run build:recorder && npm run build:replayer && npm run size",
+    "build:tracker": "tsup src/index.ts --format esm,iife --global-name SeeRayLens --dts --minify --sourcemap",
+    "build:recorder": "tsup src/recorder.ts --format esm --minify --sourcemap --out-dir dist",
+    "build:replayer": "tsup src/replayer.ts --format esm --minify --sourcemap --out-dir dist",
+    "publish:server-assets": "node scripts/publish-server-assets.mjs",
     "lint": "eslint src test",
     "test": "vitest run",
     "size": "node scripts/report-size.mjs"
@@ -16,6 +20,7 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/node": "^22.0.0",
+    "rrweb": "2.1.4",
     "eslint": "^9.0.0",
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.0.0",

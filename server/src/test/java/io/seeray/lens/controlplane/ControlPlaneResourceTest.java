@@ -319,6 +319,71 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void capturesMaskedDomAndRecordingChunksFromAnAllowedOrigin() {
+        Tokens owner = register("recording" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        var created = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Recording\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract();
+        String site = created.path("id");
+        String trackingId = created.path("trackingId");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"host\":\"capture.example\",\"enabled\":true}")
+                .post("/api/v1/sites/" + site + "/domains")
+                .then()
+                .statusCode(201);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"enabled\":true,\"sampleRate\":100,\"rawRetentionDays\":30,\"aggregateRetentionDays\":180,\"autoSnapshotEnabled\":true,\"recordingEnabled\":true,\"recordingSampleRate\":100,\"recordingRetentionDays\":14}")
+                .put("/api/v1/sites/" + site + "/heatmaps/config")
+                .then()
+                .statusCode(200)
+                .body("recordingEnabled", is(true));
+
+        String instance = UUID.randomUUID().toString();
+        var snapshot = given().header("Origin", "https://capture.example")
+                .contentType("application/json")
+                .body(
+                        "{\"protocolVersion\":1,\"instanceId\":\"" + instance
+                                + "\",\"url\":\"https://capture.example/form?token=secret\",\"layoutVersion\":\"v1\",\"targetId\":\"page\",\"viewportWidth\":1200,\"viewportHeight\":800,\"contentWidth\":1200,\"contentHeight\":2400,\"events\":[{\"type\":2,\"timestamp\":1,\"data\":{}}]}")
+                .post("/api/v1/collect/dom-snapshots/" + trackingId)
+                .then()
+                .statusCode(201)
+                .body("captured", is(true))
+                .extract();
+        String variant = snapshot.path("variantId");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/heatmaps/dom-snapshots/" + variant)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1));
+
+        String recording = UUID.randomUUID().toString();
+        given().header("Origin", "https://capture.example")
+                .contentType("application/json")
+                .body(
+                        "{\"protocolVersion\":1,\"recordingId\":\"" + recording
+                                + "\",\"instanceId\":\"" + instance
+                                + "\",\"sequence\":0,\"startedOffsetMs\":0,\"finalChunk\":true,\"url\":\"https://capture.example/form\",\"events\":[{\"type\":4,\"timestamp\":1,\"data\":{}}]}")
+                .post("/api/v1/collect/recordings/" + trackingId)
+                .then()
+                .statusCode(202)
+                .body("accepted", is(true));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/heatmaps/recordings/" + recording)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].pageUrl", is("https://capture.example/form"));
+    }
+
+    @Test
     void heatmapScrollDenominatorRequiresAnInitialStartEvent() throws Exception {
         Tokens owner = register("heatmap-denominator" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");

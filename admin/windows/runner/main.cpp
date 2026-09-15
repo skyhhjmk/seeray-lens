@@ -2,11 +2,17 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <webview_cef/webview_cef_plugin_c_api.h>
+
 #include "flutter_window.h"
 #include "utils.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  int cef_exit_code = initCEFProcesses(instance);
+  if (cef_exit_code >= 0) {
+    return cef_exit_code;
+  }
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
@@ -36,6 +42,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   while (::GetMessage(&msg, nullptr, 0, 0)) {
     ::TranslateMessage(&msg);
     ::DispatchMessage(&msg);
+    handleWndProcForCEF(msg.hwnd, msg.message, msg.wParam, msg.lParam);
   }
 
   ::CoUninitialize();

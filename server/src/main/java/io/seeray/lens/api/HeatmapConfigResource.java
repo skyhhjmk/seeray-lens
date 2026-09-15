@@ -52,6 +52,17 @@ public class HeatmapConfigResource {
         @Min(30)
         @Max(3650)
         public int aggregateRetentionDays = 180;
+
+        public boolean autoSnapshotEnabled = true;
+        public boolean recordingEnabled;
+
+        @Min(0)
+        @Max(100)
+        public int recordingSampleRate = 1;
+
+        @Min(1)
+        @Max(365)
+        public int recordingRetentionDays = 14;
     }
 
     private static boolean allowed(String host, List<SiteAllowedDomain> domains) {

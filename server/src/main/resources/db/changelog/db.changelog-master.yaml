@@ -69,3 +69,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0010-heatmap-file-cleanup.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0011-dom-snapshots-recordings
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0011-dom-snapshots-recordings.sql
+            relativeToChangelogFile: false

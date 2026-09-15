@@ -4,6 +4,7 @@ import io.quarkus.security.Authenticated;
 import io.seeray.lens.application.HeatmapConfigService;
 import io.seeray.lens.application.HeatmapQueryService;
 import io.seeray.lens.application.HeatmapSnapshotService;
+import io.seeray.lens.application.RecordingCaptureService;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
@@ -19,12 +20,17 @@ public class HeatmapResource {
     private final HeatmapQueryService heatmaps;
     private final HeatmapSnapshotService snapshots;
     private final HeatmapConfigService configs;
+    private final RecordingCaptureService recordings;
 
     public HeatmapResource(
-            HeatmapQueryService heatmaps, HeatmapSnapshotService snapshots, HeatmapConfigService configs) {
+            HeatmapQueryService heatmaps,
+            HeatmapSnapshotService snapshots,
+            HeatmapConfigService configs,
+            RecordingCaptureService recordings) {
         this.heatmaps = heatmaps;
         this.snapshots = snapshots;
         this.configs = configs;
+        this.recordings = recordings;
     }
 
     @GET
@@ -41,7 +47,14 @@ public class HeatmapResource {
         return configs.update(
                 siteId,
                 new HeatmapConfigService.Update(
-                        request.enabled, request.sampleRate, request.rawRetentionDays, request.aggregateRetentionDays));
+                        request.enabled,
+                        request.sampleRate,
+                        request.rawRetentionDays,
+                        request.aggregateRetentionDays,
+                        request.autoSnapshotEnabled,
+                        request.recordingEnabled,
+                        request.recordingSampleRate,
+                        request.recordingRetentionDays));
     }
 
     @GET
@@ -115,5 +128,33 @@ public class HeatmapResource {
     public Response delete(@PathParam("siteId") UUID siteId, @PathParam("snapshotId") UUID snapshotId) {
         snapshots.delete(siteId, snapshotId);
         return Response.noContent().build();
+    }
+
+    @GET
+    @Path("/dom-snapshots/{variantId}")
+    public com.fasterxml.jackson.databind.JsonNode domSnapshot(
+            @PathParam("siteId") UUID siteId, @PathParam("variantId") UUID variantId) {
+        return recordings.snapshot(siteId, variantId);
+    }
+
+    @GET
+    @Path("/dom-snapshots/{variantId}/metadata")
+    public RecordingCaptureService.DomSnapshot domSnapshotMetadata(
+            @PathParam("siteId") UUID siteId, @PathParam("variantId") UUID variantId) {
+        return recordings.snapshotMetadata(siteId, variantId);
+    }
+
+    @GET
+    @Path("/recordings")
+    public List<RecordingCaptureService.RecordingSummary> recordings(
+            @PathParam("siteId") UUID siteId, @DefaultValue("100") @QueryParam("limit") int limit) {
+        return recordings.recordings(siteId, limit);
+    }
+
+    @GET
+    @Path("/recordings/{recordingId}")
+    public List<RecordingCaptureService.RecordingChunk> recording(
+            @PathParam("siteId") UUID siteId, @PathParam("recordingId") UUID recordingId) {
+        return recordings.recording(siteId, recordingId);
     }
 }

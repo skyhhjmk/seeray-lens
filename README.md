@@ -10,12 +10,11 @@ Heatmaps are disabled by default. Once an administrator enables them for a site,
 
 ## Heatmap integration
 
-Use the normal tracker snippet, adding `data-heatmap` only after enabling heatmaps in the site’s Behaviour → Heatmaps page:
+Use the normal tracker snippet. The tracker fetches the site's public capture configuration on each page view and only loads the larger recorder module when automatic snapshots or session recordings are enabled:
 
 ```html
 <script src="https://analytics.example/tracker.js"
-        data-site-id="srl_your_public_tracking_id"
-        data-heatmap></script>
+        data-site-id="srl_your_public_tracking_id"></script>
 ```
 
 For same-address PJAX or query-driven replacements, stop the old lifecycle before replacing content, then declare the new layout only after replacement and scroll restoration have completed:
@@ -38,15 +37,25 @@ const unregister = SeeRay.registerScrollContainer({
 // Call unregister() when the element is removed.
 ```
 
-Coordinates are CSS pixels grouped by URL, `layoutVersion`, target, viewport, and content dimensions. A same-size redesign that moves content must use a new `layoutVersion`; the service cannot infer that geometry change from coordinates alone. Fixed/sticky and `data-seeray-heatmap-ignore` regions are excluded. The feature never uploads DOM, input values, element text, selectors, visitor IDs, session IDs, or replayable pointer timelines.
+Coordinates are CSS pixels grouped by URL, `layoutVersion`, target, viewport, and content dimensions. A same-size redesign that moves content must use a new `layoutVersion`; the service cannot infer that geometry change from coordinates alone. Fixed/sticky and `data-seeray-heatmap-ignore` regions are excluded.
 
-Snapshots are stored under `/var/lib/seeray-lens/heatmaps` by default. Set `SEERAY_HEATMAPS_STORAGE_DIR` to a durable mounted directory in production. A multi-instance deployment requires that path to be shared and read/write-capable on every application instance; a local container filesystem is only suitable for a single application instance.
+When automatic snapshots are enabled, the lazily loaded recorder uploads an rrweb DOM snapshot from a sampled visitor's real browser. Session recordings are independently disabled by default and have their own sample rate and retention. Input values are masked before upload, canvas capture and font collection are disabled, scripts are removed from snapshots, and replays are rebuilt in rrweb's sandboxed iframe. Mark additional sensitive regions with `data-seeray-mask`; exclude an entire subtree with `data-seeray-ignore`. Do not enable either feature until the site's applicable consent and privacy requirements are met.
+
+For an asynchronous page that has not reached its final layout when capture starts, trigger a fresh snapshot after rendering stabilizes:
+
+```js
+SeeRay.captureHeatmapSnapshot();
+```
+
+Manual PNG/JPEG snapshots are stored under `/var/lib/seeray-lens/heatmaps` by default and remain available as a fallback. DOM snapshots and recording chunks are stored in PostgreSQL and removed according to their configured retention periods. Set `SEERAY_HEATMAPS_STORAGE_DIR` to a durable mounted directory in production for image snapshots.
 
 For local Flutter Web development, use the backend's configured development origin:
 
 ```sh
 (cd admin && flutter run -d chrome --web-port 3000)
 ```
+
+Native admin builds render DOM snapshots and recordings inside an application WebView. Desktop builds bundle a pinned CEF/Chromium runtime to avoid host WebKit and GPU-driver differences; Android and iOS use their system WebViews. The first desktop build downloads the CEF distribution and is substantially larger than the Web build.
 
 With the Quarkus control plane and PostgreSQL running, the real Flutter REST
 loop can be exercised with:

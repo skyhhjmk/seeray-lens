@@ -2,13 +2,10 @@ package io.seeray.lens.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seeray.lens.domain.common.UuidV7;
 import io.seeray.lens.domain.site.Site;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.sql.*;
 import java.time.*;
 import java.util.*;
@@ -19,11 +16,13 @@ import javax.sql.DataSource;
 public class HeatmapAggregationService {
     private final DataSource dataSource;
     private final ObjectMapper mapper;
+    private final HeatmapVariantService variants;
 
     @Inject
-    public HeatmapAggregationService(DataSource dataSource, ObjectMapper mapper) {
+    public HeatmapAggregationService(DataSource dataSource, ObjectMapper mapper, HeatmapVariantService variants) {
         this.dataSource = dataSource;
         this.mapper = mapper;
+        this.variants = variants;
     }
 
     @Transactional
@@ -65,7 +64,17 @@ public class HeatmapAggregationService {
             TrackingSanitizer.CleanUrl page =
                     TrackingSanitizer.url(event.path("url").asText(), mapper);
             String url = page.scheme() + "://" + page.host() + page.path();
-            UUID variant = variant(c, batch.site, url, event);
+            UUID variant = variants.resolve(
+                    c,
+                    batch.site,
+                    new HeatmapVariantService.Identity(
+                            url,
+                            event.path("layoutVersion").asText(),
+                            event.path("targetId").asText(),
+                            event.path("viewportWidth").asInt(),
+                            event.path("viewportHeight").asInt(),
+                            event.path("contentWidth").asInt(),
+                            event.path("contentHeight").asInt()));
             UUID instance = UUID.fromString(event.path("instanceId").asText());
             String type = event.path("type").asText();
             if (type.equals("start"))
@@ -74,58 +83,6 @@ public class HeatmapAggregationService {
             if (type.equals("click") || type.equals("move")) grid(c, batch.site, date, variant, event, type);
             if (type.equals("scroll")) scroll(c, batch.site, instance, date, variant, event);
         }
-    }
-
-    private UUID variant(Connection c, UUID site, String url, JsonNode e) throws Exception {
-        String layout = e.path("layoutVersion").asText(),
-                target = e.path("targetId").asText();
-        int vw = e.path("viewportWidth").asInt(),
-                vh = e.path("viewportHeight").asInt(),
-                cw = e.path("contentWidth").asInt(),
-                ch = e.path("contentHeight").asInt();
-        String hash = digest(url + "\n" + layout + "\n" + target + "\n" + vw + "\n" + vh + "\n" + cw + "\n" + ch);
-        String lookup =
-                "select id from heatmap_variant where site_id=? and page_hash=? and layout_version=? and target_id=? and viewport_width=? and viewport_height=? and content_width=? and content_height=?";
-        try (PreparedStatement s = c.prepareStatement(lookup)) {
-            bind(s, site, hash, layout, target, vw, vh, cw, ch);
-            try (ResultSet r = s.executeQuery()) {
-                if (r.next()) return r.getObject(1, UUID.class);
-            }
-        }
-        try (PreparedStatement s = c.prepareStatement(
-                "insert into heatmap_variant (id,site_id,page_url,page_hash,layout_version,target_id,viewport_width,viewport_height,content_width,content_height) values (?,?,?,?,?,?,?,?,?,?) on conflict do nothing")) {
-            s.setObject(1, UuidV7.next());
-            s.setObject(2, site);
-            s.setString(3, url);
-            s.setString(4, hash);
-            s.setString(5, layout);
-            s.setString(6, target);
-            s.setInt(7, vw);
-            s.setInt(8, vh);
-            s.setInt(9, cw);
-            s.setInt(10, ch);
-            s.executeUpdate();
-        }
-        try (PreparedStatement s = c.prepareStatement(lookup)) {
-            bind(s, site, hash, layout, target, vw, vh, cw, ch);
-            try (ResultSet r = s.executeQuery()) {
-                r.next();
-                return r.getObject(1, UUID.class);
-            }
-        }
-    }
-
-    private static void bind(
-            PreparedStatement s, UUID site, String hash, String layout, String target, int vw, int vh, int cw, int ch)
-            throws SQLException {
-        s.setObject(1, site);
-        s.setString(2, hash);
-        s.setString(3, layout);
-        s.setString(4, target);
-        s.setInt(5, vw);
-        s.setInt(6, vh);
-        s.setInt(7, cw);
-        s.setInt(8, ch);
     }
 
     private static void startInstance(
@@ -201,13 +158,6 @@ public class HeatmapAggregationService {
                 count.executeUpdate();
             }
         }
-    }
-
-    private static String digest(String value) throws Exception {
-        byte[] bytes = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
-        StringBuilder result = new StringBuilder(64);
-        for (byte valueByte : bytes) result.append(String.format("%02x", valueByte));
-        return result.toString();
     }
 
     private record Batch(UUID id, UUID site, String payload, Instant received, int effectiveSampleRate) {}
