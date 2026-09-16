@@ -47,22 +47,200 @@ void main() {
 
     expect(find.text('Edit container tags'), findsOneWidget);
     expect(find.text('Tags array'), findsNothing);
-    final fields = find.byType(TextField);
-    await tester.enterText(fields.at(0), 'signup');
-    await tester.enterText(fields.at(1), 'tag_signup');
-    await tester.enterText(fields.at(2), 'signup_tag');
+    await tester.enterText(
+      find.bySemanticsLabel('Sent event type'),
+      'tag_signup',
+    );
+    await tester.enterText(
+      find.bySemanticsLabel('Display name (optional)'),
+      'signup_tag',
+    );
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.text('Add custom event'),
+            matching: find.byType(TextButton),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.bySemanticsLabel('Event name'), 'signup');
     await tester.tap(find.text('Save draft'));
     await tester.pumpAndSettle();
 
     expect(api.lastBody, [
       {
         'type': 'event',
-        'trigger': 'signup',
         'eventType': 'tag_signup',
         'name': 'signup_tag',
+        'triggers': [
+          {'type': 'event', 'event': 'signup'},
+        ],
       },
     ]);
     expect(find.byTooltip('Publish v1'), findsOneWidget);
+  });
+
+  testWidgets('edits custom code snippets with a graphical code field', (
+    tester,
+  ) async {
+    final api = _GraphicalFeatureApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit tags'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom HTML / JavaScript').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Injected code'), findsOneWidget);
+    expect(find.byType(Scrollbar), findsNWidgets(3));
+    await tester.ensureVisible(find.text('Add custom event'));
+    await tester.tap(find.text('Add custom event'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.text('Add custom JS trigger'),
+            matching: find.byType(TextButton),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.bySemanticsLabel('Event name', skipOffstage: false),
+      'signup',
+    );
+    await tester.enterText(
+      find.bySemanticsLabel('Display name', skipOffstage: false),
+      'Signup pixel',
+    );
+    await tester.enterText(
+      find.bySemanticsLabel('HTML / JavaScript snippet', skipOffstage: false),
+      '<script>window.signupPixel = true;</script>',
+    );
+    await tester.enterText(
+      find.bySemanticsLabel('window function name', skipOffstage: false),
+      'shouldFireSignupPixel',
+    );
+    await tester.enterText(
+      find.bySemanticsLabel(
+        'Function expression (optional)',
+        skipOffstage: false,
+      ),
+      '(event) => event.event === "signup"',
+    );
+    await tester.tap(find.text('Save draft'));
+    await tester.pumpAndSettle();
+
+    expect(api.lastBody, [
+      {
+        'type': 'custom_html',
+        'name': 'Signup pixel',
+        'triggers': [
+          {'type': 'event', 'event': 'signup'},
+          {
+            'type': 'custom_js',
+            'functionName': 'shouldFireSignupPixel',
+            'code': '(event) => event.event === "signup"',
+          },
+        ],
+        'code': '<script>window.signupPixel = true;</script>',
+      },
+    ]);
+  });
+
+  testWidgets('manages tags from the highlighted left list', (tester) async {
+    final api = _GraphicalFeatureApi(
+      initialTags: [
+        {
+          'type': 'event',
+          'eventType': 'tag_first',
+          'name': 'First tag',
+          'triggers': [
+            {'type': 'predefined', 'event': 'page_view'},
+          ],
+        },
+        {
+          'type': 'event',
+          'eventType': 'tag_second',
+          'name': 'Second tag',
+          'triggers': [
+            {'type': 'predefined', 'event': 'signup'},
+          ],
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit tags'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('First tag'), findsNWidgets(2));
+    expect(find.text('Second tag'), findsOneWidget);
+    await tester.tap(
+      find
+          .ancestor(of: find.text('Second tag'), matching: find.byType(InkWell))
+          .first,
+    );
+    await tester.pumpAndSettle();
+
+    final displayName = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Display name (optional)',
+    );
+    expect(
+      tester.widget<TextField>(displayName).controller!.text,
+      'Second tag',
+    );
+    await tester.enterText(displayName, 'Second changed');
+    await tester.pump();
+    expect(find.text('Discard', skipOffstage: false), findsOneWidget);
+    await tester.tap(find.text('Discard', skipOffstage: false));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(displayName).controller!.text,
+      'Second tag',
+    );
+
+    await tester.enterText(displayName, 'Second saved');
+    await tester.pump();
+    await tester.tap(find.text('Save', skipOffstage: false).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Discard', skipOffstage: false), findsNothing);
+    expect(find.text('Second saved'), findsNWidgets(2));
+
+    await tester.tap(find.text('Add tag'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tag 3'), findsOneWidget);
+    expect(find.text('Add tag'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
   });
 
   testWidgets('edits the tag container lifecycle separately from its tags', (
@@ -170,8 +348,10 @@ class _EmptyFeatureApi extends SeeRayApi {
 }
 
 class _GraphicalFeatureApi extends SeeRayApi {
-  _GraphicalFeatureApi() : super(baseUrl: 'https://lens.example.test');
+  _GraphicalFeatureApi({this.initialTags = const []})
+    : super(baseUrl: 'https://lens.example.test');
 
+  final List<dynamic> initialTags;
   Object? lastBody;
 
   @override
@@ -189,6 +369,11 @@ class _GraphicalFeatureApi extends SeeRayApi {
           'enabled': true,
           'publishedVersion': null,
         },
+      ];
+    }
+    if (method == 'GET' && path.endsWith('/container-1/versions')) {
+      return [
+        {'version': 1, 'tags': initialTags},
       ];
     }
     if (method == 'POST' && path.endsWith('/container-1/versions')) {

@@ -100,20 +100,59 @@ public class TagManagerService {
     private static void validateTag(JsonNode tag) {
         if (tag == null || !tag.isObject()) throw invalid();
         String type = text(tag, "type");
-        if (!"event".equals(type) && !"page_view".equals(type)) throw invalid();
+        if (!"event".equals(type) && !"page_view".equals(type) && !"custom_html".equals(type)) throw invalid();
 
         String eventType = text(tag, "eventType");
         String name = text(tag, "name");
-        if (eventType == null && name == null) throw invalid();
+        String code = text(tag, "code");
+        if ("custom_html".equals(type)) {
+            if (name == null || code == null || code.length() > 32 * 1024 || code.indexOf('\u0000') >= 0) throw invalid();
+            if (!hasTrigger(tag)) throw invalid();
+        } else if (eventType == null && name == null) {
+            throw invalid();
+        }
         if (eventType != null && eventType.length() > 64) throw invalid();
         if (name != null && name.length() > 256) throw invalid();
 
         JsonNode trigger = tag.get("trigger");
-        if ("event".equals(type) && !validTrigger(trigger)) throw invalid();
+        if ("event".equals(type) && trigger == null && !hasTriggerArray(tag.get("triggers"))) throw invalid();
         if (trigger != null && !trigger.isNull() && !validTrigger(trigger)) throw invalid();
+        JsonNode triggers = tag.get("triggers");
+        if (triggers != null && !triggers.isNull()) validateTriggers(triggers);
 
         JsonNode properties = tag.get("properties");
         if (properties != null && !properties.isNull() && !properties.isObject()) throw invalid();
+    }
+
+    private static boolean hasTrigger(JsonNode tag) {
+        JsonNode trigger = tag.get("trigger");
+        return validTrigger(trigger) || hasTriggerArray(tag.get("triggers"));
+    }
+
+    private static boolean hasTriggerArray(JsonNode triggers) {
+        return triggers != null && triggers.isArray() && triggers.size() > 0;
+    }
+
+    private static void validateTriggers(JsonNode triggers) {
+        if (!triggers.isArray() || triggers.size() > 30 || triggers.size() == 0) throw invalid();
+        for (JsonNode trigger : triggers) {
+            if (trigger == null || trigger.isNull()) throw invalid();
+            if (trigger.isTextual()) {
+                if (!validTrigger(trigger)) throw invalid();
+                continue;
+            }
+            if (!trigger.isObject()) throw invalid();
+            String kind = textOrNull(trigger, "type");
+            if (kind == null || "predefined".equals(kind) || "event".equals(kind)) {
+                if (!validTrigger(trigger.get("event"))) throw invalid();
+                continue;
+            }
+            if (!"custom_js".equals(kind)) throw invalid();
+            String functionName = textOrNull(trigger, "functionName");
+            String code = textOrNull(trigger, "code");
+            if (functionName == null || functionName.length() > 128) throw invalid();
+            if (code != null && (code.length() > 16 * 1024 || code.indexOf('\u0000') >= 0)) throw invalid();
+        }
     }
 
     private static boolean validTrigger(JsonNode trigger) {
@@ -128,6 +167,13 @@ public class TagManagerService {
     }
 
     private static String text(JsonNode object, String field) {
+        JsonNode value = object.get(field);
+        if (value == null || value.isNull()) return null;
+        if (!value.isTextual() || value.asText().isBlank()) throw invalid();
+        return value.asText().trim();
+    }
+
+    private static String textOrNull(JsonNode object, String field) {
         JsonNode value = object.get(field);
         if (value == null || value.isNull()) return null;
         if (!value.isTextual() || value.asText().isBlank()) throw invalid();

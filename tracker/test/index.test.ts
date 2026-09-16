@@ -266,4 +266,82 @@ describe('tracker package', () => {
       ]),
     );
   });
+
+  it('loads and runs a custom HTML or JavaScript tag on its trigger', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const appended: Array<{ type?: string; textContent?: string }> = [];
+    vi.stubGlobal('document', {
+      addEventListener: vi.fn(),
+      head: {
+        appendChild: (node: { type?: string; textContent?: string }) => {
+          appended.push(node);
+        },
+      },
+      createElement: () => ({ type: '', textContent: '' }),
+    });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          type: 'custom_html',
+          trigger: 'signup',
+          name: 'Signup pixel',
+          code: 'window.__seeraySignupPixel = true;',
+        }],
+      })
+      .mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const tracker = new Tracker({
+      siteId: 'srl_custom_html',
+      apiOrigin: 'https://lens.example.test/tracker.js',
+      tagManager: true,
+      flushInterval: 100,
+    });
+    await tracker.ready();
+    tracker.push({ event: 'signup' });
+    expect(appended).toEqual([
+      { type: 'text/javascript', textContent: 'window.__seeraySignupPixel = true;' },
+    ]);
+  });
+
+  it('supports predefined multi-triggers and mounts custom trigger functions on window', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const appended: Array<{ type?: string; textContent?: string }> = [];
+    vi.stubGlobal('document', {
+      addEventListener: vi.fn(),
+      head: { appendChild: (node: { type?: string; textContent?: string }) => appended.push(node) },
+      createElement: () => ({ type: '', textContent: '' }),
+    });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          type: 'custom_html',
+          name: 'Purchase snippet',
+          triggers: [
+            { type: 'predefined', event: 'page_view' },
+            {
+              type: 'custom_js',
+              functionName: 'shouldFirePurchaseSnippet',
+              code: '(event) => event.event === "purchase"',
+            },
+          ],
+          code: 'window.purchaseSnippet = true;',
+        }],
+      })
+      .mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const tracker = new Tracker({
+      siteId: 'srl_custom_trigger',
+      apiOrigin: 'https://lens.example.test/tracker.js',
+      tagManager: true,
+      flushInterval: 100,
+    });
+    await tracker.ready();
+    tracker.push({ event: 'purchase' });
+    expect((globalThis as Record<string, unknown>).shouldFirePurchaseSnippet).toEqual(expect.any(Function));
+    expect(appended).toEqual([{ type: 'text/javascript', textContent: 'window.purchaseSnippet = true;' }]);
+  });
 });

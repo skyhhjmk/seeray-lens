@@ -7,7 +7,7 @@ export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?:
 export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; }
 interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId: string; sessionId: string; }
 interface HeatmapConfig { enabled: boolean; sampleRate: number; version?: number; autoSnapshotEnabled: boolean; recordingEnabled: boolean; recordingSampleRate: number; }
-interface TagDefinition { type?: unknown; trigger?: unknown; eventType?: unknown; category?: unknown; action?: unknown; name?: unknown; properties?: unknown; }
+interface TagDefinition { type?: unknown; trigger?: unknown; triggers?: unknown; eventType?: unknown; category?: unknown; action?: unknown; name?: unknown; code?: unknown; properties?: unknown; }
 interface ExperimentDefinition { name?: unknown; variants?: unknown; }
 interface HeatmapEvent { type: 'start' | 'click' | 'move' | 'scroll'; instanceId: string; url: string; layoutVersion: string; targetId: string; viewportWidth: number; viewportHeight: number; contentWidth: number; contentHeight: number; x?: number; y?: number; scrollBins?: number[]; truncated?: boolean; dropped?: number; }
 interface ContainerRegistration { element: HTMLElement; remove: () => void; }
@@ -81,7 +81,74 @@ export class Tracker {
   private async loadConfigured(): Promise<void> { if (!this.collectionAllowed()) return; const tasks: Promise<void>[] = []; if (this.options.tagManager) tasks.push(this.loadTagManager()); if (this.options.experiments) tasks.push(this.loadExperiments()); if (this.options.heatmap?.enabled) tasks.push(this.loadHeatmapConfig()); await Promise.all(tasks); }
   private async loadTagManager(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.tagManagerEndpoint); if (!response.ok) return; const tags = await response.json(); if (Array.isArray(tags)) this.tagDefinitions = tags.filter((tag): tag is TagDefinition => !!tag && typeof tag === 'object').slice(0, 100); } catch { /* Tag execution is optional and must not affect ordinary tracking. */ } }
   private async loadExperiments(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.experimentsEndpoint); if (!response.ok) return; const definitions = await response.json(); if (!Array.isArray(definitions)) return; this.experimentDefinitions.clear(); for (const definition of definitions as ExperimentDefinition[]) { const name = text(definition.name); const variants = Array.isArray(definition.variants) ? definition.variants.filter((variant): variant is string => typeof variant === 'string' && !!variant.trim()) : []; if (name && variants.length >= 2) this.experimentDefinitions.set(name, variants); } } catch { /* Experiment configuration is optional and must not affect ordinary tracking. */ } }
-  private fireTagTriggers(data: DataLayerEvent | TrackOptions): void { if (!this.collectionAllowed()) return; const event = typeof (data as DataLayerEvent).event === 'string' ? (data as DataLayerEvent).event : undefined; if (!event) return; for (const tag of this.tagDefinitions) { if (tag.type !== 'event' && tag.type !== 'page_view') continue; if (tag.type === 'page_view' && event !== 'page_view') continue; const trigger = typeof tag.trigger === 'string' ? tag.trigger : tag.trigger && typeof tag.trigger === 'object' && typeof (tag.trigger as { event?: unknown }).event === 'string' ? (tag.trigger as { event: string }).event : text(tag.name); if (tag.type === 'event' && trigger !== event) continue; const eventType = text(tag.eventType) ?? text(tag.name); if (!eventType) continue; const properties = { ...(data as DataLayerEvent).properties, ...(isProperties(tag.properties) ? tag.properties : {}) }; this.track(eventType, { category: text(tag.category), action: text(tag.action), name: text(tag.name), properties: Object.keys(properties).length ? properties : undefined }); } }
+  private fireTagTriggers(data: DataLayerEvent | TrackOptions): void { if (!this.collectionAllowed()) return; const event = typeof (data as DataLayerEvent).event === 'string' ? (data as DataLayerEvent).event : undefined; if (!event) return; for (const tag of this.tagDefinitions) { const type = text(tag.type); if (type !== 'event' && type !== 'page_view' && type !== 'custom_html') continue; if (!this.tagMatches(tag, event, data)) continue; if (type === 'custom_html') { this.executeCustomHtml(tag); continue; } const eventType = text(tag.eventType) ?? text(tag.name); if (!eventType) continue; const properties = { ...(data as DataLayerEvent).properties, ...(isProperties(tag.properties) ? tag.properties : {}) }; this.track(eventType, { category: text(tag.category), action: text(tag.action), name: text(tag.name), properties: Object.keys(properties).length ? properties : undefined }); } }
+  private tagMatches(tag: TagDefinition, event: string, data: DataLayerEvent | TrackOptions): boolean {
+    const triggers = Array.isArray(tag.triggers) ? tag.triggers : [];
+    if (triggers.length) return triggers.some(trigger => this.triggerMatches(trigger, event, data));
+    const type = text(tag.type);
+    const trigger = typeof tag.trigger === 'string' ? tag.trigger : tag.trigger && typeof tag.trigger === 'object' && typeof (tag.trigger as { event?: unknown }).event === 'string' ? (tag.trigger as { event: string }).event : type === 'page_view' ? 'page_view' : text(tag.name);
+    return trigger === event;
+  }
+  private triggerMatches(trigger: unknown, event: string, data: DataLayerEvent | TrackOptions): boolean {
+    if (typeof trigger === 'string') return trigger.trim() === event;
+    if (!trigger || typeof trigger !== 'object') return false;
+    const value = trigger as { type?: unknown; event?: unknown; functionName?: unknown; code?: unknown };
+    if (text(value.type) === 'custom_js') return this.runCustomTrigger(value, data);
+    return text(value.event) === event;
+  }
+  private runCustomTrigger(trigger: { functionName?: unknown; code?: unknown }, data: DataLayerEvent | TrackOptions): boolean {
+    const functionName = text(trigger.functionName);
+    if (!functionName) return false;
+    const host = globalThis as unknown as Record<string, unknown>;
+    let candidate = host[functionName];
+    if (typeof candidate !== 'function' && text(trigger.code)) {
+      try {
+        candidate = Function(`return (${text(trigger.code)});`)();
+        if (typeof candidate === 'function') host[functionName] = candidate;
+      } catch {
+        return false;
+      }
+    }
+    if (typeof candidate !== 'function') return false;
+    try {
+      const context = { siteId: this.options.siteId, url: (data as TrackOptions).url ?? globalThis.location?.href, title: (data as TrackOptions).title ?? globalThis.document?.title };
+      return (candidate as (event: DataLayerEvent | TrackOptions, context: Record<string, unknown>) => unknown)(data, context) === true;
+    } catch {
+      return false;
+    }
+  }
+  private executeCustomHtml(tag: TagDefinition): void {
+    const code = text(tag.code);
+    const document = globalThis.document;
+    if (!code || !document) return;
+    try {
+      const target = document.head ?? document.body ?? document.documentElement;
+      if (!target) return;
+      if (!/^\s*<(?:[a-z][\w:-]*|!doctype|!--|\/)/i.test(code)) {
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.textContent = code;
+        target.appendChild(script);
+        return;
+      }
+      const template = document.createElement('template');
+      template.innerHTML = code;
+      const nodes = [...template.content.childNodes];
+      for (const node of nodes) {
+        if (node.nodeType === 1 && (node as Element).tagName.toLowerCase() === 'script') {
+          const source = node as HTMLScriptElement;
+          const script = document.createElement('script');
+          for (const attribute of [...source.attributes]) script.setAttribute(attribute.name, attribute.value);
+          script.textContent = source.textContent ?? '';
+          target.appendChild(script);
+        } else {
+          target.appendChild(node.cloneNode(true));
+        }
+      }
+    } catch {
+      // A CSP or malformed snippet must not disable ordinary analytics.
+    }
+  }
   private heatmapEnabled(): boolean { return !!this.heatmapConfig?.enabled && this.heatmapConfig.sampleRate > 0 && this.collectionAllowed(); }
   private captureEnabled(): boolean { return (this.heatmapEnabled() || !!this.heatmapConfig?.recordingEnabled && this.heatmapConfig.recordingSampleRate > 0) && this.collectionAllowed(); }
   private async loadHeatmapConfig(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.heatmapConfigEndpoint); if (!response.ok) return; const config = await response.json() as Partial<HeatmapConfig>; const configuredRate = rate(config.sampleRate); const clientRate = this.options.heatmap?.sampleRate; this.heatmapConfig = { enabled: config.enabled === true, sampleRate: clientRate === undefined ? configuredRate : Math.min(configuredRate, rate(clientRate)), version: config.version, autoSnapshotEnabled: config.autoSnapshotEnabled !== false, recordingEnabled: config.recordingEnabled === true, recordingSampleRate: rate(config.recordingSampleRate ?? 1) }; if (this.options.heatmap?.navigationMode !== 'manual') this.installHistory(); this.pageReady(); } catch { /* Capture failure never disables ordinary tracking. */ } }

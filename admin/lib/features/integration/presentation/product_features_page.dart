@@ -305,8 +305,8 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                 const SizedBox(height: 8),
                 Text(
                   context.tr(
-                    'Only event and page-view tags are executed by the tracker. HTML and arbitrary scripts are ignored.',
-                    '追踪器只执行 event 和 page_view 标签；HTML 与任意脚本会被忽略。',
+                    'The tracker supports event tags, page-view tags, and custom HTML/JavaScript snippets. Published snippets run in the visitor\'s page, so only publish code you trust.',
+                    '追踪器支持事件标签、页面浏览标签，以及自定义 HTML/JavaScript 代码段。已发布代码会在访客页面执行，请只发布可信代码。',
                   ),
                 ),
               ],
@@ -1024,6 +1024,9 @@ class _TagDraftDialog extends StatefulWidget {
 
 class _TagDraftDialogState extends State<_TagDraftDialog> {
   final _tags = <_TagFormEntry>[];
+  final _savedTags = <_TagFormEntry>[];
+  final _dirtyTags = <bool>[];
+  var _selectedIndex = 0;
   String? _error;
 
   @override
@@ -1032,6 +1035,8 @@ class _TagDraftDialogState extends State<_TagDraftDialog> {
     final initial = widget.initialTags ?? const [];
     _tags.addAll(initial.whereType<Map>().map(_TagFormEntry.fromJson));
     if (_tags.isEmpty) _tags.add(_TagFormEntry());
+    _savedTags.addAll(_tags.map((entry) => entry.clone()));
+    _dirtyTags.addAll(List<bool>.filled(_tags.length, false));
   }
 
   @override
@@ -1039,74 +1044,267 @@ class _TagDraftDialogState extends State<_TagDraftDialog> {
     for (final tag in _tags) {
       tag.dispose();
     }
+    for (final tag in _savedTags) {
+      tag.dispose();
+    }
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(context.tr('Edit container tags', '编辑容器标签')),
-    content: SizedBox(
-      width: 620,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 600),
-        child: SingleChildScrollView(
+  double _editorHeight(BuildContext context) =>
+      (MediaQuery.sizeOf(context).height - 220).clamp(320.0, 540.0).toDouble();
+
+  void _addTag() {
+    setState(() {
+      final tag = _TagFormEntry();
+      _tags.add(tag);
+      _savedTags.add(tag.clone());
+      _dirtyTags.add(false);
+      _selectedIndex = _tags.length - 1;
+      _error = null;
+    });
+  }
+
+  void _removeTag(int index) {
+    if (_tags.length <= 1) return;
+    setState(() {
+      _tags.removeAt(index).dispose();
+      _savedTags.removeAt(index).dispose();
+      _dirtyTags.removeAt(index);
+      if (_selectedIndex >= _tags.length) {
+        _selectedIndex = _tags.length - 1;
+      } else if (_selectedIndex > index) {
+        _selectedIndex--;
+      }
+      _error = null;
+    });
+  }
+
+  void _markTagChanged(int index) {
+    if (!mounted) return;
+    setState(() {
+      _dirtyTags[index] = true;
+      _error = null;
+    });
+  }
+
+  void _saveTagChanges(int index) {
+    final tag = _tags[index].toJson();
+    if (tag == null) {
+      setState(() {
+        _selectedIndex = index;
+        _error = _tagValidationMessage(index);
+      });
+      return;
+    }
+    setState(() {
+      _savedTags[index].dispose();
+      _savedTags[index] = _tags[index].clone();
+      _dirtyTags[index] = false;
+      _selectedIndex = index;
+      _error = null;
+    });
+  }
+
+  void _discardTagChanges(int index) {
+    setState(() {
+      _tags[index].copyFrom(_savedTags[index]);
+      _dirtyTags[index] = false;
+      _selectedIndex = index;
+      _error = null;
+    });
+  }
+
+  String _tagValidationMessage(int index) => context.tr(
+    'Tag ${index + 1} needs a valid trigger and either an event definition or a code snippet.',
+    '第 ${index + 1} 个标签需要有效触发器，以及事件定义或代码段。',
+  );
+
+  String _tagTitle(BuildContext context, int index) {
+    final tag = _tags[index];
+    final name = tag.name.text.trim();
+    if (name.isNotEmpty) return name;
+    final eventType = tag.eventType.text.trim();
+    if (eventType.isNotEmpty) return eventType;
+    return context.tr('Tag ${index + 1}', '标签 ${index + 1}');
+  }
+
+  String _tagSubtitle(BuildContext context, _TagFormEntry tag) =>
+      switch (tag.type) {
+        'custom_html' => context.tr(
+          'Custom HTML / JavaScript',
+          '自定义 HTML / JavaScript',
+        ),
+        'page_view' => context.tr('Page view', '页面浏览'),
+        _ => context.tr('Event', '事件'),
+      };
+
+  Widget _tagListItem(BuildContext context, int index) {
+    final selected = index == _selectedIndex;
+    final dirty = _dirtyTags[index];
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      color: selected ? colors.primaryContainer : null,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => setState(() {
+          _selectedIndex = index;
+          _error = null;
+        }),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _tagTitle(context, index),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  if (_tags.length > 1)
+                    IconButton(
+                      tooltip: context.tr('Remove tag', '删除标签'),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _removeTag(index),
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                    ),
+                ],
+              ),
               Text(
-                context.tr(
-                  'Choose what the tracker should send when a trigger fires.',
-                  '选择触发条件以及追踪器要发送的事件。',
-                ),
+                _tagSubtitle(context, _tags[index]),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
               ),
-              const SizedBox(height: 16),
-              for (var index = 0; index < _tags.length; index++) ...[
-                _TagFormCard(
-                  index: index,
-                  entry: _tags[index],
-                  canRemove: _tags.length > 1,
-                  onChanged: () => setState(() => _error = null),
-                  onRemove: () {
-                    setState(() {
-                      final removed = _tags.removeAt(index);
-                      removed.dispose();
-                    });
-                  },
-                ),
-                if (index != _tags.length - 1) const SizedBox(height: 12),
-              ],
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => setState(() {
-                  _tags.add(_TagFormEntry());
-                  _error = null;
-                }),
-                icon: const Icon(Icons.add),
-                label: Text(context.tr('Add tag', '添加标签')),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+              if (dirty) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => _saveTagChanges(index),
+                        child: Text(context.tr('Save', '保存')),
+                      ),
+                    ),
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => _discardTagChanges(index),
+                        child: Text(context.tr('Discard', '丢弃')),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _tagManagement(BuildContext context, double panelHeight) => SizedBox(
+    width: 220,
+    height: panelHeight,
+    child: Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              context.tr('Tags', '标签管理'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.tr('Select a tag to edit it.', '选择标签后在右侧编辑。'),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _addTag,
+              icon: const Icon(Icons.add),
+              label: Text(context.tr('Add tag', '添加标签')),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  for (var index = 0; index < _tags.length; index++)
+                    _tagListItem(context, index),
+                ],
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
     ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: Text(context.tr('Cancel', '取消')),
-      ),
-      FilledButton(
-        onPressed: _save,
-        child: Text(context.tr('Save draft', '保存草稿')),
-      ),
-    ],
   );
+
+  @override
+  Widget build(BuildContext context) {
+    final editorHeight = _editorHeight(context);
+    final panelHeight = editorHeight + 88;
+    const leftWidth = 220.0;
+    const editorWidth = 1080.0;
+    const contentWidth = leftWidth + 16 + editorWidth;
+    return AlertDialog(
+      title: Text(context.tr('Edit container tags', '编辑容器标签')),
+      content: SizedBox(
+        width: contentWidth,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 700),
+          child: SingleChildScrollView(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: contentWidth,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _tagManagement(context, panelHeight),
+                    const SizedBox(width: 16),
+                    SizedBox(
+                      width: editorWidth,
+                      child: _ThreeColumnTagFormCard(
+                        key: ValueKey('tag-editor-$_selectedIndex'),
+                        entry: _tags[_selectedIndex],
+                        onChanged: () => _markTagChanged(_selectedIndex),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(context.tr('Cancel', '取消')),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: Text(context.tr('Save draft', '保存草稿')),
+        ),
+      ],
+    );
+  }
 
   void _save() {
     final tags = <Map<String, dynamic>>[];
@@ -1114,10 +1312,8 @@ class _TagDraftDialogState extends State<_TagDraftDialog> {
       final tag = _tags[index].toJson();
       if (tag == null) {
         setState(() {
-          _error = context.tr(
-            'Tag ${index + 1} needs a type, a name or event type, and an event trigger.',
-            '第 ${index + 1} 个标签需要类型、名称或事件类型，以及事件触发器。',
-          );
+          _selectedIndex = index;
+          _error = _tagValidationMessage(index);
         });
         return;
       }
@@ -1127,6 +1323,7 @@ class _TagDraftDialogState extends State<_TagDraftDialog> {
   }
 }
 
+// ignore: unused_element
 class _TagFormCard extends StatelessWidget {
   const _TagFormCard({
     required this.index,
@@ -1168,10 +1365,20 @@ class _TagFormCard extends StatelessWidget {
           ),
           DropdownButtonFormField<String>(
             initialValue: entry.type,
+            isExpanded: true,
             decoration: InputDecoration(
               labelText: context.tr('Tag type', '标签类型'),
             ),
             items: [
+              DropdownMenuItem(
+                value: 'custom_html',
+                child: Text(
+                  context.tr(
+                    'Custom HTML / JavaScript',
+                    '自定义 HTML / JavaScript',
+                  ),
+                ),
+              ),
               DropdownMenuItem(
                 value: 'event',
                 child: Text(context.tr('Custom event', '自定义事件')),
@@ -1187,97 +1394,586 @@ class _TagFormCard extends StatelessWidget {
               onChanged();
             },
           ),
-          if (entry.type == 'event') ...[
+          if (entry.type == 'event' || entry.type == 'custom_html') ...[
             const SizedBox(height: 8),
             TextField(
               controller: entry.trigger,
               onChanged: (_) => onChanged(),
               decoration: InputDecoration(
-                labelText: context.tr('Trigger event', '触发事件'),
-                hintText: 'signup',
+                labelText: context.tr(
+                  'Trigger event (use page_view for page load)',
+                  '触发事件（页面加载请输入 page_view）',
+                ),
+                hintText: entry.type == 'custom_html' ? 'page_view' : 'signup',
               ),
             ),
           ],
-          const SizedBox(height: 8),
-          TextField(
-            controller: entry.eventType,
-            onChanged: (_) => onChanged(),
-            decoration: InputDecoration(
-              labelText: context.tr('Sent event type', '发送的事件类型'),
-              hintText: 'tag_signup',
+          if (entry.type == 'custom_html') ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: entry.name,
+              onChanged: (_) => onChanged(),
+              decoration: InputDecoration(
+                labelText: context.tr('Display name', '显示名称'),
+                hintText: 'marketing_pixel',
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: entry.name,
-            onChanged: (_) => onChanged(),
-            decoration: InputDecoration(
-              labelText: context.tr('Display name (optional)', '显示名称（可选）'),
-              hintText: 'signup_tag',
+            const SizedBox(height: 12),
+            TextField(
+              controller: entry.code,
+              onChanged: (_) => onChanged(),
+              minLines: 7,
+              maxLines: 14,
+              keyboardType: TextInputType.multiline,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              decoration: InputDecoration(
+                alignLabelWithHint: true,
+                labelText: context.tr(
+                  'Code snippet (HTML / JavaScript)',
+                  '代码段（HTML / JavaScript）',
+                ),
+                hintText: '<script>\n  // your code\n</script>',
+                helperText: context.tr(
+                  'HTML nodes are inserted into the page and script tags are executed when the trigger fires.',
+                  'HTML 节点会插入页面，script 标签会在触发条件满足时执行。',
+                ),
+                border: const OutlineInputBorder(),
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            context.tr('Event properties (optional)', '事件属性（可选）'),
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
-          const SizedBox(height: 4),
-          for (
-            var propertyIndex = 0;
-            propertyIndex < entry.properties.length;
-            propertyIndex++
-          )
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
+          ],
+          if (entry.type != 'custom_html') ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: entry.eventType,
+              onChanged: (_) => onChanged(),
+              decoration: InputDecoration(
+                labelText: context.tr('Sent event type', '发送的事件类型'),
+                hintText: 'tag_signup',
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: entry.name,
+              onChanged: (_) => onChanged(),
+              decoration: InputDecoration(
+                labelText: context.tr('Display name (optional)', '显示名称（可选）'),
+                hintText: 'signup_tag',
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              context.tr('Event properties (optional)', '事件属性（可选）'),
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            const SizedBox(height: 4),
+            for (
+              var propertyIndex = 0;
+              propertyIndex < entry.properties.length;
+              propertyIndex++
+            )
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: entry.properties[propertyIndex].key,
+                        onChanged: (_) => onChanged(),
+                        decoration: InputDecoration(
+                          labelText: context.tr('Key', '键'),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: entry.properties[propertyIndex].value,
+                        onChanged: (_) => onChanged(),
+                        decoration: InputDecoration(
+                          labelText: context.tr('Value', '值'),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: context.tr('Remove property', '删除属性'),
+                      onPressed: () {
+                        final removed = entry.properties.removeAt(
+                          propertyIndex,
+                        );
+                        removed.dispose();
+                        onChanged();
+                      },
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                  ],
+                ),
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () {
+                  entry.properties.add(_TagPropertyEntry());
+                  onChanged();
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: Text(context.tr('Add property', '添加属性')),
+              ),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _TagTriggerOption {
+  const _TagTriggerOption(this.id, this.english, this.chinese);
+
+  final String id;
+  final String english;
+  final String chinese;
+}
+
+const _tagTriggerOptions = [
+  _TagTriggerOption('page_view', 'Page view', '页面浏览'),
+  _TagTriggerOption('session_start', 'Session start', '会话开始'),
+  _TagTriggerOption('goal', 'Goal', '目标完成'),
+  _TagTriggerOption('download', 'Download', '下载'),
+  _TagTriggerOption('outlink', 'Outbound link', '外链点击'),
+  _TagTriggerOption('signup', 'Signup', '注册'),
+  _TagTriggerOption('login', 'Login', '登录'),
+  _TagTriggerOption('purchase', 'Purchase', '购买'),
+  _TagTriggerOption('add_to_cart', 'Add to cart', '加入购物车'),
+  _TagTriggerOption('form_submit', 'Form submit', '表单提交'),
+  _TagTriggerOption('search', 'Search', '搜索'),
+  _TagTriggerOption('experiment_exposure', 'Experiment exposure', '实验曝光'),
+];
+
+class _ThreeColumnTagFormCard extends StatefulWidget {
+  const _ThreeColumnTagFormCard({
+    super.key,
+    required this.entry,
+    required this.onChanged,
+  });
+
+  final _TagFormEntry entry;
+  final VoidCallback onChanged;
+
+  @override
+  State<_ThreeColumnTagFormCard> createState() =>
+      _ThreeColumnTagFormCardState();
+}
+
+class _ThreeColumnTagFormCardState extends State<_ThreeColumnTagFormCard> {
+  final _settingsScrollController = ScrollController();
+  final _triggersScrollController = ScrollController();
+  final _codeScrollController = ScrollController();
+
+  _TagFormEntry get entry => widget.entry;
+  VoidCallback get onChanged => widget.onChanged;
+
+  @override
+  void dispose() {
+    _settingsScrollController.dispose();
+    _triggersScrollController.dispose();
+    _codeScrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final editorHeight = (MediaQuery.sizeOf(context).height - 220)
+        .clamp(320.0, 540.0)
+        .toDouble();
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: editorHeight,
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: TextField(
-                      controller: entry.properties[propertyIndex].key,
-                      onChanged: (_) => onChanged(),
-                      decoration: InputDecoration(
-                        labelText: context.tr('Key', '键'),
-                        isDense: true,
-                      ),
+                    flex: 3,
+                    child: _scrollingColumn(
+                      _settings(context),
+                      _settingsScrollController,
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 16),
                   Expanded(
-                    child: TextField(
-                      controller: entry.properties[propertyIndex].value,
-                      onChanged: (_) => onChanged(),
-                      decoration: InputDecoration(
-                        labelText: context.tr('Value', '值'),
-                        isDense: true,
-                      ),
+                    flex: 4,
+                    child: _scrollingColumn(
+                      _triggers(context),
+                      _triggersScrollController,
                     ),
                   ),
-                  IconButton(
-                    tooltip: context.tr('Remove property', '删除属性'),
-                    onPressed: () {
-                      final removed = entry.properties.removeAt(propertyIndex);
-                      removed.dispose();
-                      onChanged();
-                    },
-                    icon: const Icon(Icons.remove_circle_outline),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    flex: 5,
+                    child: _scrollingColumn(
+                      _code(context),
+                      _codeScrollController,
+                    ),
                   ),
                 ],
               ),
             ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: () {
-                entry.properties.add(_TagPropertyEntry());
-                onChanged();
-              },
-              icon: const Icon(Icons.add, size: 18),
-              label: Text(context.tr('Add property', '添加属性')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _scrollingColumn(Widget child, ScrollController controller) =>
+      Scrollbar(
+        controller: controller,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          controller: controller,
+          primary: false,
+          padding: const EdgeInsets.only(right: 8),
+          child: child,
+        ),
+      );
+
+  Widget _settings(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        context.tr('Settings', '基础设置'),
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      const SizedBox(height: 8),
+      DropdownButtonFormField<String>(
+        initialValue: entry.type,
+        isExpanded: true,
+        decoration: InputDecoration(labelText: context.tr('Tag type', '标签类型')),
+        items: [
+          DropdownMenuItem(
+            value: 'custom_html',
+            child: Text(
+              context.tr('Custom HTML / JavaScript', '自定义 HTML / JavaScript'),
             ),
+          ),
+          DropdownMenuItem(
+            value: 'event',
+            child: Text(context.tr('Custom event', '自定义事件')),
+          ),
+          DropdownMenuItem(
+            value: 'page_view',
+            child: Text(context.tr('Page view', '页面浏览')),
+          ),
+        ],
+        onChanged: (value) {
+          if (value == null) return;
+          entry.type = value;
+          if (value == 'page_view') {
+            entry.predefinedTriggers.add('page_view');
+          }
+          onChanged();
+        },
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        controller: entry.name,
+        onChanged: (_) => onChanged(),
+        decoration: InputDecoration(
+          labelText: context.tr(
+            entry.type == 'custom_html'
+                ? 'Display name'
+                : 'Display name (optional)',
+            entry.type == 'custom_html' ? '显示名称' : '显示名称（可选）',
+          ),
+          hintText: 'marketing_pixel',
+        ),
+      ),
+      if (entry.type != 'custom_html') ...[
+        const SizedBox(height: 8),
+        TextField(
+          controller: entry.eventType,
+          onChanged: (_) => onChanged(),
+          decoration: InputDecoration(
+            labelText: context.tr('Sent event type', '发送的事件类型'),
+            hintText: 'tag_signup',
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          context.tr('Event properties (optional)', '事件属性（可选）'),
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const SizedBox(height: 4),
+        for (
+          var propertyIndex = 0;
+          propertyIndex < entry.properties.length;
+          propertyIndex++
+        )
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: entry.properties[propertyIndex].key,
+                    onChanged: (_) => onChanged(),
+                    decoration: InputDecoration(
+                      labelText: context.tr('Key', '键'),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: entry.properties[propertyIndex].value,
+                    onChanged: (_) => onChanged(),
+                    decoration: InputDecoration(
+                      labelText: context.tr('Value', '值'),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: context.tr('Remove property', '删除属性'),
+                  onPressed: () {
+                    final removed = entry.properties.removeAt(propertyIndex);
+                    removed.dispose();
+                    onChanged();
+                  },
+                  icon: const Icon(Icons.remove_circle_outline),
+                ),
+              ],
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () {
+              entry.properties.add(_TagPropertyEntry());
+              onChanged();
+            },
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(context.tr('Add property', '添加属性')),
+          ),
+        ),
+      ],
+    ],
+  );
+
+  Widget _triggers(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        context.tr('Triggers (match any)', '触发条件（满足任意一项即可）'),
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      const SizedBox(height: 4),
+      Text(
+        context.tr('Select one or more predefined events.', '可多选预定义事件。'),
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      const SizedBox(height: 4),
+      Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          TextButton.icon(
+            onPressed: () {
+              entry.customEvents.add(_TagCustomEventEntry());
+              onChanged();
+            },
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(context.tr('Add custom event', '添加自定义事件')),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              entry.customJsTriggers.add(_TagCustomJsTriggerEntry());
+              onChanged();
+            },
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(context.tr('Add custom JS trigger', '添加自定义 JS 触发器')),
           ),
         ],
       ),
-    ),
+      for (final option in _tagTriggerOptions)
+        CheckboxListTile(
+          value: entry.predefinedTriggers.contains(option.id),
+          onChanged: (checked) {
+            if (checked == true) {
+              entry.predefinedTriggers.add(option.id);
+            } else {
+              entry.predefinedTriggers.remove(option.id);
+            }
+            onChanged();
+          },
+          title: Text(context.tr(option.english, option.chinese)),
+          subtitle: Text(option.id),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+        ),
+      const Divider(),
+      Text(
+        context.tr('Custom event names', '自定义事件名称'),
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      for (var i = 0; i < entry.customEvents.length; i++)
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: entry.customEvents[i].name,
+                onChanged: (_) => onChanged(),
+                decoration: InputDecoration(
+                  labelText: context.tr('Event name', '事件名称'),
+                  hintText: 'checkout_started',
+                  isDense: true,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: context.tr('Remove trigger', '删除触发条件'),
+              onPressed: () {
+                final removed = entry.customEvents.removeAt(i);
+                removed.dispose();
+                onChanged();
+              },
+              icon: const Icon(Icons.remove_circle_outline),
+            ),
+          ],
+        ),
+      const Divider(),
+      Text(
+        context.tr('Custom JavaScript triggers', '自定义 JavaScript 触发器'),
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      Text(
+        context.tr(
+          'The tracker calls window.functionName(event, context). Return true to fire this tag.',
+          '追踪器会调用 window.functionName(event, context)，返回 true 才会触发标签。',
+        ),
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      for (var i = 0; i < entry.customJsTriggers.length; i++)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Card(
+            margin: EdgeInsets.zero,
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: entry.customJsTriggers[i].functionName,
+                          onChanged: (_) => onChanged(),
+                          decoration: InputDecoration(
+                            labelText: context.tr(
+                              'window function name',
+                              'window 函数名',
+                            ),
+                            hintText: 'shouldFireMarketingTag',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: context.tr('Remove trigger', '删除触发条件'),
+                        onPressed: () {
+                          final removed = entry.customJsTriggers.removeAt(i);
+                          removed.dispose();
+                          onChanged();
+                        },
+                        icon: const Icon(Icons.remove_circle_outline),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: entry.customJsTriggers[i].code,
+                    onChanged: (_) => onChanged(),
+                    minLines: 2,
+                    maxLines: 5,
+                    keyboardType: TextInputType.multiline,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                    decoration: InputDecoration(
+                      alignLabelWithHint: true,
+                      labelText: context.tr(
+                        'Function expression (optional)',
+                        '函数表达式（可选）',
+                      ),
+                      hintText:
+                          '(event, context) => event.event === \'purchase\'',
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
+
+  Widget _code(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        context.tr('Injected code', '注入代码段'),
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      const SizedBox(height: 4),
+      if (entry.type == 'custom_html')
+        TextField(
+          controller: entry.code,
+          onChanged: (_) => onChanged(),
+          minLines: 18,
+          maxLines: 28,
+          keyboardType: TextInputType.multiline,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          decoration: InputDecoration(
+            alignLabelWithHint: true,
+            labelText: context.tr(
+              'HTML / JavaScript snippet',
+              'HTML / JavaScript 代码段',
+            ),
+            hintText: '<script>\n  // code executed on trigger\n</script>',
+            helperText: context.tr(
+              'HTML is inserted into the page. Script tags and raw JavaScript are executed when a trigger matches.',
+              'HTML 会插入页面；触发条件满足时会执行 script 标签和原始 JavaScript。',
+            ),
+            border: const OutlineInputBorder(),
+          ),
+        )
+      else
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).colorScheme.outline),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            context.tr(
+              'This tag emits an analytics event and does not inject code. Choose Custom HTML / JavaScript when you need a code snippet.',
+              '此标签只发送分析事件，不注入代码。需要代码段时请选择“自定义 HTML / JavaScript”。',
+            ),
+          ),
+        ),
+    ],
   );
 }
 
@@ -1288,19 +1984,42 @@ class _TagFormEntry {
   final trigger = TextEditingController();
   final eventType = TextEditingController();
   final name = TextEditingController();
+  final code = TextEditingController();
+  final predefinedTriggers = <String>{};
+  final customEvents = <_TagCustomEventEntry>[];
+  final customJsTriggers = <_TagCustomJsTriggerEntry>[];
   final properties = <_TagPropertyEntry>[];
 
   factory _TagFormEntry.fromJson(Map value) {
     final entry = _TagFormEntry();
-    entry.type = value['type'] == 'page_view' ? 'page_view' : 'event';
+    entry.type = value['type'] == 'page_view'
+        ? 'page_view'
+        : value['type'] == 'custom_html'
+        ? 'custom_html'
+        : 'event';
     final triggerValue = value['trigger'];
     entry.trigger.text = triggerValue is String
         ? triggerValue
         : triggerValue is Map
         ? '${triggerValue['event'] ?? ''}'
         : '';
+    final rawTriggers = value['triggers'];
+    if (rawTriggers is List) {
+      for (final rawTrigger in rawTriggers) {
+        entry._readTrigger(rawTrigger);
+      }
+    } else if (triggerValue != null) {
+      entry._readTrigger(triggerValue);
+    }
+    if (entry.type == 'page_view' &&
+        entry.predefinedTriggers.isEmpty &&
+        entry.customEvents.isEmpty &&
+        entry.customJsTriggers.isEmpty) {
+      entry.predefinedTriggers.add('page_view');
+    }
     entry.eventType.text = '${value['eventType'] ?? ''}';
     entry.name.text = '${value['name'] ?? ''}';
+    entry.code.text = '${value['code'] ?? ''}';
     final rawProperties = value['properties'];
     if (rawProperties is Map) {
       for (final property in rawProperties.entries) {
@@ -1316,17 +2035,35 @@ class _TagFormEntry {
   }
 
   Map<String, dynamic>? toJson() {
-    final triggerValue = trigger.text.trim();
     final eventTypeValue = eventType.text.trim();
     final nameValue = name.text.trim();
-    if ((eventTypeValue.isEmpty && nameValue.isEmpty) ||
-        (type == 'event' && triggerValue.isEmpty)) {
+    final codeValue = code.text.trim();
+    final triggers = <Map<String, dynamic>>[
+      for (final value in predefinedTriggers)
+        {'type': 'predefined', 'event': value},
+      for (final custom in customEvents)
+        if (custom.name.text.trim().isNotEmpty)
+          {'type': 'event', 'event': custom.name.text.trim()},
+      for (final custom in customJsTriggers)
+        if (custom.functionName.text.trim().isNotEmpty)
+          {
+            'type': 'custom_js',
+            'functionName': custom.functionName.text.trim(),
+            if (custom.code.text.trim().isNotEmpty)
+              'code': custom.code.text.trim(),
+          },
+    ];
+    if (type == 'custom_html'
+        ? (nameValue.isEmpty || triggers.isEmpty || codeValue.isEmpty)
+        : ((eventTypeValue.isEmpty && nameValue.isEmpty) ||
+              (type == 'event' && triggers.isEmpty))) {
       return null;
     }
     final result = <String, dynamic>{'type': type};
-    if (triggerValue.isNotEmpty) result['trigger'] = triggerValue;
+    if (triggers.isNotEmpty) result['triggers'] = triggers;
     if (eventTypeValue.isNotEmpty) result['eventType'] = eventTypeValue;
     if (nameValue.isNotEmpty) result['name'] = nameValue;
+    if (codeValue.isNotEmpty) result['code'] = codeValue;
     final values = <String, String>{};
     for (final property in properties) {
       final key = property.key.text.trim();
@@ -1337,13 +2074,147 @@ class _TagFormEntry {
     return result;
   }
 
+  _TagFormEntry clone() {
+    final copy = _TagFormEntry()..type = type;
+    copy.trigger.text = trigger.text;
+    copy.eventType.text = eventType.text;
+    copy.name.text = name.text;
+    copy.code.text = code.text;
+    copy.predefinedTriggers.addAll(predefinedTriggers);
+    copy.customEvents.addAll(
+      customEvents.map(
+        (event) => _TagCustomEventEntry(nameValue: event.name.text),
+      ),
+    );
+    copy.customJsTriggers.addAll(
+      customJsTriggers.map(
+        (trigger) => _TagCustomJsTriggerEntry(
+          functionNameValue: trigger.functionName.text,
+          codeValue: trigger.code.text,
+        ),
+      ),
+    );
+    copy.properties.addAll(
+      properties.map(
+        (property) => _TagPropertyEntry(
+          keyValue: property.key.text,
+          valueValue: property.value.text,
+        ),
+      ),
+    );
+    return copy;
+  }
+
+  void copyFrom(_TagFormEntry source) {
+    type = source.type;
+    trigger.text = source.trigger.text;
+    eventType.text = source.eventType.text;
+    name.text = source.name.text;
+    code.text = source.code.text;
+    predefinedTriggers
+      ..clear()
+      ..addAll(source.predefinedTriggers);
+    for (final event in customEvents) {
+      event.dispose();
+    }
+    customEvents
+      ..clear()
+      ..addAll(
+        source.customEvents.map(
+          (event) => _TagCustomEventEntry(nameValue: event.name.text),
+        ),
+      );
+    for (final trigger in customJsTriggers) {
+      trigger.dispose();
+    }
+    customJsTriggers
+      ..clear()
+      ..addAll(
+        source.customJsTriggers.map(
+          (trigger) => _TagCustomJsTriggerEntry(
+            functionNameValue: trigger.functionName.text,
+            codeValue: trigger.code.text,
+          ),
+        ),
+      );
+    for (final property in properties) {
+      property.dispose();
+    }
+    properties
+      ..clear()
+      ..addAll(
+        source.properties.map(
+          (property) => _TagPropertyEntry(
+            keyValue: property.key.text,
+            valueValue: property.value.text,
+          ),
+        ),
+      );
+  }
+
+  void _readTrigger(dynamic value) {
+    if (value is String) {
+      final id = value.trim();
+      if (_tagTriggerOptions.any((option) => option.id == id)) {
+        predefinedTriggers.add(id);
+      } else if (id.isNotEmpty) {
+        customEvents.add(_TagCustomEventEntry(nameValue: id));
+      }
+      return;
+    }
+    if (value is! Map) return;
+    final kind = '${value['type'] ?? 'event'}';
+    if (kind == 'custom_js') {
+      customJsTriggers.add(
+        _TagCustomJsTriggerEntry(
+          functionNameValue: '${value['functionName'] ?? ''}',
+          codeValue: '${value['code'] ?? ''}',
+        ),
+      );
+      return;
+    }
+    _readTrigger('${value['event'] ?? ''}');
+  }
+
   void dispose() {
     trigger.dispose();
     eventType.dispose();
     name.dispose();
+    code.dispose();
     for (final property in properties) {
       property.dispose();
     }
+    for (final event in customEvents) {
+      event.dispose();
+    }
+    for (final customJsTrigger in customJsTriggers) {
+      customJsTrigger.dispose();
+    }
+  }
+}
+
+class _TagCustomEventEntry {
+  _TagCustomEventEntry({String nameValue = ''})
+    : name = TextEditingController(text: nameValue);
+
+  final TextEditingController name;
+
+  void dispose() => name.dispose();
+}
+
+class _TagCustomJsTriggerEntry {
+  _TagCustomJsTriggerEntry({
+    String functionNameValue = '',
+    String codeValue = '',
+  }) : functionName = TextEditingController(text: functionNameValue),
+       code = TextEditingController(text: codeValue);
+
+  final TextEditingController functionName;
+  final TextEditingController code;
+
+  void dispose() {
+    functionName.dispose();
+    code.dispose();
   }
 }
 

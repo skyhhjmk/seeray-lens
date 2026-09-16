@@ -901,7 +901,8 @@ class ControlPlaneResourceTest {
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body(
-                        "[{\"type\":\"event\",\"trigger\":\"signup\",\"eventType\":\"tag_signup\",\"name\":\"signup_tag\"}]")
+                        "[{\"type\":\"event\",\"trigger\":\"signup\",\"eventType\":\"tag_signup\",\"name\":\"signup_tag\"},"
+                                + "{\"type\":\"custom_html\",\"name\":\"Signup pixel\",\"triggers\":[{\"type\":\"predefined\",\"event\":\"page_view\"},{\"type\":\"custom_js\",\"functionName\":\"shouldFireSignupPixel\",\"code\":\"(event) => event.event === 'signup'\"}],\"code\":\"<script>window.signupPixel=true;</script>\"}]")
                 .post(draftPath)
                 .then()
                 .statusCode(200)
@@ -912,6 +913,19 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("status", is("published"));
+        String trackingId = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("trackingId");
+        given().header("Origin", "https://tags.example.test")
+                .get("/api/v1/tag-manager/" + trackingId + "/container")
+                .then()
+                .statusCode(200)
+                .body("size()", is(2))
+                .body("[1].type", is("custom_html"))
+                .body("[1].code", is("<script>window.signupPixel=true;</script>"));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body(
@@ -935,12 +949,6 @@ class ControlPlaneResourceTest {
                 .body("[0].status", is("published"))
                 .body("[1].version", is(1))
                 .body("[1].status", is("draft"));
-        String trackingId = given().header("Authorization", "Bearer " + owner.access())
-                .get("/api/v1/sites/" + site)
-                .then()
-                .statusCode(200)
-                .extract()
-                .path("trackingId");
         given().header("Origin", "https://tags.example.test")
                 .get("/api/v1/tag-manager/" + trackingId + "/container")
                 .then()
