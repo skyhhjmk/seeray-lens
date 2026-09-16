@@ -50,6 +50,21 @@ public class TagManagerService {
         return view(c);
     }
 
+    @Transactional
+    public ContainerView update(UUID siteId, UUID containerId, String name, boolean enabled) {
+        TagContainer c = writableContainer(siteId, containerId);
+        validateName(siteId, containerId, name);
+        c.name = name.trim();
+        c.enabled = enabled;
+        c.updatedAt = Instant.now();
+        return view(c);
+    }
+
+    @Transactional
+    public void delete(UUID siteId, UUID containerId) {
+        writableContainer(siteId, containerId).delete();
+    }
+
     public List<VersionView> versions(UUID siteId, UUID containerId) {
         TagContainer c = readableContainer(siteId, containerId);
         return TagContainerVersion.<TagContainerVersion>list("container.id = ?1 order by version desc", c.id).stream()
@@ -190,6 +205,12 @@ public class TagManagerService {
 
     private static ControlPlaneException invalid() {
         return new ControlPlaneException(400, "INVALID_TAG_CONTAINER", "Tag container payload is invalid");
+    }
+
+    private static void validateName(UUID siteId, UUID containerId, String name) {
+        if (name == null || name.isBlank() || name.length() > 256) throw invalid();
+        if (TagContainer.count("site.id = ?1 and name = ?2 and id <> ?3", siteId, name.trim(), containerId) > 0)
+            throw new ControlPlaneException(409, "CONTAINER_NAME_EXISTS", "Tag container already exists");
     }
 
     public record ContainerView(UUID id, String name, boolean enabled, Integer publishedVersion) {}

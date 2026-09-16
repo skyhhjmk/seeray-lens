@@ -3,7 +3,7 @@ import { SeeRay, TRACKER_VERSION, Tracker } from '../src/index.js';
 
 describe('tracker package', () => {
   it('exposes the tracker version', () => {
-    expect(TRACKER_VERSION).toBe('0.4.0');
+    expect(TRACKER_VERSION).toBe('0.5.0');
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -51,6 +51,35 @@ describe('tracker package', () => {
     const second = tracker.assignExperiment('hero', ['control', 'variant']);
     expect(first).toBe(second);
     expect(first).toMatch(/control|variant/);
+  });
+
+  it('loads enabled experiment variants and assigns by definition name', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{ name: 'hero', variants: ['control', 'variant'] }],
+      })
+      .mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const tracker = new Tracker({
+      siteId: 'srl_experiment_config',
+      apiOrigin: 'https://lens.example.test/tracker.js',
+      experiments: true,
+      flushInterval: 100,
+    });
+    await tracker.ready();
+    const selected = tracker.assignExperiment('hero');
+    await tracker.flush();
+    expect(selected).toMatch(/control|variant/);
+    expect(fetch.mock.calls[0][0]).toBe('https://lens.example.test/api/v1/experiments/srl_experiment_config/definitions');
+    const collectorCall = fetch.mock.calls.find((call) => call[1]?.method === 'POST');
+    expect(JSON.parse(collectorCall?.[1].body as string).events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'experiment_exposure', action: 'hero', name: selected }),
+      ]),
+    );
   });
 
   it('batches events and posts the versioned envelope', async () => {

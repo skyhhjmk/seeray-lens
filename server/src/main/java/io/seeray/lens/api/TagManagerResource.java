@@ -32,6 +32,22 @@ public class TagManagerResource {
         return tags.create(siteId, request == null ? null : request.name);
     }
 
+    @PUT
+    @Authenticated
+    @Path("/containers/{containerId}")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.ContainerView update(
+            @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID id, UpdateRequest request) {
+        return tags.update(siteId, id, request == null ? null : request.name, request != null && request.enabled);
+    }
+
+    @DELETE
+    @Authenticated
+    @Path("/containers/{containerId}")
+    public void delete(@PathParam("siteId") UUID siteId, @PathParam("containerId") UUID id) {
+        tags.delete(siteId, id);
+    }
+
     @GET
     @Authenticated
     @Path("/containers/{containerId}/versions")
@@ -59,5 +75,10 @@ public class TagManagerResource {
 
     public static class CreateRequest {
         public String name;
+    }
+
+    public static class UpdateRequest {
+        public String name;
+        public boolean enabled = true;
     }
 }

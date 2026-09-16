@@ -707,6 +707,24 @@ class ControlPlaneResourceTest {
                 .extract()
                 .path("id");
         given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"host\":\"experiment.example.test\",\"allowSubdomains\":false,\"enabled\":true}")
+                .post("/api/v1/sites/" + site + "/domains")
+                .then()
+                .statusCode(201);
+        String trackingId = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("trackingId");
+        given().header("Origin", "https://experiment.example.test")
+                .get("/api/v1/experiments/" + trackingId + "/definitions")
+                .then()
+                .statusCode(200)
+                .body("[0].name", is("Hero"))
+                .body("[0].variants", contains("control", "new_copy"));
+        given().header("Authorization", "Bearer " + owner.access())
                 .get(path + "/" + id + "/report?from=2026-09-01&to=2026-09-02")
                 .then()
                 .statusCode(200)
@@ -865,6 +883,13 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .extract()
                 .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Production tags\",\"enabled\":true}")
+                .put(containerPath + "/" + container)
+                .then()
+                .statusCode(200)
+                .body("name", is("Production tags"));
         String draftPath = containerPath + "/" + container + "/versions";
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
@@ -926,6 +951,10 @@ class ControlPlaneResourceTest {
                 .get("/api/v1/tag-manager/" + trackingId + "/container")
                 .then()
                 .statusCode(403);
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(containerPath + "/" + container)
+                .then()
+                .statusCode(204);
     }
 
     private void insertAnalyticsRaw(

@@ -38,6 +38,14 @@ public class ExperimentService {
                 .toList();
     }
 
+    public List<PublicView> publicDefinitions(String trackingId) {
+        return ExperimentDefinition.<ExperimentDefinition>list(
+                        "site.trackingId = ?1 and enabled order by name", trackingId)
+                .stream()
+                .map(e -> new PublicView(e.name, read(e.variantsJson)))
+                .toList();
+    }
+
     @Transactional
     public View create(UUID siteId, Update u) {
         Site s = writable(siteId);
@@ -221,6 +229,8 @@ public class ExperimentService {
     public record Update(boolean enabled, String name, List<String> variants) {}
 
     public record View(UUID id, String name, boolean enabled, List<String> variants) {}
+
+    public record PublicView(String name, List<String> variants) {}
 
     public record VariantReport(
             String variant,

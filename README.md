@@ -40,12 +40,17 @@ The banner stores an explicit accept/decline choice in site-scoped local storage
 
 ## Experiment exposure
 
-Use stable client-side allocation for a simple experiment. The selected variant is site-scoped and each allocation emits an `experiment_exposure` event:
+Use the site-linked experiment definition from the admin panel. The tracker loads enabled variants from the control plane, keeps allocation stable for the site visitor, and emits an `experiment_exposure` event:
 
 ```js
-const hero = SeeRay.assignExperiment('homepage_hero', ['control', 'new_copy']);
-if (hero === 'new_copy') showNewHero();
+// Add data-experiments="true" to the tracker script.
+SeeRay.ready().then(() => {
+  const hero = SeeRay.assignExperiment('homepage_hero');
+  if (hero === 'new_copy') showNewHero();
+});
 ```
+
+The A/B panel generates this linked snippet from the current definition, so changing variants or disabling an experiment does not require maintaining a second variant list in page code.
 
 Register a named independent scroll container when it should have its own coordinates and depth reach:
 
