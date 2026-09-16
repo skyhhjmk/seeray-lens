@@ -97,3 +97,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0014-experiments.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0015-tag-manager
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0015-tag-manager.sql
+            relativeToChangelogFile: false
