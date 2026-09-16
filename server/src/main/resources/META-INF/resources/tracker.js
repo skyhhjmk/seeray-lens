@@ -16,4 +16,11 @@
       layoutVersion: script.getAttribute('data-layout-version') || undefined,
     },
   });
+  const layer = globalThis.seerayDataLayer = globalThis.seerayDataLayer || [];
+  const push = layer.push.bind(layer);
+  layer.forEach(event => globalThis.SeeRay.push(event));
+  layer.push = (...events) => {
+    events.forEach(event => globalThis.SeeRay.push(event));
+    return push(...events);
+  };
 })();
