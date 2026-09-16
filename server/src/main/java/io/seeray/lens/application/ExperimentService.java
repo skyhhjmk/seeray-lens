@@ -82,7 +82,7 @@ public class ExperimentService {
         variants.forEach(v -> counts.put(v, new Counts()));
         String sql =
                 """
-            select client_session_id,event_type,event_data,occurred_at from raw_event where site_id=? and (occurred_at at time zone (select timezone from site where id=?))::date between ? and ? order by client_session_id,occurred_at,received_at,ingest_id
+            select client_session_id,event_type,event_data,occurred_at from raw_event where site_id=? and client_session_id is not null and (occurred_at at time zone (select timezone from site where id=?))::date between ? and ? order by client_session_id,occurred_at,received_at,ingest_id
         """;
         Map<String, String> assigned = new HashMap<>();
         Map<String, Instant> exposureAt = new HashMap<>();
