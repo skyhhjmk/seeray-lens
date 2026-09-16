@@ -10,6 +10,7 @@ import io.seeray.lens.domain.workspace.WorkspaceRole;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 
@@ -59,7 +60,7 @@ public class TagManagerService {
     @Transactional
     public VersionView draft(UUID siteId, UUID containerId, JsonNode tags) {
         TagContainer c = writableContainer(siteId, containerId);
-        if (tags == null || !tags.isArray() || tags.size() > 100) throw invalid();
+        validateTags(tags);
         TagContainerVersion latest = TagContainerVersion.<TagContainerVersion>find(
                         "container.id = ?1 order by version desc", c.id)
                 .firstResult();
@@ -73,6 +74,49 @@ public class TagManagerService {
         v.createdAt = Instant.now();
         v.persist();
         return version(v);
+    }
+
+    private static void validateTags(JsonNode tags) {
+        if (tags == null || !tags.isArray() || tags.size() > 100) throw invalid();
+        if (tags.toString().getBytes(StandardCharsets.UTF_8).length > 64 * 1024) throw invalid();
+        for (JsonNode tag : tags) validateTag(tag);
+    }
+
+    private static void validateTag(JsonNode tag) {
+        if (tag == null || !tag.isObject()) throw invalid();
+        String type = text(tag, "type");
+        if (!"event".equals(type) && !"page_view".equals(type)) throw invalid();
+
+        String eventType = text(tag, "eventType");
+        String name = text(tag, "name");
+        if (eventType == null && name == null) throw invalid();
+        if (eventType != null && eventType.length() > 64) throw invalid();
+        if (name != null && name.length() > 256) throw invalid();
+
+        JsonNode trigger = tag.get("trigger");
+        if ("event".equals(type) && !validTrigger(trigger)) throw invalid();
+        if (trigger != null && !trigger.isNull() && !validTrigger(trigger)) throw invalid();
+
+        JsonNode properties = tag.get("properties");
+        if (properties != null && !properties.isNull() && !properties.isObject()) throw invalid();
+    }
+
+    private static boolean validTrigger(JsonNode trigger) {
+        if (trigger == null || trigger.isNull()) return false;
+        if (trigger.isTextual())
+            return !trigger.asText().isBlank() && trigger.asText().length() <= 128;
+        return trigger.isObject()
+                && trigger.get("event") != null
+                && trigger.get("event").isTextual()
+                && !trigger.get("event").asText().isBlank()
+                && trigger.get("event").asText().length() <= 128;
+    }
+
+    private static String text(JsonNode object, String field) {
+        JsonNode value = object.get(field);
+        if (value == null || value.isNull()) return null;
+        if (!value.isTextual() || value.asText().isBlank()) throw invalid();
+        return value.asText().trim();
     }
 
     @Transactional

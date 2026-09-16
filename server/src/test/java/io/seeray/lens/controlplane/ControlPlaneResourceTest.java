@@ -784,7 +784,15 @@ class ControlPlaneResourceTest {
         String draftPath = containerPath + "/" + container + "/versions";
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
-                .body("[{\"type\":\"event\",\"name\":\"signup\"}]")
+                .body("[{\"type\":\"html\",\"name\":\"unsafe\"}]")
+                .post(draftPath)
+                .then()
+                .statusCode(400)
+                .body("code", is("INVALID_TAG_CONTAINER"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "[{\"type\":\"event\",\"trigger\":\"signup\",\"eventType\":\"tag_signup\",\"name\":\"signup_tag\"}]")
                 .post(draftPath)
                 .then()
                 .statusCode(200)
@@ -797,7 +805,8 @@ class ControlPlaneResourceTest {
                 .body("status", is("published"));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
-                .body("[{\"type\":\"event\",\"name\":\"purchase\"}]")
+                .body(
+                        "[{\"type\":\"event\",\"trigger\":\"purchase\",\"eventType\":\"tag_purchase\",\"name\":\"purchase_tag\"}]")
                 .post(draftPath)
                 .then()
                 .statusCode(200)
@@ -828,7 +837,7 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("size()", is(1))
-                .body("[0].name", is("purchase"));
+                .body("[0].name", is("purchase_tag"));
         given().header("Origin", "https://evil.example.test")
                 .get("/api/v1/tag-manager/" + trackingId + "/container")
                 .then()
