@@ -599,6 +599,49 @@ class ControlPlaneResourceTest {
                 .statusCode(400);
     }
 
+    @Test
+    void configuredGoalsReportConversionsValuesAndRates() throws Exception {
+        Tokens owner = register("goal" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Goals\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String goalPath = "/api/v1/sites/" + site + "/goals";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"name\":\"Signup completed\",\"triggerType\":\"event\",\"eventType\":\"goal\",\"eventName\":\"signup\",\"fixedValue\":12.5}")
+                .post(goalPath)
+                .then()
+                .statusCode(200)
+                .body("name", is("Signup completed"))
+                .body("fixedValue", is(12.5f));
+        UUID siteId = UUID.fromString(site);
+        Instant occurred = Instant.parse("2026-09-04T12:00:00Z");
+        insertRaw(siteId, "visitor-goal", "session-goal", "goal", occurred, "/signup");
+        try (var c = dataSource.getConnection();
+                var p = c.prepareStatement(
+                        "update raw_event set event_data='{\"name\":\"signup\"}'::jsonb where site_id=?")) {
+            p.setObject(1, siteId);
+            p.executeUpdate();
+        }
+        aggregation.rebuild(siteId, LocalDate.of(2026, 9, 4), LocalDate.of(2026, 9, 4));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/analytics/goals?from=2026-09-04&to=2026-09-04")
+                .then()
+                .statusCode(200)
+                .body("name", contains("Signup completed"))
+                .body("count", contains(1))
+                .body("convertedSessions", contains(1))
+                .body("value", contains(12.5f))
+                .body("conversionRate", contains(1.0f));
+    }
+
     private void insertAnalyticsRaw(
             UUID siteId,
             String visitor,

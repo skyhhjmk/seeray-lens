@@ -35,6 +35,7 @@ public class AnalyticsAggregationService {
             traffic(c, siteId, from, to, timezone);
             events(c, siteId, from, to, timezone);
             goals(c, siteId, from, to, timezone);
+            configuredGoals(c, siteId, from, to, timezone);
         } catch (SQLException e) {
             throw new IllegalStateException("Could not rebuild analytics aggregates", e);
         }
@@ -65,7 +66,8 @@ public class AnalyticsAggregationService {
                 "analytics_page_daily",
                 "analytics_traffic_daily",
                 "analytics_event_daily",
-                "analytics_goal_daily")) {
+                "analytics_goal_daily",
+                "analytics_goal_conversion_daily")) {
             try (PreparedStatement p =
                     c.prepareStatement("delete from " + table + " where site_id=? and business_date between ? and ?")) {
                 p.setObject(1, site);
@@ -146,6 +148,32 @@ public class AnalyticsAggregationService {
             p.setObject(2, site);
             p.setObject(3, from);
             p.setObject(4, to);
+            p.executeUpdate();
+        }
+    }
+
+    /** A conversion is one qualifying session per configured goal and business day. */
+    private static void configuredGoals(Connection c, UUID site, LocalDate from, LocalDate to, String tz)
+            throws SQLException {
+        String sql =
+                """
+                insert into analytics_goal_conversion_daily(site_id,business_date,goal_id,conversion_count,converted_session_count,value_sum)
+                select site_id,business_date,goal_id,conversion_count,converted_session_count,value_sum from (
+                  select ? as site_id, ((case when e.occurred_at < e.received_at - interval '24 hours' or e.occurred_at > e.received_at + interval '24 hours' then e.received_at else e.occurred_at end) at time zone ?)::date business_date,
+                         g.id goal_id, count(*) conversion_count, count(distinct e.client_session_id) converted_session_count, coalesce(sum(g.fixed_value), 0) value_sum
+                  from raw_event e join goal_definition g on g.site_id=e.site_id and g.enabled
+                  where e.site_id=?
+                    and ((g.trigger_type='event' and e.event_type=g.event_type and (g.event_name is null or coalesce(nullif(e.event_data->>'name',''), nullif(e.event_data->'data'->>'name',''))=g.event_name))
+                      or (g.trigger_type='page_view' and e.event_type='page_view' and ((g.path_match_mode='exact' and e.page_path=g.path_pattern) or (g.path_match_mode='contains' and position(g.path_pattern in coalesce(e.page_path,'')) > 0))))
+                  group by business_date,g.id
+                ) counted where business_date between ? and ?
+                """;
+        try (PreparedStatement p = c.prepareStatement(sql)) {
+            p.setObject(1, site);
+            p.setString(2, tz);
+            p.setObject(3, site);
+            p.setObject(4, from);
+            p.setObject(5, to);
             p.executeUpdate();
         }
     }

@@ -132,8 +132,15 @@ public class AnalyticsQueryService {
         return list(
                 site,
                 range,
-                "select goal_name,sum(goal_count) n from analytics_goal_daily where site_id=? and business_date between ? and ? group by goal_name order by n desc,goal_name asc",
-                r -> new Goal(r.getString(1), r.getLong(2)));
+                """
+                select g.name,sum(d.conversion_count),sum(d.converted_session_count),coalesce(sum(d.value_sum),0),
+                  case when sum(s.session_count)=0 then 0 else sum(d.converted_session_count)::double precision/sum(s.session_count) end
+                from analytics_goal_conversion_daily d join goal_definition g on g.id=d.goal_id
+                  left join analytics_site_daily s on s.site_id=d.site_id and s.business_date=d.business_date
+                where d.site_id=? and d.business_date between ? and ?
+                group by g.id,g.name order by sum(d.conversion_count) desc,g.name asc
+                """,
+                r -> new Goal(r.getString(1), r.getLong(2), r.getLong(3), r.getBigDecimal(4), r.getDouble(5)));
     }
 
     private long visitors(Connection c, UUID site, Range range) throws SQLException {
@@ -208,5 +215,6 @@ public class AnalyticsQueryService {
             double bounceRate,
             long averageSessionDurationMs) {}
 
-    public record Goal(String name, long count) {}
+    public record Goal(
+            String name, long count, long convertedSessions, java.math.BigDecimal value, double conversionRate) {}
 }

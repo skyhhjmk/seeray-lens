@@ -76,3 +76,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0011-dom-snapshots-recordings.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0012-goal-definitions-and-conversions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0012-goal-definitions-and-conversions.sql
+            relativeToChangelogFile: false
