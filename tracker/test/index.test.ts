@@ -36,6 +36,10 @@ describe('tracker package', () => {
     tracker.track('after-opt-out');
     await tracker.flush();
     expect(fetch).toHaveBeenCalledTimes(1);
+    const internal = tracker as unknown as { heatmapQueue: unknown[]; flushHeatmap: () => Promise<void> };
+    internal.heatmapQueue.push({ type: 'start' });
+    await internal.flushHeatmap();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('batches events and posts the versioned envelope', async () => {
