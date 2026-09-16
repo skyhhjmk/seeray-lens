@@ -42,6 +42,17 @@ describe('tracker package', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps an experiment assignment stable for one site visitor', () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
+    const tracker = new Tracker({ siteId: 'srl_experiment' });
+    const first = tracker.assignExperiment('hero', ['control', 'variant']);
+    const second = tracker.assignExperiment('hero', ['control', 'variant']);
+    expect(first).toBe(second);
+    expect(first).toMatch(/control|variant/);
+  });
+
   it('batches events and posts the versioned envelope', async () => {
     vi.stubGlobal('navigator', { doNotTrack: '0' });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 202 }));
