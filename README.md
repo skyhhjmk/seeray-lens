@@ -27,6 +27,17 @@ For same-address PJAX or query-driven replacements, stop the old lifecycle befor
 </script>
 ```
 
+## Consent and opt-out
+
+For sites that require consent before analytics, add `data-require-consent="true"` to the tracker script and load the supplied banner immediately after it:
+
+```html
+<script src="https://analytics.example/tracker.js" data-site-id="srl_your_public_tracking_id" data-require-consent="true"></script>
+<script src="https://analytics.example/consent.js" data-site-id="srl_your_public_tracking_id" data-language="en"></script>
+```
+
+The banner stores an explicit accept/decline choice in site-scoped local storage. A privacy/settings page can revoke consent with `SeeRay.optOut()` and ask again later with `SeeRay.setConsent(true)`.
+
 Register a named independent scroll container when it should have its own coordinates and depth reach:
 
 ```js
