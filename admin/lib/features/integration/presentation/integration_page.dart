@@ -8,6 +8,7 @@ import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../sites/application/site_controller.dart';
+import 'product_features_page.dart';
 
 class IntegrationPage extends ConsumerWidget {
   const IntegrationPage({
@@ -34,7 +35,7 @@ class IntegrationPage extends ConsumerWidget {
     final gif = '$base/api/v1/pixel/${site.trackingId}.gif';
     final svg = '$base/api/v1/pixel/${site.trackingId}.svg';
     return DefaultTabController(
-      length: 5,
+      length: 8,
       child: Scaffold(
         appBar: embedded
             ? null
@@ -54,12 +55,16 @@ class IntegrationPage extends ConsumerWidget {
           children: [
             Material(
               child: TabBar(
+                isScrollable: true,
                 tabs: [
                   Tab(text: context.tr('JavaScript', 'JavaScript')),
                   Tab(text: context.tr('Image fallback', '图片回退')),
                   Tab(text: context.tr('SVG fallback', 'SVG 回退')),
                   Tab(text: context.tr('Goals', '目标事件')),
                   Tab(text: context.tr('Heatmaps', '行为热图')),
+                  Tab(text: context.tr('Funnels', '漏斗')),
+                  Tab(text: context.tr('A/B tests', 'A/B 测试')),
+                  Tab(text: context.tr('Tag Manager', 'Tag Manager')),
                 ],
               ),
             ),
@@ -119,6 +124,18 @@ class IntegrationPage extends ConsumerWidget {
                       'First enable Heatmaps in the site settings, then add data-heatmap. Heatmaps are sampled per page instance and remain off if the public configuration cannot be read. Use a new layoutVersion whenever same-sized content moves; register independent scroll containers with a stable ID.',
                       '请先在站点设置中开启热图，再添加 data-heatmap。热图按页面实例采样；公开配置读取失败时保持关闭。相同尺寸的内容位置变化时请更新 layoutVersion；独立滚动容器需使用稳定 ID 注册。',
                     ),
+                  ),
+                  ProductFeaturesPage(
+                    siteId: siteId,
+                    mode: ProductFeatureMode.funnels,
+                  ),
+                  ProductFeaturesPage(
+                    siteId: siteId,
+                    mode: ProductFeatureMode.experiments,
+                  ),
+                  ProductFeaturesPage(
+                    siteId: siteId,
+                    mode: ProductFeatureMode.tagManager,
                   ),
                 ],
               ),
