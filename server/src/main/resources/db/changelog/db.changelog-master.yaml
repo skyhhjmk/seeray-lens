@@ -90,3 +90,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0013-funnels.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0014-experiments
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0014-experiments.sql
+            relativeToChangelogFile: false
