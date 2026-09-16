@@ -683,17 +683,26 @@ class ControlPlaneResourceTest {
                 .contentType("application/json")
                 .body("{\"name\":\"Experiments\",\"timezone\":\"UTC\"}")
                 .post("/api/v1/workspaces/" + workspace + "/sites")
-                .then().statusCode(201).extract().path("id");
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
         String path = "/api/v1/sites/" + site + "/experiments";
         String id = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Hero\",\"variants\":[\"control\",\"new_copy\"]}")
-                .post(path).then().statusCode(200)
+                .post(path)
+                .then()
+                .statusCode(200)
                 .body("variants", contains("control", "new_copy"))
-                .extract().path("id");
+                .extract()
+                .path("id");
         given().header("Authorization", "Bearer " + owner.access())
                 .get(path + "/" + id + "/report?from=2026-09-01&to=2026-09-02")
-                .then().statusCode(200).body("variants.size()", is(2)).body("variants.exposures", contains(0, 0));
+                .then()
+                .statusCode(200)
+                .body("variants.size()", is(2))
+                .body("variants.exposures", contains(0, 0));
     }
 
     private void insertAnalyticsRaw(
