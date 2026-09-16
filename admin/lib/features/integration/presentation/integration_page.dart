@@ -127,14 +127,20 @@ class IntegrationPage extends ConsumerWidget {
                   ),
                   ProductFeaturesPage(
                     siteId: siteId,
+                    trackingId: site.trackingId,
+                    trackerUrl: script,
                     mode: ProductFeatureMode.funnels,
                   ),
                   ProductFeaturesPage(
                     siteId: siteId,
+                    trackingId: site.trackingId,
+                    trackerUrl: script,
                     mode: ProductFeatureMode.experiments,
                   ),
                   ProductFeaturesPage(
                     siteId: siteId,
+                    trackingId: site.trackingId,
+                    trackerUrl: script,
                     mode: ProductFeatureMode.tagManager,
                   ),
                 ],

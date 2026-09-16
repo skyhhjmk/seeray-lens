@@ -20,4 +20,15 @@ Origin: https://your-site.example
 
 The public request requires an `Origin` matching an enabled site allowed domain (or an enabled subdomain rule). Unknown tracking IDs and disallowed origins are rejected; no published container is returned without that check.
 
-The current payload is intentionally JSON-oriented so the admin can evolve tag, trigger, and variable schemas without a database migration. Typed tag execution, preview, rollback, and the admin editor remain follow-up work.
+The current payload is intentionally JSON-oriented so the admin can evolve tag, trigger, and variable schemas without a database migration. The tracker executes only these safe tag forms:
+
+```json
+{
+  "type": "event",
+  "trigger": "signup",
+  "eventType": "tag_signup",
+  "name": "signup_tag"
+}
+```
+
+The tag fires when `SeeRay.push({event: 'signup'})` is called. `page_view` tags can run on a page-view trigger. HTML and arbitrary scripts are ignored. Preview, rollback, rich variables, and broader tag governance remain follow-up work.

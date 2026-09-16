@@ -12,11 +12,15 @@ enum ProductFeatureMode { funnels, experiments, tagManager }
 class ProductFeaturesPage extends ConsumerStatefulWidget {
   const ProductFeaturesPage({
     required this.siteId,
+    required this.trackingId,
+    required this.trackerUrl,
     required this.mode,
     super.key,
   });
 
   final String siteId;
+  final String trackingId;
+  final String trackerUrl;
   final ProductFeatureMode mode;
 
   @override
@@ -177,6 +181,33 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Text(_error!),
+          ),
+        ),
+      if (widget.mode == ProductFeatureMode.tagManager)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr('Install the published container', '安装已发布容器'),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  '<script src="${widget.trackerUrl}" data-site-id="${widget.trackingId}" data-tag-manager="true"></script>',
+                  style: const TextStyle(fontFamily: 'monospace'),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.tr(
+                    'Only event and page-view tags are executed by the tracker. HTML and arbitrary scripts are ignored.',
+                    '追踪器只执行 event 和 page_view 标签；HTML 与任意脚本会被忽略。',
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       if (_loading)
@@ -383,7 +414,8 @@ class _TagDraftDialog extends StatefulWidget {
 
 class _TagDraftDialogState extends State<_TagDraftDialog> {
   final _json = TextEditingController(
-    text: '[\n  {"type": "event", "name": "signup"}\n]',
+    text:
+        '[\n  {"type": "event", "trigger": "signup", "eventType": "tag_signup", "name": "signup_tag"}\n]',
   );
   String? _error;
 

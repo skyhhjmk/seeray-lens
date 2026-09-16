@@ -3,7 +3,7 @@ import { SeeRay, TRACKER_VERSION, Tracker } from '../src/index.js';
 
 describe('tracker package', () => {
   it('exposes the tracker version', () => {
-    expect(TRACKER_VERSION).toBe('0.3.0');
+    expect(TRACKER_VERSION).toBe('0.4.0');
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -201,5 +201,40 @@ describe('tracker package', () => {
     expect(JSON.parse(call[1].body as string).events[0]).toMatchObject({
       type: 'goal', name: 'signup_completed', category: 'conversion', action: 'submit',
     });
+  });
+
+  it('loads and executes safe event tags from a published container', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          type: 'event',
+          trigger: 'signup',
+          eventType: 'tag_signup',
+          category: 'tag',
+          name: 'signup_tag',
+        }],
+      })
+      .mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const tracker = new Tracker({
+      siteId: 'srl_tag_manager',
+      apiOrigin: 'https://lens.example.test/tracker.js',
+      tagManager: true,
+      flushInterval: 100,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    tracker.push({ event: 'signup', properties: { plan: 'pro' } });
+    await tracker.flush();
+    const collectorCall = fetch.mock.calls.find((call) => call[1]?.method === 'POST');
+    expect(collectorCall?.[0]).toBe('https://lens.example.test/api/v1/collect');
+    expect(JSON.parse(collectorCall?.[1].body as string).events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'signup' }),
+        expect.objectContaining({ type: 'tag_signup', name: 'signup_tag', category: 'tag' }),
+      ]),
+    );
   });
 });

@@ -8,6 +8,7 @@
     siteId,
     apiOrigin,
     requireConsent: script.getAttribute('data-require-consent') === 'true',
+    tagManager: script.getAttribute('data-tag-manager') === 'true',
     heatmap: {
       enabled: true,
       navigationMode: script.getAttribute('data-navigation-mode') === 'manual' ? 'manual' : 'auto',
