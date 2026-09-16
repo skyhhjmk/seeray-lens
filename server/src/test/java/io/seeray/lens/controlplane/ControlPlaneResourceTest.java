@@ -755,6 +755,81 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void experimentReportIncludesLiftAndSignificance() throws Exception {
+        Tokens owner = register("experiment-stats" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Experiment stats\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String path = "/api/v1/sites/" + site + "/experiments";
+        String experiment = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Pricing CTA\",\"variants\":[\"control\",\"new_copy\"]}")
+                .post(path)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        UUID siteId = UUID.fromString(site);
+        Instant occurred = Instant.parse("2026-09-05T12:00:00Z");
+        for (int i = 0; i < 20; i++) {
+            String session = "stats-control-" + i;
+            insertRaw(
+                    siteId,
+                    "stats-control-" + i,
+                    session,
+                    "experiment_exposure",
+                    occurred.plusSeconds(i * 10L),
+                    "/pricing",
+                    "{\"action\":\"Pricing CTA\",\"name\":\"control\"}");
+            if (i < 2)
+                insertRaw(
+                        siteId,
+                        "stats-control-" + i,
+                        session,
+                        "goal",
+                        occurred.plusSeconds(i * 10L + 1),
+                        "/pricing",
+                        "{\"name\":\"purchase\"}");
+        }
+        for (int i = 0; i < 20; i++) {
+            String session = "stats-variant-" + i;
+            insertRaw(
+                    siteId,
+                    "stats-variant-" + i,
+                    session,
+                    "experiment_exposure",
+                    occurred.plusSeconds(500 + i * 10L),
+                    "/pricing",
+                    "{\"action\":\"Pricing CTA\",\"name\":\"new_copy\"}");
+            if (i < 12)
+                insertRaw(
+                        siteId,
+                        "stats-variant-" + i,
+                        session,
+                        "goal",
+                        occurred.plusSeconds(501 + i * 10L),
+                        "/pricing",
+                        "{\"name\":\"purchase\"}");
+        }
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "/" + experiment + "/report?from=2026-09-05&to=2026-09-05")
+                .then()
+                .statusCode(200)
+                .body("variants[0].conversionRate", is(0.1f))
+                .body("variants[0].relativeLift", nullValue())
+                .body("variants[1].conversionRate", is(0.6f))
+                .body("variants[1].relativeLift", is(5.0f))
+                .body("variants[1].pValue", lessThan(0.01f))
+                .body("variants[1].statisticallySignificant", is(true));
+    }
+
+    @Test
     void publishesTagManagerContainerAndRestrictsOrigins() {
         Tokens owner = register("tagmanager" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");
@@ -880,9 +955,15 @@ class ControlPlaneResourceTest {
 
     private void insertRaw(UUID siteId, String visitor, String session, String type, Instant occurred, String path)
             throws Exception {
+        insertRaw(siteId, visitor, session, type, occurred, path, "{}");
+    }
+
+    private void insertRaw(
+            UUID siteId, String visitor, String session, String type, Instant occurred, String path, String eventData)
+            throws Exception {
         try (var c = dataSource.getConnection();
                 var p = c.prepareStatement(
-                        "insert into raw_event(ingest_id,site_id,client_event_id,client_visitor_id,client_session_id,received_at,occurred_at,event_type,page_path,event_data,ingest_version) values(?,?,?,?,?,?,?,?,?,'{}',1)")) {
+                        "insert into raw_event(ingest_id,site_id,client_event_id,client_visitor_id,client_session_id,received_at,occurred_at,event_type,page_path,event_data,ingest_version) values(?,?,?,?,?,?,?,?,?,?::jsonb,1)")) {
             p.setObject(1, UUID.randomUUID());
             p.setObject(2, siteId);
             p.setObject(3, UUID.randomUUID());
@@ -892,6 +973,7 @@ class ControlPlaneResourceTest {
             p.setTimestamp(7, java.sql.Timestamp.from(occurred));
             p.setString(8, type);
             p.setString(9, path);
+            p.setString(10, eventData);
             p.executeUpdate();
         }
     }

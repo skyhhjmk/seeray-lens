@@ -114,20 +114,26 @@ public class ExperimentService {
         } catch (SQLException x) {
             throw new IllegalStateException("Could not query experiment report", x);
         }
-        return new Report(
-                e.id,
-                e.name,
-                range.from(),
-                range.to(),
-                counts.entrySet().stream()
-                        .map(x -> new VariantReport(
-                                x.getKey(),
-                                x.getValue().exposures,
-                                x.getValue().conversions,
-                                x.getValue().exposures == 0
-                                        ? 0
-                                        : (double) x.getValue().conversions / x.getValue().exposures))
-                        .toList());
+        List<VariantReport> reports = new ArrayList<>();
+        Counts control =
+                counts.isEmpty() ? new Counts() : counts.values().iterator().next();
+        double controlRate = control.exposures == 0 ? 0 : (double) control.conversions / control.exposures;
+        int index = 0;
+        for (Map.Entry<String, Counts> entry : counts.entrySet()) {
+            Counts value = entry.getValue();
+            double rate = value.exposures == 0 ? 0 : (double) value.conversions / value.exposures;
+            Comparison comparison =
+                    index++ == 0 ? new Comparison(null, null, false) : compare(controlRate, control, rate, value);
+            reports.add(new VariantReport(
+                    entry.getKey(),
+                    value.exposures,
+                    value.conversions,
+                    rate,
+                    comparison.relativeLift(),
+                    comparison.pValue(),
+                    comparison.significant()));
+        }
+        return new Report(e.id, e.name, range.from(), range.to(), reports);
     }
 
     private String field(String json, String key) {
@@ -190,11 +196,40 @@ public class ExperimentService {
             throw new ControlPlaneException(400, "INVALID_EXPERIMENT", "Experiment needs 2 to 10 unique variants");
     }
 
+    private static Comparison compare(double controlRate, Counts control, double variantRate, Counts variant) {
+        if (control.exposures == 0 || variant.exposures == 0)
+            return new Comparison(controlRate == 0 ? null : (variantRate - controlRate) / controlRate, null, false);
+        Double lift = controlRate == 0 ? null : (variantRate - controlRate) / controlRate;
+        double pooled = (control.conversions + variant.conversions) / (double) (control.exposures + variant.exposures);
+        double variance = pooled * (1 - pooled) * (1.0 / control.exposures + 1.0 / variant.exposures);
+        if (variance <= 0) return new Comparison(lift, null, false);
+        double z = (variantRate - controlRate) / Math.sqrt(variance);
+        double pValue = Math.min(1, 2 * (1 - normalCdf(Math.abs(z))));
+        return new Comparison(lift, pValue, pValue < 0.05);
+    }
+
+    private static double normalCdf(double value) {
+        double t = 1 / (1 + 0.2316419 * value);
+        double density = 0.3989422804014327 * Math.exp(-value * value / 2);
+        double probability = 1
+                - density
+                        * t
+                        * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+        return probability;
+    }
+
     public record Update(boolean enabled, String name, List<String> variants) {}
 
     public record View(UUID id, String name, boolean enabled, List<String> variants) {}
 
-    public record VariantReport(String variant, long exposures, long conversions, double conversionRate) {}
+    public record VariantReport(
+            String variant,
+            long exposures,
+            long conversions,
+            double conversionRate,
+            Double relativeLift,
+            Double pValue,
+            boolean statisticallySignificant) {}
 
     public record Report(UUID id, String name, LocalDate from, LocalDate to, List<VariantReport> variants) {}
 
@@ -202,4 +237,6 @@ public class ExperimentService {
         long exposures;
         long conversions;
     }
+
+    private record Comparison(Double relativeLift, Double pValue, boolean significant) {}
 }

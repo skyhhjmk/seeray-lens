@@ -531,7 +531,7 @@ class _ReportDialog extends StatelessWidget {
                       subtitle: Text(
                         mode == ProductFeatureMode.funnels
                             ? '${row['sessions'] ?? 0} sessions · ${_percent(row['rate'])}'
-                            : '${row['exposures'] ?? 0} exposures · ${row['conversions'] ?? 0} conversions · ${_percent(row['conversionRate'])}',
+                            : '${row['exposures'] ?? 0} exposures · ${row['conversions'] ?? 0} conversions · ${_percent(row['conversionRate'])}${_experimentComparison(row)}',
                       ),
                     ),
                 ],
@@ -548,6 +548,17 @@ class _ReportDialog extends StatelessWidget {
 
   String _percent(dynamic value) =>
       '${(((value as num?)?.toDouble() ?? 0) * 100).toStringAsFixed(1)}%';
+
+  String _experimentComparison(Map row) {
+    if (mode != ProductFeatureMode.experiments || row['relativeLift'] == null) {
+      return '';
+    }
+    final lift = (row['relativeLift'] as num).toDouble() * 100;
+    final marker = row['statisticallySignificant'] == true
+        ? ' · significant'
+        : '';
+    return ' · ${lift >= 0 ? '+' : ''}${lift.toStringAsFixed(1)}% lift$marker';
+  }
 }
 
 class _VersionsDialog extends StatelessWidget {
