@@ -34,4 +34,4 @@ Publishing an older version is the rollback operation; the admin panel lists all
 
 Drafts are validated before a version is created: at most 100 tags and 64 KiB of UTF-8 JSON, with `type` set to `event` or `page_view`, a non-empty `eventType` or `name`, and an event trigger for `event` tags. Optional triggers must be a string or an object containing an event name; `properties` must be an object. Unsupported types, HTML/script payloads, malformed triggers, and oversized definitions are rejected with `INVALID_TAG_CONTAINER`.
 
-The tag fires when `SeeRay.push({event: 'signup'})` is called. `page_view` tags can run on a page-view trigger. HTML and arbitrary scripts are ignored. Preview, rollback, rich variables, and broader tag governance remain follow-up work.
+The tag fires when `SeeRay.push({event: 'signup'})` is called. `page_view` tags can run on a page-view trigger. HTML and arbitrary scripts are ignored. Preview, rich variables, and broader tag governance remain follow-up work.

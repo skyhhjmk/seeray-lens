@@ -10,7 +10,7 @@ This ledger is the completion contract for the Matomo-compatible product. A sour
 | Behaviour | Heatmaps and recordings | Entry/exit, transitions, user flow, page overlay, performance reports |
 | Attribution | UTM/source/medium/campaign aggregates | Search/social/ad click IDs, attribution models and ad cost import |
 | Conversion | Goal rules, value, conversion session count/rate, ordered funnel definitions/reports and admin panel | Comparison and attribution reports |
-| Tag manager | Site-scoped containers, JSON drafts, versioning, publish, origin-checked delivery, admin panel, and consent-aware event/page-view execution | Rich typed tags/triggers/variables, rollback/preview, arbitrary script governance and browser acceptance |
+| Tag manager | Site-scoped containers, JSON drafts, versioning, publish/rollback, origin-checked delivery, admin panel, and consent-aware event/page-view execution | Rich typed tags/triggers/variables, preview, arbitrary script governance and browser acceptance |
 | Experimentation | Site-scoped definitions, stable client assignment, exposure events, unique-session conversion reports, control-relative lift/p-value/significance, and admin panel | Targeting/segmentation and browser acceptance |
 | Visitor intelligence | Anonymous visitor/session facts and log API | Visitor profile UI, cohorts, segments and retention reports |
 
