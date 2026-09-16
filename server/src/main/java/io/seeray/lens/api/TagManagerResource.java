@@ -32,6 +32,14 @@ public class TagManagerResource {
         return tags.create(siteId, request == null ? null : request.name);
     }
 
+    @GET
+    @Authenticated
+    @Path("/containers/{containerId}/versions")
+    public List<TagManagerService.VersionView> versions(
+            @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID id) {
+        return tags.versions(siteId, id);
+    }
+
     @POST
     @Authenticated
     @Path("/containers/{containerId}/versions")

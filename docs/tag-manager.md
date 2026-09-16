@@ -7,6 +7,7 @@ Authenticated management endpoints:
 ```text
 GET  /api/v1/sites/{siteId}/tag-manager/containers
 POST /api/v1/sites/{siteId}/tag-manager/containers
+GET  /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions
 POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions
 POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions/{version}/publish
 ```
@@ -20,7 +21,7 @@ Origin: https://your-site.example
 
 The public request requires an `Origin` matching an enabled site allowed domain (or an enabled subdomain rule). Unknown tracking IDs and disallowed origins are rejected; no published container is returned without that check.
 
-The current payload is intentionally JSON-oriented so the admin can evolve tag, trigger, and variable schemas without a database migration. The tracker executes only these safe tag forms:
+Publishing an older version is the rollback operation; the admin panel lists all versions and can publish any draft or previously published version. The current payload is intentionally JSON-oriented so the admin can evolve tag, trigger, and variable schemas without a database migration. The tracker executes only these safe tag forms:
 
 ```json
 {

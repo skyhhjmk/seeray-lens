@@ -49,6 +49,13 @@ public class TagManagerService {
         return view(c);
     }
 
+    public List<VersionView> versions(UUID siteId, UUID containerId) {
+        TagContainer c = readableContainer(siteId, containerId);
+        return TagContainerVersion.<TagContainerVersion>list("container.id = ?1 order by version desc", c.id).stream()
+                .map(this::version)
+                .toList();
+    }
+
     @Transactional
     public VersionView draft(UUID siteId, UUID containerId, JsonNode tags) {
         TagContainer c = writableContainer(siteId, containerId);
@@ -121,6 +128,16 @@ public class TagManagerService {
 
     private TagContainer writableContainer(UUID siteId, UUID id) {
         writable(siteId);
+        TagContainer c = container(siteId, id);
+        return c;
+    }
+
+    private TagContainer readableContainer(UUID siteId, UUID id) {
+        readable(siteId);
+        return container(siteId, id);
+    }
+
+    private TagContainer container(UUID siteId, UUID id) {
         TagContainer c =
                 TagContainer.find("id = ?1 and site.id = ?2", id, siteId).firstResult();
         if (c == null) throw new ControlPlaneException(404, "CONTAINER_NOT_FOUND", "Tag container was not found");

@@ -808,6 +808,15 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("status", is("published"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(containerPath + "/" + container + "/versions")
+                .then()
+                .statusCode(200)
+                .body("size()", is(2))
+                .body("[0].version", is(2))
+                .body("[0].status", is("published"))
+                .body("[1].version", is(1))
+                .body("[1].status", is("draft"));
         String trackingId = given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + site)
                 .then()

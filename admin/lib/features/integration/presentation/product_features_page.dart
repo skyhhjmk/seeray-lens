@@ -119,12 +119,38 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
   Future<void> _publish(String id) async {
     final version = _draftVersions[id];
     if (version == null) return;
+    await _publishVersion(id, version);
+  }
+
+  Future<void> _publishVersion(String id, int version) async {
     await _run(() async {
       await ref
           .read(apiProvider)
           .request('POST', '$_path/$id/versions/$version/publish');
       _draftVersions.remove(id);
       await _load();
+    });
+  }
+
+  Future<void> _versions(String id) async {
+    await _run(() async {
+      final data =
+          await ref.read(apiProvider).request('GET', '$_path/$id/versions')
+              as List;
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _VersionsDialog(
+          versions: data
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false),
+          onPublish: (version) async {
+            Navigator.of(context).pop();
+            await _publishVersion(id, version);
+          },
+        ),
+      );
     });
   }
 
@@ -264,6 +290,11 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                 icon: const Icon(Icons.bar_chart_outlined),
               ),
             if (widget.mode == ProductFeatureMode.tagManager) ...[
+              IconButton(
+                tooltip: context.tr('Versions', '版本'),
+                onPressed: () => _versions(id),
+                icon: const Icon(Icons.history),
+              ),
               IconButton(
                 tooltip: context.tr('Draft JSON', '编辑 JSON 草稿'),
                 onPressed: () => _draft(id),
@@ -517,4 +548,44 @@ class _ReportDialog extends StatelessWidget {
 
   String _percent(dynamic value) =>
       '${(((value as num?)?.toDouble() ?? 0) * 100).toStringAsFixed(1)}%';
+}
+
+class _VersionsDialog extends StatelessWidget {
+  const _VersionsDialog({required this.versions, required this.onPublish});
+
+  final List<Map<String, dynamic>> versions;
+  final Future<void> Function(int version) onPublish;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(context.tr('Container versions', '容器版本')),
+    content: SizedBox(
+      width: 480,
+      child: versions.isEmpty
+          ? Text(context.tr('No versions yet.', '暂无版本。'))
+          : ListView(
+              shrinkWrap: true,
+              children: [
+                for (final version in versions)
+                  ListTile(
+                    title: Text('v${version['version'] ?? ''}'),
+                    subtitle: Text(version['status'] as String? ?? 'draft'),
+                    trailing: version['status'] == 'published'
+                        ? const Icon(Icons.check_circle_outline)
+                        : TextButton(
+                            onPressed: () =>
+                                onPublish((version['version'] as num).toInt()),
+                            child: Text(context.tr('Publish', '发布')),
+                          ),
+                  ),
+              ],
+            ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(context.tr('Close', '关闭')),
+      ),
+    ],
+  );
 }
