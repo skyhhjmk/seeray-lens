@@ -83,9 +83,10 @@ public class ExperimentService {
         String sql =
                 """
             select client_session_id,event_type,event_data,occurred_at from raw_event where site_id=? and (occurred_at at time zone (select timezone from site where id=?))::date between ? and ? order by client_session_id,occurred_at,received_at,ingest_id
-            """;
+        """;
         Map<String, String> assigned = new HashMap<>();
         Map<String, Instant> exposureAt = new HashMap<>();
+        Set<String> converted = new HashSet<>();
         try (Connection c = dataSource.getConnection();
                 PreparedStatement p = c.prepareStatement(sql)) {
             p.setObject(1, siteId);
@@ -97,14 +98,17 @@ public class ExperimentService {
                     String session = r.getString(1), type = r.getString(2), data = r.getString(3);
                     String exp = field(data, "action");
                     String variant = field(data, "name");
-                    if ("experiment_exposure".equals(type) && e.name.equals(exp) && counts.containsKey(variant)) {
+                    if ("experiment_exposure".equals(type)
+                            && e.name.equals(exp)
+                            && counts.containsKey(variant)
+                            && !assigned.containsKey(session)) {
                         assigned.put(session, variant);
                         exposureAt.put(session, r.getTimestamp(4).toInstant());
                         counts.get(variant).exposures++;
                     } else if ("goal".equals(type)
                             && assigned.containsKey(session)
-                            && !r.getTimestamp(4).toInstant().isBefore(exposureAt.get(session)))
-                        counts.get(assigned.get(session)).conversions++;
+                            && !r.getTimestamp(4).toInstant().isBefore(exposureAt.get(session))
+                            && converted.add(session)) counts.get(assigned.get(session)).conversions++;
                 }
             }
         } catch (SQLException x) {

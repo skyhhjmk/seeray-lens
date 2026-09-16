@@ -706,6 +706,55 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void experimentReportCountsUniqueExposedAndConvertedSessions() throws Exception {
+        Tokens owner = register("experiment-counts" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Experiment counts\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String path = "/api/v1/sites/" + site + "/experiments";
+        String experiment = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Checkout CTA\",\"variants\":[\"control\",\"new_copy\"]}")
+                .post(path)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        UUID siteId = UUID.fromString(site);
+        Instant occurred = Instant.parse("2026-09-04T12:00:00Z");
+        insertRaw(siteId, "visitor-experiment", "session-experiment", "experiment_exposure", occurred, "/checkout");
+        insertRaw(
+                siteId,
+                "visitor-experiment",
+                "session-experiment",
+                "experiment_exposure",
+                occurred.plusSeconds(1),
+                "/checkout");
+        insertRaw(siteId, "visitor-experiment", "session-experiment", "goal", occurred.plusSeconds(2), "/checkout");
+        insertRaw(siteId, "visitor-experiment", "session-experiment", "goal", occurred.plusSeconds(3), "/checkout");
+        try (var c = dataSource.getConnection();
+                var p = c.prepareStatement(
+                        "update raw_event set event_data=case when event_type='experiment_exposure' then '{\"action\":\"Checkout CTA\",\"name\":\"new_copy\"}'::jsonb else '{\"name\":\"purchase\"}'::jsonb end where client_session_id=?")) {
+            p.setString(1, "session-experiment");
+            p.executeUpdate();
+        }
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "/" + experiment + "/report?from=2026-09-04&to=2026-09-04")
+                .then()
+                .statusCode(200)
+                .body("variants[0].exposures", is(0))
+                .body("variants[1].exposures", is(1))
+                .body("variants[1].conversions", is(1))
+                .body("variants[1].conversionRate", is(1.0f));
+    }
+
+    @Test
     void publishesTagManagerContainerAndRestrictsOrigins() {
         Tokens owner = register("tagmanager" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");
