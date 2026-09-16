@@ -705,6 +705,78 @@ class ControlPlaneResourceTest {
                 .body("variants.exposures", contains(0, 0));
     }
 
+    @Test
+    void publishesTagManagerContainerAndRestrictsOrigins() {
+        Tokens owner = register("tagmanager" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Tag manager\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"host\":\"tags.example.test\",\"allowSubdomains\":false,\"enabled\":true}")
+                .post("/api/v1/sites/" + site + "/domains")
+                .then()
+                .statusCode(201);
+        String containerPath = "/api/v1/sites/" + site + "/tag-manager/containers";
+        String container = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Production\"}")
+                .post(containerPath)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        String draftPath = containerPath + "/" + container + "/versions";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("[{\"type\":\"event\",\"name\":\"signup\"}]")
+                .post(draftPath)
+                .then()
+                .statusCode(200)
+                .body("version", is(1))
+                .body("status", is("draft"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .post(draftPath + "/1/publish")
+                .then()
+                .statusCode(200)
+                .body("status", is("published"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("[{\"type\":\"event\",\"name\":\"purchase\"}]")
+                .post(draftPath)
+                .then()
+                .statusCode(200)
+                .body("version", is(2))
+                .body("status", is("draft"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .post(draftPath + "/2/publish")
+                .then()
+                .statusCode(200)
+                .body("status", is("published"));
+        String trackingId = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("trackingId");
+        given().header("Origin", "https://tags.example.test")
+                .get("/api/v1/tag-manager/" + trackingId + "/container")
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].name", is("purchase"));
+        given().header("Origin", "https://evil.example.test")
+                .get("/api/v1/tag-manager/" + trackingId + "/container")
+                .then()
+                .statusCode(403);
+    }
+
     private void insertAnalyticsRaw(
             UUID siteId,
             String visitor,

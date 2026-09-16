@@ -53,9 +53,10 @@ public class TagManagerService {
     public VersionView draft(UUID siteId, UUID containerId, JsonNode tags) {
         TagContainer c = writableContainer(siteId, containerId);
         if (tags == null || !tags.isArray() || tags.size() > 100) throw invalid();
-        Integer next = (Integer) TagContainerVersion.find("container.id = ?1 order by version desc", c.id)
-                .project(Integer.class)
+        TagContainerVersion latest = TagContainerVersion.<TagContainerVersion>find(
+                        "container.id = ?1 order by version desc", c.id)
                 .firstResult();
+        Integer next = latest == null ? null : latest.version;
         TagContainerVersion v = new TagContainerVersion();
         v.id = UuidV7.next();
         v.container = c;
