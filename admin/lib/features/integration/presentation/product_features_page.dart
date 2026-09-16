@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -100,9 +98,26 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
   }
 
   Future<void> _draft(String id) async {
+    List<dynamic>? initialTags;
+    try {
+      final versions =
+          await ref.read(apiProvider).request('GET', '$_path/$id/versions')
+              as List;
+      if (versions.isNotEmpty) {
+        final latest = versions.whereType<Map>().first;
+        if (latest['tags'] is List) initialTags = latest['tags'] as List;
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_message(error))));
+      return;
+    }
+    if (!mounted) return;
     final result = await showDialog<List<dynamic>>(
       context: context,
-      builder: (context) => const _TagDraftDialog(),
+      builder: (context) => _TagDraftDialog(initialTags: initialTags),
     );
     if (result == null) return;
     await _run(() async {
@@ -296,9 +311,9 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                 icon: const Icon(Icons.history),
               ),
               IconButton(
-                tooltip: context.tr('Draft JSON', '编辑 JSON 草稿'),
+                tooltip: context.tr('Edit tags', '编辑标签'),
                 onPressed: () => _draft(id),
-                icon: const Icon(Icons.edit_note_outlined),
+                icon: const Icon(Icons.edit_outlined),
               ),
               if (draft != null)
                 IconButton(
@@ -437,45 +452,86 @@ class _CreateDialogState extends State<_CreateDialog> {
 }
 
 class _TagDraftDialog extends StatefulWidget {
-  const _TagDraftDialog();
+  const _TagDraftDialog({this.initialTags});
+
+  final List<dynamic>? initialTags;
 
   @override
   State<_TagDraftDialog> createState() => _TagDraftDialogState();
 }
 
 class _TagDraftDialogState extends State<_TagDraftDialog> {
-  final _json = TextEditingController(
-    text:
-        '[\n  {"type": "event", "trigger": "signup", "eventType": "tag_signup", "name": "signup_tag"}\n]',
-  );
+  final _tags = <_TagFormEntry>[];
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialTags ?? const [];
+    _tags.addAll(initial.whereType<Map>().map(_TagFormEntry.fromJson));
+    if (_tags.isEmpty) _tags.add(_TagFormEntry());
+  }
+
+  @override
   void dispose() {
-    _json.dispose();
+    for (final tag in _tags) {
+      tag.dispose();
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(context.tr('Draft container JSON', '编辑容器 JSON 草稿')),
+    title: Text(context.tr('Edit container tags', '编辑容器标签')),
     content: SizedBox(
-      width: 560,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _json,
-            minLines: 8,
-            maxLines: 16,
-            style: const TextStyle(fontFamily: 'monospace'),
-            decoration: InputDecoration(
-              labelText: context.tr('Tags array', '标签数组'),
-              errorText: _error,
-              border: const OutlineInputBorder(),
-            ),
+      width: 620,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 600),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                context.tr(
+                  'Choose what the tracker should send when a trigger fires.',
+                  '选择触发条件以及追踪器要发送的事件。',
+                ),
+              ),
+              const SizedBox(height: 16),
+              for (var index = 0; index < _tags.length; index++) ...[
+                _TagFormCard(
+                  index: index,
+                  entry: _tags[index],
+                  canRemove: _tags.length > 1,
+                  onChanged: () => setState(() => _error = null),
+                  onRemove: () {
+                    setState(() {
+                      final removed = _tags.removeAt(index);
+                      removed.dispose();
+                    });
+                  },
+                ),
+                if (index != _tags.length - 1) const SizedBox(height: 12),
+              ],
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => setState(() {
+                  _tags.add(_TagFormEntry());
+                  _error = null;
+                }),
+                icon: const Icon(Icons.add),
+                label: Text(context.tr('Add tag', '添加标签')),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
           ),
-        ],
+        ),
       ),
     ),
     actions: [
@@ -484,21 +540,263 @@ class _TagDraftDialogState extends State<_TagDraftDialog> {
         child: Text(context.tr('Cancel', '取消')),
       ),
       FilledButton(
-        onPressed: () {
-          try {
-            final value = jsonDecode(_json.text);
-            if (value is! List) {
-              throw const FormatException('Expected an array');
-            }
-            Navigator.pop(context, value);
-          } on FormatException catch (error) {
-            setState(() => _error = error.message);
-          }
-        },
+        onPressed: _save,
         child: Text(context.tr('Save draft', '保存草稿')),
       ),
     ],
   );
+
+  void _save() {
+    final tags = <Map<String, dynamic>>[];
+    for (var index = 0; index < _tags.length; index++) {
+      final tag = _tags[index].toJson();
+      if (tag == null) {
+        setState(() {
+          _error = context.tr(
+            'Tag ${index + 1} needs a type, a name or event type, and an event trigger.',
+            '第 ${index + 1} 个标签需要类型、名称或事件类型，以及事件触发器。',
+          );
+        });
+        return;
+      }
+      tags.add(tag);
+    }
+    Navigator.pop(context, tags);
+  }
+}
+
+class _TagFormCard extends StatelessWidget {
+  const _TagFormCard({
+    required this.index,
+    required this.entry,
+    required this.canRemove,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final int index;
+  final _TagFormEntry entry;
+  final bool canRemove;
+  final VoidCallback onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  context.tr('Tag ${index + 1}', '标签 ${index + 1}'),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              if (canRemove)
+                IconButton(
+                  tooltip: context.tr('Remove tag', '删除标签'),
+                  onPressed: onRemove,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+            ],
+          ),
+          DropdownButtonFormField<String>(
+            initialValue: entry.type,
+            decoration: InputDecoration(
+              labelText: context.tr('Tag type', '标签类型'),
+            ),
+            items: [
+              DropdownMenuItem(
+                value: 'event',
+                child: Text(context.tr('Custom event', '自定义事件')),
+              ),
+              DropdownMenuItem(
+                value: 'page_view',
+                child: Text(context.tr('Page view', '页面浏览')),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              entry.type = value;
+              onChanged();
+            },
+          ),
+          if (entry.type == 'event') ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: entry.trigger,
+              onChanged: (_) => onChanged(),
+              decoration: InputDecoration(
+                labelText: context.tr('Trigger event', '触发事件'),
+                hintText: 'signup',
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          TextField(
+            controller: entry.eventType,
+            onChanged: (_) => onChanged(),
+            decoration: InputDecoration(
+              labelText: context.tr('Sent event type', '发送的事件类型'),
+              hintText: 'tag_signup',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: entry.name,
+            onChanged: (_) => onChanged(),
+            decoration: InputDecoration(
+              labelText: context.tr('Display name (optional)', '显示名称（可选）'),
+              hintText: 'signup_tag',
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            context.tr('Event properties (optional)', '事件属性（可选）'),
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(height: 4),
+          for (
+            var propertyIndex = 0;
+            propertyIndex < entry.properties.length;
+            propertyIndex++
+          )
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: entry.properties[propertyIndex].key,
+                      onChanged: (_) => onChanged(),
+                      decoration: InputDecoration(
+                        labelText: context.tr('Key', '键'),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: entry.properties[propertyIndex].value,
+                      onChanged: (_) => onChanged(),
+                      decoration: InputDecoration(
+                        labelText: context.tr('Value', '值'),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: context.tr('Remove property', '删除属性'),
+                    onPressed: () {
+                      final removed = entry.properties.removeAt(propertyIndex);
+                      removed.dispose();
+                      onChanged();
+                    },
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                ],
+              ),
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () {
+                entry.properties.add(_TagPropertyEntry());
+                onChanged();
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: Text(context.tr('Add property', '添加属性')),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _TagFormEntry {
+  _TagFormEntry();
+
+  String type = 'event';
+  final trigger = TextEditingController();
+  final eventType = TextEditingController();
+  final name = TextEditingController();
+  final properties = <_TagPropertyEntry>[];
+
+  factory _TagFormEntry.fromJson(Map value) {
+    final entry = _TagFormEntry();
+    entry.type = value['type'] == 'page_view' ? 'page_view' : 'event';
+    final triggerValue = value['trigger'];
+    entry.trigger.text = triggerValue is String
+        ? triggerValue
+        : triggerValue is Map
+        ? '${triggerValue['event'] ?? ''}'
+        : '';
+    entry.eventType.text = '${value['eventType'] ?? ''}';
+    entry.name.text = '${value['name'] ?? ''}';
+    final rawProperties = value['properties'];
+    if (rawProperties is Map) {
+      for (final property in rawProperties.entries) {
+        entry.properties.add(
+          _TagPropertyEntry(
+            keyValue: '${property.key}',
+            valueValue: '${property.value}',
+          ),
+        );
+      }
+    }
+    return entry;
+  }
+
+  Map<String, dynamic>? toJson() {
+    final triggerValue = trigger.text.trim();
+    final eventTypeValue = eventType.text.trim();
+    final nameValue = name.text.trim();
+    if ((eventTypeValue.isEmpty && nameValue.isEmpty) ||
+        (type == 'event' && triggerValue.isEmpty)) {
+      return null;
+    }
+    final result = <String, dynamic>{'type': type};
+    if (triggerValue.isNotEmpty) result['trigger'] = triggerValue;
+    if (eventTypeValue.isNotEmpty) result['eventType'] = eventTypeValue;
+    if (nameValue.isNotEmpty) result['name'] = nameValue;
+    final values = <String, String>{};
+    for (final property in properties) {
+      final key = property.key.text.trim();
+      final value = property.value.text.trim();
+      if (key.isNotEmpty) values[key] = value;
+    }
+    if (values.isNotEmpty) result['properties'] = values;
+    return result;
+  }
+
+  void dispose() {
+    trigger.dispose();
+    eventType.dispose();
+    name.dispose();
+    for (final property in properties) {
+      property.dispose();
+    }
+  }
+}
+
+class _TagPropertyEntry {
+  _TagPropertyEntry({String keyValue = '', String valueValue = ''})
+    : key = TextEditingController(text: keyValue),
+      value = TextEditingController(text: valueValue);
+
+  final TextEditingController key;
+  final TextEditingController value;
+
+  void dispose() {
+    key.dispose();
+    value.dispose();
+  }
 }
 
 class _ReportDialog extends StatelessWidget {

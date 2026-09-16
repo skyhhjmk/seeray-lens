@@ -23,6 +23,8 @@ The public request requires an `Origin` matching an enabled site allowed domain 
 
 Publishing an older version is the rollback operation; the admin panel lists all versions and can publish any draft or previously published version. The current payload is intentionally JSON-oriented so the admin can evolve tag, trigger, and variable schemas without a database migration. The tracker executes only these safe tag forms:
 
+The admin editor is graphical: choose the tag type, trigger, event fields, and optional key/value properties in a form. Existing latest-version values are loaded into the form before creating the next draft; operators do not need to edit JSON directly.
+
 ```json
 {
   "type": "event",
