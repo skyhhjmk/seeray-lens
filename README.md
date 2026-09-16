@@ -38,6 +38,15 @@ For sites that require consent before analytics, add `data-require-consent="true
 
 The banner stores an explicit accept/decline choice in site-scoped local storage. A privacy/settings page can revoke consent with `SeeRay.optOut()` and ask again later with `SeeRay.setConsent(true)`.
 
+## Experiment exposure
+
+Use stable client-side allocation for a simple experiment. The selected variant is site-scoped and each allocation emits an `experiment_exposure` event:
+
+```js
+const hero = SeeRay.assignExperiment('homepage_hero', ['control', 'new_copy']);
+if (hero === 'new_copy') showNewHero();
+```
+
 Register a named independent scroll container when it should have its own coordinates and depth reach:
 
 ```js
