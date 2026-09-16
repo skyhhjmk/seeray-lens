@@ -642,6 +642,39 @@ class ControlPlaneResourceTest {
                 .body("conversionRate", contains(1.0f));
     }
 
+    @Test
+    void createsAndReportsOrderedFunnel() {
+        Tokens owner = register("funnel" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Funnels\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String path = "/api/v1/sites/" + site + "/funnels";
+        String body = "{\"name\":\"Signup funnel\",\"steps\":["
+                + "{\"name\":\"Landing\",\"type\":\"page_view\",\"path\":\"/landing\"},"
+                + "{\"name\":\"Signup\",\"type\":\"event\",\"eventType\":\"signup\"}]}";
+        String funnel = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(body)
+                .post(path)
+                .then()
+                .statusCode(200)
+                .body("steps.size()", is(2))
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "/" + funnel + "/report?from=2026-09-01&to=2026-09-02")
+                .then()
+                .statusCode(200)
+                .body("name", is("Signup funnel"))
+                .body("steps.size()", is(2));
+    }
+
     private void insertAnalyticsRaw(
             UUID siteId,
             String visitor,
