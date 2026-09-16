@@ -7,10 +7,12 @@ import java.sql.*;
 import java.time.*;
 import java.util.*;
 import javax.sql.DataSource;
+import org.jboss.logging.Logger;
 
 /** Builds the small query-facing analytics tables from immutable raw events and semantic facts. */
 @ApplicationScoped
 public class AnalyticsAggregationService {
+    private static final Logger LOG = Logger.getLogger(AnalyticsAggregationService.class);
     private final DataSource dataSource;
     private final AnalyticsFactBuilder facts;
 
@@ -55,8 +57,10 @@ public class AnalyticsAggregationService {
                     rebuild(siteId, today.minusDays(1), today);
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception failure) {
             // A later run reconciles the same two business days; ingestion must never be disrupted by this job.
+            // Do not swallow this: a successful collector with permanently empty reports is an operational failure.
+            LOG.error("Recent analytics aggregation failed; the next scheduled run will retry", failure);
         }
     }
 
