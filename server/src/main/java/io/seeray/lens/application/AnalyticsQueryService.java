@@ -128,6 +128,44 @@ public class AnalyticsQueryService {
         }
     }
 
+    /** Privacy-preserving session log: anonymous site-local IDs only, never IP, UA fingerprint, or cross-site IDs. */
+    public List<VisitorLog> visitorLog(UUID site, Range range, int requestedLimit) {
+        int limit = Math.max(1, Math.min(requestedLimit, 200));
+        String sql =
+                """
+                select v.client_visitor_id,s.started_at,s.last_activity_at,s.entry_page,s.exit_page,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type
+                from analytics_session s join analytics_visitor v on v.id=s.visitor_id
+                where s.site_id=? and (s.started_at at time zone (select timezone from site where id=?))::date between ? and ?
+                order by s.started_at desc limit ?
+                """;
+        List<VisitorLog> out = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement p = c.prepareStatement(sql)) {
+            p.setObject(1, site);
+            p.setObject(2, site);
+            p.setObject(3, range.from);
+            p.setObject(4, range.to);
+            p.setInt(5, limit);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next())
+                    out.add(new VisitorLog(
+                            r.getString(1),
+                            r.getTimestamp(2).toInstant(),
+                            r.getTimestamp(3).toInstant(),
+                            r.getString(4),
+                            r.getString(5),
+                            r.getInt(6),
+                            r.getInt(7),
+                            r.getLong(8),
+                            r.getBoolean(9),
+                            r.getString(10)));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not query visitor log", e);
+        }
+    }
+
     public List<Goal> goals(UUID site, Range range) {
         return list(
                 site,
@@ -214,6 +252,18 @@ public class AnalyticsQueryService {
             long returningSessions,
             double bounceRate,
             long averageSessionDurationMs) {}
+
+    public record VisitorLog(
+            String visitorId,
+            Instant startedAt,
+            Instant lastActivityAt,
+            String entryPage,
+            String exitPage,
+            int pageViews,
+            int events,
+            long durationMs,
+            boolean bounce,
+            String visitorType) {}
 
     public record Goal(
             String name, long count, long convertedSessions, java.math.BigDecimal value, double conversionRate) {}

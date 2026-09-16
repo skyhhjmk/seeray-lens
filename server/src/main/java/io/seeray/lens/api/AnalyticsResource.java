@@ -65,6 +65,16 @@ public class AnalyticsResource {
     }
 
     @GET
+    @Path("/visitor-log")
+    public List<AnalyticsQueryService.VisitorLog> visitorLog(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @DefaultValue("50") @QueryParam("limit") int limit) {
+        return analytics.visitorLog(site, analytics.range(site, from, to), limit);
+    }
+
+    @GET
     @Path("/goals")
     public List<AnalyticsQueryService.Goal> goals(
             @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
