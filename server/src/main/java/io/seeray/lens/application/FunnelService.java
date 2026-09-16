@@ -97,12 +97,17 @@ public class FunnelService {
             }
         }
         List<StepResult> results = new ArrayList<>();
-        for (int i = 0; i < steps.size(); i++)
+        for (int i = 0; i < steps.size(); i++) {
+            long previous = i == 0 ? reached[i] : reached[i - 1];
+            long dropOff = Math.max(0, previous - reached[i]);
             results.add(new StepResult(
                     i,
                     steps.get(i).name(),
                     reached[i],
-                    reached.length == 0 || reached[0] == 0 ? 0 : (double) reached[i] / reached[0]));
+                    reached.length == 0 || reached[0] == 0 ? 0 : (double) reached[i] / reached[0],
+                    dropOff,
+                    previous == 0 ? 0 : (double) dropOff / previous));
+        }
         return new Report(funnel.id, funnel.name, range.from(), range.to(), results);
     }
 
@@ -223,7 +228,7 @@ public class FunnelService {
 
     public record View(UUID id, String name, boolean enabled, List<Step> steps) {}
 
-    public record StepResult(int index, String name, long sessions, double rate) {}
+    public record StepResult(int index, String name, long sessions, double rate, long dropOff, double dropOffRate) {}
 
     public record Report(
             UUID id, String name, java.time.LocalDate from, java.time.LocalDate to, List<StepResult> steps) {}

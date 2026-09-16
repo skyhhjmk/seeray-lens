@@ -530,7 +530,7 @@ class _ReportDialog extends StatelessWidget {
                       ),
                       subtitle: Text(
                         mode == ProductFeatureMode.funnels
-                            ? '${row['sessions'] ?? 0} sessions · ${_percent(row['rate'])}'
+                            ? '${row['sessions'] ?? 0} sessions · ${_percent(row['rate'])}${_funnelDropOff(row)}'
                             : '${row['exposures'] ?? 0} exposures · ${row['conversions'] ?? 0} conversions · ${_percent(row['conversionRate'])}${_experimentComparison(row)}',
                       ),
                     ),
@@ -558,6 +558,12 @@ class _ReportDialog extends StatelessWidget {
         ? ' · significant'
         : '';
     return ' · ${lift >= 0 ? '+' : ''}${lift.toStringAsFixed(1)}% lift$marker';
+  }
+
+  String _funnelDropOff(Map row) {
+    final dropOff = row['dropOff'] as num?;
+    if (dropOff == null || dropOff == 0) return '';
+    return ' · ${dropOff.toInt()} drop-off (${_percent(row['dropOffRate'])})';
   }
 }
 

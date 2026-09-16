@@ -643,7 +643,7 @@ class ControlPlaneResourceTest {
     }
 
     @Test
-    void createsAndReportsOrderedFunnel() {
+    void createsAndReportsOrderedFunnel() throws Exception {
         Tokens owner = register("funnel" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");
         String site = given().header("Authorization", "Bearer " + owner.access())
@@ -667,12 +667,21 @@ class ControlPlaneResourceTest {
                 .body("steps.size()", is(2))
                 .extract()
                 .path("id");
+        UUID siteId = UUID.fromString(site);
+        Instant occurred = Instant.parse("2026-09-01T12:00:00Z");
+        insertRaw(siteId, "funnel-complete", "funnel-complete", "page_view", occurred, "/landing");
+        insertRaw(siteId, "funnel-complete", "funnel-complete", "signup", occurred.plusSeconds(1), "/signup");
+        insertRaw(siteId, "funnel-drop", "funnel-drop", "page_view", occurred.plusSeconds(2), "/landing");
         given().header("Authorization", "Bearer " + owner.access())
                 .get(path + "/" + funnel + "/report?from=2026-09-01&to=2026-09-02")
                 .then()
                 .statusCode(200)
                 .body("name", is("Signup funnel"))
-                .body("steps.size()", is(2));
+                .body("steps.size()", is(2))
+                .body("steps[0].sessions", is(2))
+                .body("steps[1].sessions", is(1))
+                .body("steps[1].dropOff", is(1))
+                .body("steps[1].dropOffRate", is(0.5f));
     }
 
     @Test
