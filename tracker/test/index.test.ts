@@ -18,6 +18,26 @@ describe('tracker package', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('requires explicit consent when configured and stops after opt-out', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const tracker = new Tracker({ siteId: 'srl_consent', requireConsent: true });
+    tracker.track('before-consent');
+    await tracker.flush();
+    expect(fetch).not.toHaveBeenCalled();
+    tracker.setConsent(true);
+    tracker.track('after-consent');
+    await tracker.flush();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    tracker.optOut();
+    tracker.track('after-opt-out');
+    await tracker.flush();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('batches events and posts the versioned envelope', async () => {
     vi.stubGlobal('navigator', { doNotTrack: '0' });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 202 }));

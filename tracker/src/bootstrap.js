@@ -7,6 +7,7 @@
   globalThis.SeeRayLens.init({
     siteId,
     apiOrigin,
+    requireConsent: script.getAttribute('data-require-consent') === 'true',
     heatmap: {
       enabled: true,
       navigationMode: script.getAttribute('data-navigation-mode') === 'manual' ? 'manual' : 'auto',
