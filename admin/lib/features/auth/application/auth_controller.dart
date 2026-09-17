@@ -15,6 +15,7 @@ class AuthController extends Notifier<AuthState> {
   late SeeRayApi _api;
   late AuthTokenStore _tokens;
   Future<String?>? _inflight;
+  int? _inflightGeneration;
   int _sessionGeneration = 0;
   @override
   AuthState build() {
@@ -45,12 +46,18 @@ class AuthController extends Notifier<AuthState> {
 
   Future<void> login(String email, String password) async {
     final generation = ++_sessionGeneration;
+    // A login request must never carry an expired access token from the
+    // previous session. Quarkus authenticates a supplied bearer token before
+    // dispatching even public endpoints, so a stale header can block a valid
+    // email/password login until the process is restarted.
+    _api.accessToken = null;
     state = const AuthState(AuthPhase.authenticating);
     try {
       final d = await _api.request(
         'POST',
         '/api/v1/auth/login',
         body: {'email': email, 'password': password},
+        retried: true,
       );
       if (generation != _sessionGeneration) return;
       await _set(d);
@@ -63,10 +70,19 @@ class AuthController extends Notifier<AuthState> {
   Future<String?> refresh() {
     final generation = _sessionGeneration;
     final token = state.refreshToken;
-    return _inflight ??= _refresh(
-      token,
-      generation,
-    ).whenComplete(() => _inflight = null);
+    final current = _inflight;
+    if (current != null && _inflightGeneration == generation) return current;
+
+    final future = _refresh(token, generation);
+    _inflight = future;
+    _inflightGeneration = generation;
+    future.whenComplete(() {
+      if (identical(_inflight, future)) {
+        _inflight = null;
+        _inflightGeneration = null;
+      }
+    });
+    return future;
   }
 
   Future<String?> _refresh(String? token, int generation) async {
@@ -86,6 +102,7 @@ class AuthController extends Notifier<AuthState> {
       return state.accessToken;
     } catch (_) {
       if (generation != _sessionGeneration) return null;
+      _api.accessToken = null;
       await _tokens.clear();
       state = const AuthState(AuthPhase.expired);
       return null;
@@ -113,7 +130,11 @@ class AuthController extends Notifier<AuthState> {
   }
 
   Future<void> logout() async {
+    ++_sessionGeneration;
     final token = state.refreshToken;
+    _api.accessToken = null;
+    await _tokens.clear();
+    state = const AuthState(AuthPhase.unauthenticated);
     try {
       if (token != null) {
         await _api.request(
@@ -123,10 +144,9 @@ class AuthController extends Notifier<AuthState> {
           retried: true,
         );
       }
-    } finally {
-      _api.accessToken = null;
-      await _tokens.clear();
-      state = const AuthState(AuthPhase.unauthenticated);
+    } catch (_) {
+      // Logout is already complete locally. A network failure must not leave
+      // the UI stuck or prevent the user from signing in again.
     }
   }
 }

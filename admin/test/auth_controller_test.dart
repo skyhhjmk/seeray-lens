@@ -66,7 +66,36 @@ void main() {
         .login('person@example.com', 'password');
     await container.read(authProvider.notifier).refresh();
     expect(container.read(authProvider).phase, AuthPhase.expired);
+    expect(container.read(apiProvider).accessToken, isNull);
   });
+
+  test(
+    'valid login succeeds after an expired session without restart',
+    () async {
+      final client = _RejectStaleBearerOnLoginClient();
+      final api = SeeRayApi(client: client);
+      final container = ProviderContainer(
+        overrides: [
+          apiProvider.overrideWithValue(api),
+          authTokenStoreProvider.overrideWithValue(_MemoryTokenStore()),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(authProvider.notifier)
+          .login('admin@biliwind.com', 'correct-password');
+      await container.read(authProvider.notifier).refresh();
+      expect(container.read(authProvider).phase, AuthPhase.expired);
+
+      await container
+          .read(authProvider.notifier)
+          .login('admin@biliwind.com', 'correct-password');
+
+      expect(container.read(authProvider).phase, AuthPhase.authenticated);
+      expect(client.loginAuthorizationHeaders, [null, null]);
+    },
+  );
 
   test('restores a persisted refresh token after app restart', () async {
     final store = _MemoryTokenStore()..value = 'saved-refresh';
@@ -180,4 +209,35 @@ class _DeferredRestoreClient extends http.BaseClient {
       ),
     );
   }
+}
+
+class _RejectStaleBearerOnLoginClient extends http.BaseClient {
+  final loginAuthorizationHeaders = <String?>[];
+  var loginCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request.url.path.endsWith('/auth/login')) {
+      final authorization = request.headers['Authorization'];
+      loginAuthorizationHeaders.add(authorization);
+      if (authorization != null) return _jsonResponse('{}', 401);
+      loginCount++;
+      return _jsonResponse(
+        '{"accessToken":"access-$loginCount",'
+        '"refreshToken":"refresh-$loginCount"}',
+        200,
+      );
+    }
+    if (request.url.path.endsWith('/auth/refresh')) {
+      return _jsonResponse('{}', 401);
+    }
+    return _jsonResponse('', 204);
+  }
+
+  http.StreamedResponse _jsonResponse(String body, int status) =>
+      http.StreamedResponse(
+        Stream<List<int>>.value(body.codeUnits),
+        status,
+        headers: const {'content-type': 'application/json'},
+      );
 }
