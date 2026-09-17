@@ -387,8 +387,6 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        _Summary(stats: _stats, compact: true),
       ],
     );
   }
@@ -568,167 +566,222 @@ class _HeatmapPageState extends ConsumerState<HeatmapPage> {
                         ],
                       ),
                       child: _toolsOpen
-                          ? Row(
+                          ? Stack(
                               children: [
-                                SizedBox(
-                                  width: 310,
-                                  child: _buildVariantPane(context),
-                                ),
-                                const VerticalDivider(width: 25),
-                                Expanded(
-                                  child: SingleChildScrollView(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                tr(
-                                                  'Heatmap controls',
-                                                  '热图快捷设置',
-                                                ),
-                                                style: Theme.of(
-                                                  context,
-                                                ).textTheme.titleMedium,
-                                              ),
-                                            ),
-                                            IconButton(
-                                              onPressed: () => setState(
-                                                () => _toolsOpen = false,
-                                              ),
-                                              icon: const Icon(Icons.close),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 8),
-                                        SegmentedButton<_HeatmapType>(
-                                          segments: [
-                                            ButtonSegment(
-                                              value: _HeatmapType.click,
-                                              label: Text(tr('Clicks', '点击')),
-                                              icon: const Icon(Icons.ads_click),
-                                            ),
-                                            ButtonSegment(
-                                              value: _HeatmapType.move,
-                                              label: Text(tr('Moves', '鼠标')),
-                                              icon: const Icon(Icons.mouse),
-                                            ),
-                                            ButtonSegment(
-                                              value: _HeatmapType.scroll,
-                                              label: Text(tr('Scroll', '滚动')),
-                                              icon: const Icon(Icons.swap_vert),
-                                            ),
-                                          ],
-                                          selected: {_type},
-                                          onSelectionChanged: _selectType,
-                                        ),
-                                        const SizedBox(height: 10),
-                                        Wrap(
-                                          spacing: 8,
-                                          runSpacing: 8,
-                                          children: [
-                                            OutlinedButton.icon(
-                                              onPressed: _loadStats,
-                                              icon: const Icon(Icons.refresh),
-                                              label: Text(tr('Refresh', '刷新')),
-                                            ),
-                                            OutlinedButton.icon(
-                                              onPressed: _uploadSnapshot,
-                                              icon: const Icon(
-                                                Icons.upload_file,
-                                              ),
-                                              label: Text(
-                                                tr('Upload image', '上传图片'),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 10),
-                                        Text(tr('Preview source', '预览来源')),
-                                        if (_domSnapshot != null)
-                                          ChoiceChip(
-                                            label: Text(
-                                              '${tr('Automatic DOM', '自动 DOM')} · ${_readableDateTime(_domSnapshot!['createdAt'])}',
-                                            ),
-                                            selected: _useDomSnapshot,
-                                            onSelected: (_) => setState(
-                                              () => _useDomSnapshot = true,
-                                            ),
+                                Positioned.fill(
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 310,
+                                        child: _buildVariantPane(context),
+                                      ),
+                                      const VerticalDivider(width: 25),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 48,
                                           ),
-                                        if (_snapshots.isNotEmpty)
-                                          DropdownButton<Map<String, dynamic>>(
-                                            isExpanded: true,
-                                            value: _useDomSnapshot
-                                                ? null
-                                                : _snapshot,
-                                            hint: Text(
-                                              tr('Manual image', '手动图片'),
-                                            ),
-                                            items: _snapshots
-                                                .map(
-                                                  (
-                                                    snapshot,
-                                                  ) => DropdownMenuItem(
-                                                    value: snapshot,
-                                                    child: Text(
-                                                      _readableDateTime(
-                                                        snapshot['createdAt'],
+                                          child: SingleChildScrollView(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                Text(
+                                                  tr(
+                                                    'Heatmap controls',
+                                                    '热图快捷设置',
+                                                  ),
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.titleMedium,
+                                                ),
+                                                const SizedBox(height: 8),
+                                                _Summary(
+                                                  stats: _stats,
+                                                  compact: true,
+                                                ),
+                                                const SizedBox(height: 12),
+                                                SegmentedButton<_HeatmapType>(
+                                                  segments: [
+                                                    ButtonSegment(
+                                                      value: _HeatmapType.click,
+                                                      label: Text(
+                                                        tr('Clicks', '点击'),
+                                                      ),
+                                                      icon: const Icon(
+                                                        Icons.ads_click,
+                                                      ),
+                                                    ),
+                                                    ButtonSegment(
+                                                      value: _HeatmapType.move,
+                                                      label: Text(
+                                                        tr('Moves', '鼠标'),
+                                                      ),
+                                                      icon: const Icon(
+                                                        Icons.mouse,
+                                                      ),
+                                                    ),
+                                                    ButtonSegment(
+                                                      value:
+                                                          _HeatmapType.scroll,
+                                                      label: Text(
+                                                        tr('Scroll', '滚动'),
+                                                      ),
+                                                      icon: const Icon(
+                                                        Icons.swap_vert,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                  selected: {_type},
+                                                  onSelectionChanged:
+                                                      _selectType,
+                                                ),
+                                                const SizedBox(height: 10),
+                                                Wrap(
+                                                  spacing: 8,
+                                                  runSpacing: 8,
+                                                  children: [
+                                                    OutlinedButton.icon(
+                                                      onPressed: _loadStats,
+                                                      icon: const Icon(
+                                                        Icons.refresh,
+                                                      ),
+                                                      label: Text(
+                                                        tr('Refresh', '刷新'),
+                                                      ),
+                                                    ),
+                                                    OutlinedButton.icon(
+                                                      onPressed:
+                                                          _uploadSnapshot,
+                                                      icon: const Icon(
+                                                        Icons.upload_file,
+                                                      ),
+                                                      label: Text(
+                                                        tr(
+                                                          'Upload image',
+                                                          '上传图片',
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 10),
+                                                Text(
+                                                  tr('Preview source', '预览来源'),
+                                                ),
+                                                if (_domSnapshot != null)
+                                                  ChoiceChip(
+                                                    label: Text(
+                                                      '${tr('Automatic DOM', '自动 DOM')} · ${_readableDateTime(_domSnapshot!['createdAt'])}',
+                                                    ),
+                                                    selected: _useDomSnapshot,
+                                                    onSelected: (_) => setState(
+                                                      () => _useDomSnapshot =
+                                                          true,
+                                                    ),
+                                                  ),
+                                                if (_snapshots.isNotEmpty)
+                                                  DropdownButton<
+                                                    Map<String, dynamic>
+                                                  >(
+                                                    isExpanded: true,
+                                                    value: _useDomSnapshot
+                                                        ? null
+                                                        : _snapshot,
+                                                    hint: Text(
+                                                      tr(
+                                                        'Manual image',
+                                                        '手动图片',
+                                                      ),
+                                                    ),
+                                                    items: _snapshots
+                                                        .map(
+                                                          (
+                                                            snapshot,
+                                                          ) => DropdownMenuItem(
+                                                            value: snapshot,
+                                                            child: Text(
+                                                              _readableDateTime(
+                                                                snapshot['createdAt'],
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        )
+                                                        .toList(),
+                                                    onChanged: (value) =>
+                                                        setState(() {
+                                                          _snapshot = value;
+                                                          _useDomSnapshot =
+                                                              false;
+                                                        }),
+                                                  ),
+                                                if (!_useDomSnapshot &&
+                                                    _snapshot != null)
+                                                  Align(
+                                                    alignment:
+                                                        Alignment.centerLeft,
+                                                    child: TextButton.icon(
+                                                      onPressed:
+                                                          _deleteSnapshot,
+                                                      icon: const Icon(
+                                                        Icons.delete_outline,
+                                                      ),
+                                                      label: Text(
+                                                        tr(
+                                                          'Delete image',
+                                                          '删除图片',
+                                                        ),
                                                       ),
                                                     ),
                                                   ),
-                                                )
-                                                .toList(),
-                                            onChanged: (value) => setState(() {
-                                              _snapshot = value;
-                                              _useDomSnapshot = false;
-                                            }),
-                                          ),
-                                        if (!_useDomSnapshot &&
-                                            _snapshot != null)
-                                          Align(
-                                            alignment: Alignment.centerLeft,
-                                            child: TextButton.icon(
-                                              onPressed: _deleteSnapshot,
-                                              icon: const Icon(
-                                                Icons.delete_outline,
-                                              ),
-                                              label: Text(
-                                                tr('Delete image', '删除图片'),
-                                              ),
-                                            ),
-                                          ),
-                                        const Divider(height: 24),
-                                        Row(
-                                          children: [
-                                            Text(tr('Opacity', '透明度')),
-                                            Expanded(
-                                              child: Slider(
-                                                value: _overlayOpacity,
-                                                min: .1,
-                                                max: 1,
-                                                onChanged: (value) => setState(
-                                                  () => _overlayOpacity = value,
+                                                const Divider(height: 24),
+                                                Row(
+                                                  children: [
+                                                    Text(tr('Opacity', '透明度')),
+                                                    Expanded(
+                                                      child: Slider(
+                                                        value: _overlayOpacity,
+                                                        min: .1,
+                                                        max: 1,
+                                                        onChanged: (value) =>
+                                                            setState(
+                                                              () =>
+                                                                  _overlayOpacity =
+                                                                      value,
+                                                            ),
+                                                      ),
+                                                    ),
+                                                    IconButton(
+                                                      tooltip: tr(
+                                                        'Back to top',
+                                                        '回到顶部',
+                                                      ),
+                                                      onPressed: () =>
+                                                          _previewScrollController
+                                                              .jumpTo(0),
+                                                      icon: const Icon(
+                                                        Icons
+                                                            .vertical_align_top,
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
-                                              ),
+                                              ],
                                             ),
-                                            IconButton(
-                                              tooltip: tr(
-                                                'Back to top',
-                                                '回到顶部',
-                                              ),
-                                              onPressed: () =>
-                                                  _previewScrollController
-                                                      .jumpTo(0),
-                                              icon: const Icon(
-                                                Icons.vertical_align_top,
-                                              ),
-                                            ),
-                                          ],
+                                          ),
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: IconButton.filledTonal(
+                                    tooltip: tr('Close controls', '关闭快捷设置'),
+                                    onPressed: () =>
+                                        setState(() => _toolsOpen = false),
+                                    icon: const Icon(Icons.close),
                                   ),
                                 ),
                               ],

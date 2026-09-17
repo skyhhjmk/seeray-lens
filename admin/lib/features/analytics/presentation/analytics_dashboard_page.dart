@@ -47,17 +47,15 @@ class _AnalyticsDashboardPageState
                 chineseBody:
                     '此仪表盘汇总所选站点在当前统计周期内的数据。独立访客会在整个范围内精确去重；跳出率和平均访问时长由会话数据计算。',
               ),
+              rangeState: rangeState,
+              onSelectRange: () => _selectRange(rangeState),
             ),
       body: dashboard.when(
         loading: () => const _DashboardSkeleton(),
         error: (error, stack) => _DashboardError(
           onRetry: () => ref.invalidate(analyticsDashboardRangeProvider(query)),
         ),
-        data: (data) => _DashboardBody(
-          data: data,
-          rangeState: rangeState,
-          onSelectRange: () => _selectRange(rangeState),
-        ),
+        data: (data) => _DashboardBody(data: data, rangeState: rangeState),
       ),
     );
   }
@@ -175,14 +173,9 @@ class _NavTab extends StatelessWidget {
 }
 
 class _DashboardBody extends StatelessWidget {
-  const _DashboardBody({
-    required this.data,
-    required this.rangeState,
-    required this.onSelectRange,
-  });
+  const _DashboardBody({required this.data, required this.rangeState});
   final AnalyticsDashboard data;
   final AnalyticsRangeState rangeState;
-  final VoidCallback onSelectRange;
 
   @override
   Widget build(BuildContext context) {
@@ -190,20 +183,9 @@ class _DashboardBody extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                analyticsRangeLabel(context, rangeState),
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: onSelectRange,
-              icon: const Icon(Icons.calendar_today_outlined, size: 18),
-              label: Text(analyticsRangeLabel(context, rangeState)),
-            ),
-          ],
+        Text(
+          analyticsRangeLabel(context, rangeState),
+          style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 16),
         Wrap(
