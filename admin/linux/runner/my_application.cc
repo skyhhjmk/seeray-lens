@@ -15,6 +15,24 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+// webview_cef tears Chromium down while the Flutter view is being destroyed.
+// That operation may take several seconds, so remove the window from the
+// compositor before beginning destruction instead of leaving a frozen window
+// on screen for the duration of CEF shutdown.
+static gboolean destroy_window_after_hide(gpointer data) {
+  gtk_widget_destroy(GTK_WIDGET(data));
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean request_window_close(GtkWidget* window,
+                                     GdkEvent*,
+                                     gpointer) {
+  gtk_widget_hide(window);
+  g_timeout_add_full(G_PRIORITY_DEFAULT, 50, destroy_window_after_hide,
+                     g_object_ref(window), g_object_unref);
+  return TRUE;
+}
+
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
@@ -54,6 +72,8 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 720);
+  g_signal_connect(window, "delete-event", G_CALLBACK(request_window_close),
+                   nullptr);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

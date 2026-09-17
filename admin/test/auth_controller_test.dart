@@ -88,6 +88,30 @@ void main() {
     expect(store.value, 'rotated-refresh');
     expect(client.requests, 1);
   });
+
+  test('a stale restore cannot overwrite a successful manual login', () async {
+    final store = _MemoryTokenStore()..value = 'stale-refresh';
+    final client = _DeferredRestoreClient();
+    final container = ProviderContainer(
+      overrides: [
+        apiProvider.overrideWithValue(SeeRayApi(client: client)),
+        authTokenStoreProvider.overrideWithValue(store),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(authProvider);
+    await client.restoreStarted.future;
+    await container
+        .read(authProvider.notifier)
+        .login('person@example.com', 'correct-password');
+    client.finishRestore();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(container.read(authProvider).phase, AuthPhase.authenticated);
+    expect(container.read(authProvider).accessToken, 'manual-access');
+    expect(store.value, 'manual-refresh');
+  });
 }
 
 ProviderContainer _container(List<String> bodies) => ProviderContainer(
@@ -121,6 +145,39 @@ class _Client extends http.BaseClient {
       Stream<List<int>>.value(bodies.removeAt(0).codeUnits),
       statuses.removeAt(0),
       headers: const {'content-type': 'application/json'},
+    );
+  }
+}
+
+class _DeferredRestoreClient extends http.BaseClient {
+  final restoreStarted = Completer<void>();
+  final _restoreResponse = Completer<http.StreamedResponse>();
+
+  void finishRestore() {
+    _restoreResponse.complete(
+      http.StreamedResponse(
+        Stream<List<int>>.value('{}'.codeUnits),
+        401,
+        headers: const {'content-type': 'application/json'},
+      ),
+    );
+  }
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    if (request.url.path.endsWith('/auth/refresh')) {
+      restoreStarted.complete();
+      return _restoreResponse.future;
+    }
+    return Future.value(
+      http.StreamedResponse(
+        Stream<List<int>>.value(
+          '{"accessToken":"manual-access","refreshToken":"manual-refresh"}'
+              .codeUnits,
+        ),
+        200,
+        headers: const {'content-type': 'application/json'},
+      ),
     );
   }
 }

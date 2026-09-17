@@ -1,12 +1,7 @@
-import 'dart:async';
-import 'dart:io';
-import 'dart:ui' show AppExitResponse;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:webview_cef/webview_cef.dart' as cef;
 
 import 'core/auth/auth_state.dart';
 import 'core/i18n/app_i18n.dart';
@@ -176,34 +171,6 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
 }
 
 class _SeeRayLensAdminAppState extends ConsumerState<SeeRayLensAdminApp> {
-  bool _cefQuit = false;
-  late final AppLifecycleListener _lifecycle = AppLifecycleListener(
-    onExitRequested: _requestExit,
-    onDetach: () => unawaited(_shutdownCef()),
-  );
-
-  Future<AppExitResponse> _requestExit() async {
-    await _shutdownCef();
-    return AppExitResponse.exit;
-  }
-
-  Future<void> _shutdownCef() async {
-    if (_cefQuit ||
-        !(Platform.isLinux || Platform.isWindows) ||
-        !cef.WebviewManager().value) {
-      return;
-    }
-    _cefQuit = true;
-    await cef.WebviewManager().quit();
-  }
-
-  @override
-  void dispose() {
-    _lifecycle.dispose();
-    unawaited(_shutdownCef());
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) => MaterialApp.router(
     title: 'SeeRay Lens',

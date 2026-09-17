@@ -15,6 +15,7 @@ class AuthController extends Notifier<AuthState> {
   late SeeRayApi _api;
   late AuthTokenStore _tokens;
   Future<String?>? _inflight;
+  int _sessionGeneration = 0;
   @override
   AuthState build() {
     _api = ref.read(apiProvider);
@@ -25,21 +26,25 @@ class AuthController extends Notifier<AuthState> {
   }
 
   Future<void> _restore() async {
+    final generation = _sessionGeneration;
     try {
       final token = await _tokens.readRefreshToken();
+      if (generation != _sessionGeneration) return;
       if (token == null || token.isEmpty) {
         state = const AuthState(AuthPhase.unauthenticated);
         return;
       }
       state = AuthState(AuthPhase.refreshing, refreshToken: token);
-      await refresh();
+      await _refresh(token, generation);
     } catch (_) {
+      if (generation != _sessionGeneration) return;
       await _tokens.clear();
       state = const AuthState(AuthPhase.unauthenticated);
     }
   }
 
   Future<void> login(String email, String password) async {
+    final generation = ++_sessionGeneration;
     state = const AuthState(AuthPhase.authenticating);
     try {
       final d = await _api.request(
@@ -47,18 +52,24 @@ class AuthController extends Notifier<AuthState> {
         '/api/v1/auth/login',
         body: {'email': email, 'password': password},
       );
+      if (generation != _sessionGeneration) return;
       await _set(d);
     } catch (e) {
-      state = AuthState(AuthPhase.error, message: 'Unable to sign in');
+      if (generation != _sessionGeneration) return;
+      state = AuthState(AuthPhase.error, message: _loginError(e));
     }
   }
 
   Future<String?> refresh() {
-    return _inflight ??= _refresh().whenComplete(() => _inflight = null);
+    final generation = _sessionGeneration;
+    final token = state.refreshToken;
+    return _inflight ??= _refresh(
+      token,
+      generation,
+    ).whenComplete(() => _inflight = null);
   }
 
-  Future<String?> _refresh() async {
-    final token = state.refreshToken;
+  Future<String?> _refresh(String? token, int generation) async {
     if (token == null) {
       return null;
     }
@@ -70,9 +81,11 @@ class AuthController extends Notifier<AuthState> {
         body: {'refreshToken': token},
         retried: true,
       );
+      if (generation != _sessionGeneration) return null;
       await _set(d);
       return state.accessToken;
     } catch (_) {
+      if (generation != _sessionGeneration) return null;
       await _tokens.clear();
       state = const AuthState(AuthPhase.expired);
       return null;
@@ -87,6 +100,16 @@ class AuthController extends Notifier<AuthState> {
     );
     _api.accessToken = state.accessToken;
     await _tokens.writeRefreshToken(state.refreshToken!);
+  }
+
+  String _loginError(Object error) {
+    if (error is! ApiFailure) return 'Unable to sign in';
+    return switch (error.status) {
+      0 => error.message,
+      401 => 'Email or password is incorrect',
+      403 => 'This account is disabled',
+      _ => error.message,
+    };
   }
 
   Future<void> logout() async {
