@@ -2132,7 +2132,7 @@ class ControlPlaneResourceTest {
         String workspace = workspace(owner.access()).extract().path("[0].id");
         var siteResponse = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
-                .body("{\"name\":\"Dimensions\",\"timezone\":\"UTC\"}")
+                .body("{\"name\":\"Dimensions\",\"timezone\":\"Asia/Shanghai\"}")
                 .post("/api/v1/workspaces/" + workspace + "/sites")
                 .then()
                 .statusCode(201)
@@ -2164,6 +2164,7 @@ class ControlPlaneResourceTest {
         String starterVisitor = UUID.randomUUID().toString();
         String starterSession = UUID.randomUUID().toString();
         String now = Instant.now().toString();
+        var siteLocalStart = Instant.parse(now).atZone(ZoneId.of("Asia/Shanghai"));
         String payload = "{\"schemaVersion\":1,\"siteId\":\"" + trackingId + "\",\"events\":["
                 + "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"product_interaction\",\"occurredAt\":\"" + now
                 + "\",\"url\":\"https://example.com/pricing\",\"visitorId\":\"" + visitor + "\",\"sessionId\":\""
@@ -2238,7 +2239,7 @@ class ControlPlaneResourceTest {
             assertEquals(1, statement.executeUpdate());
         }
 
-        String today = LocalDate.now(java.time.ZoneOffset.UTC).toString();
+        String today = siteLocalStart.toLocalDate().toString();
         String customDimension = "custom:" + dimensionId;
         String propertyId = given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + site + "/analytics/custom-report/event-properties?from=" + today + "&to="
@@ -2586,6 +2587,21 @@ class ControlPlaneResourceTest {
                 .body("name", is("Pro plan visitors"))
                 .extract()
                 .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/analytics/visit-time?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].dayOfWeek", is(siteLocalStart.getDayOfWeek().getValue() - 1))
+                .body("[0].hour", is(siteLocalStart.getHour()))
+                .body("[0].sessions", is(2));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/analytics/visit-time?from=" + today + "&to=" + today + "&segmentId="
+                        + segmentId)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].sessions", is(1));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"dimension\":\"event_type\",\"metric\":\"sessions\",\"limit\":10,"

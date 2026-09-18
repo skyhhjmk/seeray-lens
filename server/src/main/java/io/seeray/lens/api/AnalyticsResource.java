@@ -324,6 +324,16 @@ public class AnalyticsResource {
     }
 
     @GET
+    @Path("/visit-time")
+    public List<SegmentedAnalyticsQueryService.VisitTimeCell> visitTime(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return segmented.visitTime(site, analytics.range(site, from, to), segmentId);
+    }
+
+    @GET
     @Path("/locations")
     public LocationReport locations(
             @PathParam("siteId") UUID site,

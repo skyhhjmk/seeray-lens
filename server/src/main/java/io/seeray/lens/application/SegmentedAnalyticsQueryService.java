@@ -899,6 +899,21 @@ public class SegmentedAnalyticsQueryService {
                         row.getString(1), row.getString(2), row.getLong(3), row.getLong(4)));
     }
 
+    /** Counts session starts by weekday and wall-clock hour in the site's configured timezone. */
+    public List<VisitTimeCell> visitTime(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
+        QueryContext context = context(siteId, range, segmentId);
+        String sql = cte(context)
+                + ", local_visit_starts as (select started_at at time zone ? local_started_at "
+                + "from matching_sessions) select (extract(isodow from local_started_at)::integer - 1) day_of_week, "
+                + "extract(hour from local_started_at)::integer visit_hour, count(*) sessions "
+                + "from local_visit_starts group by 1,2 order by 1,2";
+        return list(
+                context,
+                sql,
+                List.of(context.timezone()),
+                row -> new VisitTimeCell(row.getInt(1), row.getInt(2), row.getLong(3)));
+    }
+
     public List<AnalyticsQueryService.Location> locations(
             UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
         QueryContext context = context(siteId, range, segmentId);
@@ -1075,6 +1090,8 @@ public class SegmentedAnalyticsQueryService {
             long zeroResultSearches,
             long measuredResultSearches,
             Double averageResultsCount) {}
+
+    public record VisitTimeCell(int dayOfWeek, int hour, long sessions) {}
 
     public record ContentReport(
             long impressions,
