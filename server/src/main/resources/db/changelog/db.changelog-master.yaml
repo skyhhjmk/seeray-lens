@@ -321,3 +321,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0046-ad-click-attribution.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0047-campaign-cost-imports
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0047-campaign-cost-imports.sql
+            relativeToChangelogFile: false

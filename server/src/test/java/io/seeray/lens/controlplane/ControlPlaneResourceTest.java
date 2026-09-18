@@ -1562,6 +1562,161 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void importsCampaignCostsIdempotentlyAndReportsCostPerClickAndGoalValue() throws Exception {
+        Tokens owner = register("campaign-costs" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Campaign cost site");
+        String day = LocalDate.now(ZoneId.of("UTC")).minusDays(1).toString();
+        String goalId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Signup\",\"triggerType\":\"page_view\","
+                        + "\"pathPattern\":\"/thanks\",\"pathMatchMode\":\"exact\",\"fixedValue\":100}")
+                .post("/api/v1/sites/" + siteId + "/goals")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        UUID siteUuid = UUID.fromString(siteId);
+        String visitor = UUID.randomUUID().toString();
+        Instant campaignVisit = LocalDate.parse(day).atTime(10, 0).toInstant(java.time.ZoneOffset.UTC);
+        insertAttributionPage(
+                siteUuid,
+                visitor,
+                "campaign-session",
+                campaignVisit,
+                "/landing",
+                null,
+                "google",
+                "paid_search",
+                "summer-2026");
+        insertAttributionPage(
+                siteUuid,
+                visitor,
+                "conversion-session",
+                campaignVisit.plusSeconds(3600),
+                "/thanks",
+                null,
+                null,
+                null,
+                null);
+        aggregation.rebuild(siteUuid, LocalDate.parse(day), LocalDate.parse(day));
+        String endpoint = "/api/v1/sites/" + siteId + "/analytics/campaign-costs";
+        String row = "{\"date\":\"" + day
+                + "\",\"platform\":\"google_ads\",\"source\":\"google\","
+                + "\"medium\":\"paid_search\",\"campaign\":\"summer-2026\",\"currency\":\"USD\","
+                + "\"cost\":12.50,\"clicks\":7,\"impressions\":100}";
+        String firstBody = "{\"fileName\":\"google-costs.csv\",\"rows\":[" + row + "]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(firstBody)
+                .post(endpoint + "/imports")
+                .then()
+                .statusCode(200)
+                .body("rowsImported", is(1))
+                .body("alreadyImported", is(false));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"fileName\":\"renamed-copy.csv\",\"rows\":[" + row + "]}")
+                .post(endpoint + "/imports")
+                .then()
+                .statusCode(200)
+                .body("rowsImported", is(1))
+                .body("alreadyImported", is(true));
+
+        String revisedRow = row.replace("12.50", "13.00").replace("\"clicks\":7", "\"clicks\":8");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"fileName\":\"google-costs-revised.csv\",\"rows\":[" + revisedRow + "]}")
+                .post(endpoint + "/imports")
+                .then()
+                .statusCode(200)
+                .body("alreadyImported", is(false));
+
+        var report = given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "?from=" + day + "&to=" + day + "&goalId=" + goalId + "&model=first_touch")
+                .then()
+                .statusCode(200)
+                .body("rows.size()", is(1))
+                .body("rows[0].platform", is("google_ads"))
+                .body("rows[0].source", is("google"))
+                .body("rows[0].medium", is("paid_search"))
+                .body("rows[0].campaign", is("summer-2026"))
+                .body("rows[0].clicks", is(8))
+                .body("rows[0].impressions", is(100))
+                .body("rows[0].sessions", is(1))
+                .body("rows[0].attributedConversions", is(1.0f))
+                .body("rows[0].attributedGoalValue", is(100.0f))
+                .extract()
+                .jsonPath();
+        assertEquals(
+                new java.math.BigDecimal("13.0"),
+                new java.math.BigDecimal(report.get("rows[0].cost").toString()));
+        assertEquals(
+                0,
+                new java.math.BigDecimal("1.625")
+                        .compareTo(new java.math.BigDecimal(
+                                report.get("rows[0].costPerClick").toString())));
+        assertEquals(
+                0,
+                new java.math.BigDecimal("13")
+                        .compareTo(new java.math.BigDecimal(report.get("rows[0].costPerAttributedConversion")
+                                .toString())));
+        assertEquals(
+                0,
+                new java.math.BigDecimal("7.692308")
+                        .compareTo(new java.math.BigDecimal(
+                                report.get("rows[0].goalValuePerSpend").toString())));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/imports")
+                .then()
+                .statusCode(200)
+                .body("canManage", is(true))
+                .body("imports.size()", is(2));
+
+        String viewerEmail = "campaign-cost-viewer" + System.nanoTime() + "@example.test";
+        Tokens viewer = register(viewerEmail);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + viewerEmail + "\",\"role\":\"viewer\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/members")
+                .then()
+                .statusCode(201);
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get(endpoint + "/imports")
+                .then()
+                .statusCode(200)
+                .body("canManage", is(false))
+                .body("imports.size()", is(2));
+        given().header("Authorization", "Bearer " + viewer.access())
+                .contentType("application/json")
+                .body(firstBody)
+                .post(endpoint + "/imports")
+                .then()
+                .statusCode(403);
+
+        String invalidRows = "{\"fileName\":\"bad-costs.csv\",\"rows\":[" + row + ","
+                + row.replace("summer-2026", "invalid-currency").replace("USD", "ZZZ") + "]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(invalidRows)
+                .post(endpoint + "/imports")
+                .then()
+                .statusCode(400)
+                .body("code", is("AD_COST_IMPORT_INVALID"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/imports")
+                .then()
+                .statusCode(200)
+                .body("imports.size()", is(2));
+
+        Tokens outsider = register("campaign-cost-outsider" + System.nanoTime() + "@example.test");
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(endpoint + "/imports")
+                .then()
+                .statusCode(404);
+    }
+
+    @Test
     void cohortReportCalculatesWeeklyRetentionAndLeavesImmatureWeeksBlank() throws Exception {
         Tokens owner = register("cohorts" + System.nanoTime() + "@example.test");
         String workspaceId = workspace(owner.access()).extract().path("[0].id");
