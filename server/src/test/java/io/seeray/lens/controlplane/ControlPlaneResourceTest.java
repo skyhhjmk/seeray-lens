@@ -1669,6 +1669,13 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .extract()
                 .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Second cohort B value\",\"triggerType\":\"page_view\","
+                        + "\"pathPattern\":\"/cohort/b\",\"pathMatchMode\":\"exact\",\"fixedValue\":2}")
+                .post("/api/v1/sites/" + siteId + "/goals")
+                .then()
+                .statusCode(200);
         String goalCohortPath = reportPath + "&basis=goal_conversion&goalId=" + goalId;
         List<java.util.Map<String, Object>> goalCohorts = given().header("Authorization", "Bearer " + owner.access())
                 .get(goalCohortPath)
@@ -1727,6 +1734,19 @@ class ControlPlaneResourceTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(0, conversionWeekOne.get("goalConversions"));
+        List<java.util.Map<String, Object>> goalValueCells = given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&metric=goal_value")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var summedGoalValue = goalValueCells.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(17.0d, ((Number) summedGoalValue.get("goalValue")).doubleValue());
         given().header("Authorization", "Bearer " + owner.access())
                 .get(reportPath + "&metric=goal_conversions")
                 .then()

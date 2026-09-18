@@ -77,7 +77,10 @@ public class CohortQueryService {
         if ("goal_conversion".equals(basis) && goalId == null) {
             throw new ControlPlaneException(400, "GOAL_REQUIRED", "A goal is required for goal-conversion cohorts");
         }
-        if (!"returning_visitors".equals(metric) && !"visits".equals(metric) && !"goal_conversions".equals(metric)) {
+        if (!"returning_visitors".equals(metric)
+                && !"visits".equals(metric)
+                && !"goal_conversions".equals(metric)
+                && !"goal_value".equals(metric)) {
             throw new ControlPlaneException(400, "INVALID_COHORT_METRIC", "Cohort metric is invalid");
         }
         if ("goal_conversions".equals(metric) && metricGoalId == null) {
@@ -104,14 +107,15 @@ public class CohortQueryService {
                     default -> throw new IllegalStateException("Validated cohort period was not supported");
                 };
         String goalActivityCtes;
-        if ("goal_conversions".equals(metric)) {
+        if ("goal_conversions".equals(metric) || "goal_value".equals(metric)) {
             String conversionBucket = periodBucket(GOAL_EVENT_TIMESTAMP, period);
             String conversionIndex = periodIndex("a.activity_period", "a.cohort_period", period);
+            String selectedGoalFilter = "goal_conversions".equals(metric) ? "and g.id=? " : "";
             goalActivityCtes = "goal_events as (select c.cohort_period,c.visitor_id," + conversionBucket
                     + " activity_period,g.fixed_value from cohort_members c "
                     + "join analytics_session s on s.site_id=? and s.visitor_id=c.visitor_id "
                     + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
-                    + "join goal_definition g on g.site_id=s.site_id and g.id=? and g.enabled "
+                    + "join goal_definition g on g.site_id=s.site_id " + selectedGoalFilter + "and g.enabled "
                     + "join raw_event e on e.site_id=s.site_id and e.client_session_id=s.client_session_id "
                     + "and e.client_visitor_id=v.client_visitor_id and " + GOAL_EVENT_TIMESTAMP
                     + " between s.started_at and s.last_activity_at where " + GOAL_EVENT_MATCH
@@ -207,10 +211,10 @@ public class CohortQueryService {
             statement.setObject(next++, range.from());
             statement.setObject(next++, range.to());
             for (Object value : filter.values()) statement.setObject(next++, value);
-            if ("goal_conversions".equals(metric)) {
+            if ("goal_conversions".equals(metric) || "goal_value".equals(metric)) {
                 statement.setString(next++, site.timezone);
                 statement.setObject(next++, siteId);
-                statement.setObject(next++, metricGoalId);
+                if ("goal_conversions".equals(metric)) statement.setObject(next++, metricGoalId);
                 statement.setString(next++, site.timezone);
                 statement.setObject(next++, range.to());
             }
