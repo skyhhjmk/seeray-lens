@@ -6,7 +6,7 @@ export interface HeatmapOptions { enabled?: boolean; sampleRate?: number; naviga
 export interface PageReadyOptions { url?: string; layoutVersion?: string; }
 export interface ScrollContainerOptions { id: string; element: HTMLElement; }
 export interface TagManagerPreviewOptions { sessionId: string; token: string; }
-export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
+export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
 export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; }
 export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
 export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
@@ -110,7 +110,7 @@ export class Tracker {
   private readonly tagManagerPreviewToken?: string;
   private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false;
   private heatmapConfig: HeatmapConfig | undefined; private heatmapQueue: HeatmapEvent[] = []; private heatmapTimer: ReturnType<typeof setTimeout> | undefined; private heatmapInstance: string | undefined; private heatmapUrl = ''; private heatmapLayoutVersion = 'unversioned'; private heatmapSelected = false; private heatmapNavigating = false;
-  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private formListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private formViewObserver: IntersectionObserver | undefined; private formMutationObserver: MutationObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private formSeen = new WeakSet<Element>(); private formStarted = new WeakSet<Element>(); private interactedFormFields = new WeakSet<Element>(); private activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
+  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private formListenerInstalled = false; private mediaListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private formViewObserver: IntersectionObserver | undefined; private formMutationObserver: MutationObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private formSeen = new WeakSet<Element>(); private formStarted = new WeakSet<Element>(); private interactedFormFields = new WeakSet<Element>(); private activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>(); private mediaStarted = new WeakSet<Element>(); private mediaCompleted = new WeakSet<Element>(); private mediaMilestones = new WeakMap<Element, Set<number>>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
   private readonly containers = new Map<string, ContainerRegistration>(); private readonly scrollBins = new Map<string, Set<number>>(); private readonly lastScroll = new Map<string, number>();
   private readonly layoutSegments = new Map<string, string>();
   private tagDefinitions: TagDefinition[] = [];
@@ -162,6 +162,9 @@ export class Tracker {
       this.contentObserver?.disconnect();
       this.formViewObserver?.disconnect();
       this.formMutationObserver?.disconnect();
+      this.mediaStarted = new WeakSet<Element>();
+      this.mediaCompleted = new WeakSet<Element>();
+      this.mediaMilestones = new WeakMap<Element, Set<number>>();
       this.stopRecorder();
       this.removeStoredIdentity();
       this.useEphemeralIdentity();
@@ -356,13 +359,93 @@ export class Tracker {
       properties: { formId: id },
     });
   }
+  private mediaId(element: Element): string | undefined {
+    if (element.closest('[data-seeray-no-track]')) return undefined;
+    const raw = element.getAttribute('data-seeray-media');
+    return typeof raw === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(raw) ? raw : undefined;
+  }
+  private recordMediaEvent(
+    type: 'media_start' | 'media_progress' | 'media_complete',
+    element: HTMLMediaElement,
+    progressPercent?: number,
+  ): void {
+    if (!this.collectionAllowed()) return;
+    const mediaId = this.mediaId(element);
+    if (!mediaId) return;
+    const mediaType = element.tagName.toLowerCase() === 'audio' ? 'audio' : 'video';
+    const properties: Record<string, unknown> = { mediaId, mediaType };
+    if (progressPercent !== undefined) properties.progressPercent = progressPercent;
+    if (type === 'media_complete' && Number.isFinite(element.duration) && element.duration > 0)
+      properties.mediaDurationSeconds = Math.min(604_800, Math.round(element.duration));
+    this.track(type, {
+      category: 'media',
+      action: type === 'media_progress' ? `progress_${progressPercent}` : type.slice('media_'.length),
+      name: mediaId,
+      properties,
+    });
+  }
+  private installMediaTracking(): void {
+    if (this.mediaListenerInstalled || !this.options.trackMedia) return;
+    this.mediaListenerInstalled = true;
+    const document = globalThis.document;
+    if (!document?.addEventListener) return;
+    document.addEventListener('play', event => {
+      if (!this.collectionAllowed() || !(event.target instanceof HTMLMediaElement)) return;
+      const element = event.target;
+      if (!this.mediaId(element) || this.mediaStarted.has(element)) return;
+      this.mediaStarted.add(element);
+      this.recordMediaEvent('media_start', element);
+    }, true);
+    document.addEventListener('timeupdate', event => {
+      if (!this.collectionAllowed() || !(event.target instanceof HTMLMediaElement)) return;
+      const element = event.target;
+      const id = this.mediaId(element);
+      if (!id || !this.mediaStarted.has(element) || !Number.isFinite(element.duration) || element.duration <= 0 || !Number.isFinite(element.currentTime)) return;
+      const progress = Math.max(0, Math.min(100, element.currentTime / element.duration * 100));
+      const milestones = this.mediaMilestones.get(element) ?? new Set<number>();
+      this.mediaMilestones.set(element, milestones);
+      for (const milestone of [25, 50, 75, 90]) {
+        if (progress >= milestone && !milestones.has(milestone)) {
+          milestones.add(milestone);
+          this.recordMediaEvent('media_progress', element, milestone);
+        }
+      }
+    }, true);
+    document.addEventListener('ended', event => {
+      if (!this.collectionAllowed() || !(event.target instanceof HTMLMediaElement)) return;
+      const element = event.target;
+      if (!this.mediaId(element) || this.mediaCompleted.has(element)) return;
+      this.mediaCompleted.add(element);
+      this.recordMediaEvent('media_complete', element);
+    }, true);
+  }
+  private refreshMediaTracking(reset = false): void {
+    if (!this.options.trackMedia) return;
+    if (reset) {
+      this.mediaStarted = new WeakSet<Element>();
+      this.mediaCompleted = new WeakSet<Element>();
+      this.mediaMilestones = new WeakMap<Element, Set<number>>();
+    }
+    if (!this.collectionAllowed()) return;
+    globalThis.document?.querySelectorAll?.('audio[data-seeray-media],video[data-seeray-media]')?.forEach(element => {
+      if (!(element instanceof HTMLMediaElement) || element.paused || !this.mediaId(element) || this.mediaStarted.has(element)) return;
+      this.mediaStarted.add(element);
+      const milestones = new Set<number>();
+      const progress = Number.isFinite(element.duration) && element.duration > 0
+        ? element.currentTime / element.duration * 100
+        : 0;
+      for (const milestone of [25, 50, 75, 90]) if (progress >= milestone) milestones.add(milestone);
+      this.mediaMilestones.set(element, milestones);
+      this.recordMediaEvent('media_start', element);
+    });
+  }
   push(data: DataLayerEvent): void { if (!data?.event) return; this.track(data.event, { url: data.url, title: data.title, referrer: data.referrer, category: data.eventCategory, action: data.eventAction, name: data.eventName, properties: data.properties }); this.fireTagTriggers(data); }
   track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title ?? globalThis.document?.title, referrer: options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: this.visitorId, sessionId: this.sessionId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
   async flush(unload = false): Promise<void> { if (this.timer) clearTimeout(this.timer); this.timer = undefined; if (!this.queue.length || !this.collectionAllowed()) return; const events = this.queue.splice(0, this.maxBatchSize); const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events }); if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return; try { const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok) throw new Error(`collector returned ${response.status}`); } catch { this.queue.unshift(...events); this.schedule(); } }
 
   beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); this.formViewObserver?.disconnect(); } this.pageViewRecorded = false; }
   cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); this.refreshContentTracking(true); this.refreshFormTracking(true); }
-  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); this.refreshContentTracking(true); this.refreshFormTracking(true); } if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
+  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); this.refreshContentTracking(true); this.refreshFormTracking(true); this.refreshMediaTracking(true); } if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
   registerScrollContainer(options: ScrollContainerOptions): () => void { if (!options.id.trim() || this.containers.has(options.id)) return () => undefined; const listener = () => this.recordScroll(options.id); options.element.addEventListener('scroll', listener, { passive: true }); this.containers.set(options.id, { element: options.element, remove: () => options.element.removeEventListener('scroll', listener) }); this.resizeObserver?.observe(options.element); if (this.heatmapInstance && this.heatmapSelected) this.captureTargetStart(options.id, options.element, true); return () => { const entry = this.containers.get(options.id); entry?.remove(); this.resizeObserver?.unobserve(options.element); this.containers.delete(options.id); this.scrollBins.delete(options.id); this.lastScroll.delete(options.id); this.layoutSegments.delete(options.id); }; }
   refreshHeatmapLayout(): void { if (!this.heatmapInstance || !this.heatmapSelected) return; if (this.layoutTimer) clearTimeout(this.layoutTimer); this.layoutTimer = setTimeout(() => this.captureStart(), 200); }
   private collectionAllowed(): boolean { return !doNotTrack() && this.hasConsent(); }
@@ -376,6 +459,8 @@ export class Tracker {
     this.refreshContentTracking(true);
     this.installFormTracking();
     this.refreshFormTracking(true);
+    this.installMediaTracking();
+    this.refreshMediaTracking(true);
     if (this.options.trackDownloads !== false || this.options.trackOutlinks !== false)
       this.installBehaviourListener();
   }

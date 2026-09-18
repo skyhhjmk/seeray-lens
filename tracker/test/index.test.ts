@@ -478,6 +478,51 @@ describe('tracker package', () => {
     expect(JSON.stringify(events)).not.toContain('email');
   });
 
+  it('tracks explicit media starts, unique progress milestones and completions', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const listeners = new Map<string, (event: Event) => void>();
+    class FakeMedia {
+      readonly tagName = 'VIDEO';
+      duration = 100;
+      currentTime = 0;
+      constructor(readonly attributes: Record<string, string>, readonly suppressed = false) {}
+      getAttribute(name: string): string | null { return this.attributes[name] ?? null; }
+      closest(selector: string): FakeMedia | null {
+        return selector === '[data-seeray-no-track]' && this.suppressed ? this : null;
+      }
+    }
+    vi.stubGlobal('HTMLMediaElement', FakeMedia);
+    vi.stubGlobal('document', {
+      addEventListener: (type: string, listener: (event: Event) => void) => listeners.set(type, listener),
+    });
+    const tracker = new Tracker({ siteId: 'srl_media', trackMedia: true, trackDownloads: false, trackOutlinks: false });
+    const invalid = new FakeMedia({ 'data-seeray-media': 'product demo / private' });
+    listeners.get('play')?.({ target: invalid } as unknown as Event);
+    const suppressed = new FakeMedia({ 'data-seeray-media': 'private-form-video' }, true);
+    listeners.get('play')?.({ target: suppressed } as unknown as Event);
+    const media = new FakeMedia({ 'data-seeray-media': 'product-demo', src: 'https://media.example.test/private.mp4?token=secret' });
+    listeners.get('play')?.({ target: media } as unknown as Event);
+    for (const currentTime of [24, 25, 50, 75, 90, 100]) {
+      media.currentTime = currentTime;
+      listeners.get('timeupdate')?.({ target: media } as unknown as Event);
+    }
+    listeners.get('ended')?.({ target: media } as unknown as Event);
+    listeners.get('ended')?.({ target: media } as unknown as Event);
+    await tracker.flush();
+
+    const events = JSON.parse(fetch.mock.calls[0][1].body as string).events;
+    expect(events.map((event: { type: string }) => event.type)).toEqual([
+      'media_start', 'media_progress', 'media_progress', 'media_progress', 'media_progress', 'media_complete',
+    ]);
+    expect(events.slice(1, 5).map((event: { properties: { progressPercent: number } }) => event.properties.progressPercent))
+      .toEqual([25, 50, 75, 90]);
+    expect(events[0].properties).toEqual({ mediaId: 'product-demo', mediaType: 'video' });
+    expect(JSON.stringify(events)).not.toContain('private.mp4');
+    expect(JSON.stringify(events)).not.toContain('secret');
+  });
+
   it('collects normalized technology context without transmitting the raw user agent', async () => {
     vi.stubGlobal('navigator', {
       doNotTrack: '0',

@@ -19,6 +19,7 @@
     experiments: script.getAttribute('data-experiments') === 'true',
     webVitals: script.hasAttribute('data-web-vitals'),
     trackForms: script.hasAttribute('data-track-forms'),
+    trackMedia: script.hasAttribute('data-track-media'),
     heatmap: {
       enabled: true,
       navigationMode: script.getAttribute('data-navigation-mode') === 'manual' ? 'manual' : 'auto',
