@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:seeray_lens_admin/core/network/seeray_api.dart';
+import 'package:seeray_lens_admin/features/analytics/application/analytics_controller.dart';
+import 'package:seeray_lens_admin/features/analytics/application/analytics_range.dart';
 import 'package:seeray_lens_admin/features/analytics/presentation/analytics_detail_page.dart';
 import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 
@@ -125,9 +127,21 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Configured goals'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
 
     expect(find.text('Configured goals'), findsOneWidget);
     expect(find.text('No configured goals.'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Create goal'),
+      -300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Create goal'));
     await tester.pumpAndSettle();
 
@@ -144,6 +158,89 @@ void main() {
     expect((api.lastBody as Map)['name'], 'Signup completed');
     expect((api.lastBody as Map)['triggerType'], 'event');
     expect((api.lastBody as Map)['eventType'], 'signup');
+  });
+
+  testWidgets('compares goals with the immediately preceding equal period', (
+    tester,
+  ) async {
+    final api = _GoalApi();
+    final container = ProviderContainer(
+      overrides: [apiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+    container
+        .read(analyticsRangeProvider('site-1').notifier)
+        .setRange(
+          AnalyticsRangeState(
+            period: AnalyticsPeriod.custom,
+            range: AnalyticsDateRange(
+              DateTime(2026, 9, 10),
+              DateTime(2026, 9, 16),
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: AnalyticsDetailPage(
+            siteId: 'site-1',
+            view: AnalyticsView.goals,
+            embedded: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Previous equal-length period · 2026-09-03 – 2026-09-09'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('+10 conversions (+100.0%)'), findsOneWidget);
+    expect(find.textContaining('+2.0 pp conversion rate'), findsOneWidget);
+    expect(
+      api.goalRequests.map((request) => request.queryParameters['from']),
+      containsAll(['2026-09-10', '2026-09-03']),
+    );
+  });
+
+  testWidgets('compares two saved audiences over the same dates', (
+    tester,
+  ) async {
+    final api = _GoalApi()
+      ..segments = [
+        {'id': 'segment-a', 'name': 'New visitors', 'enabled': true},
+        {'id': 'segment-b', 'name': 'Returning visitors', 'enabled': true},
+      ];
+    final container = ProviderContainer(
+      overrides: [apiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: AnalyticsDetailPage(
+            siteId: 'site-1',
+            view: AnalyticsView.goals,
+            embedded: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Compare audiences'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('New visitors ·'), findsOneWidget);
+    expect(find.textContaining('Returning visitors ·'), findsOneWidget);
+    expect(
+      api.goalRequests.map((request) => request.queryParameters['segmentId']),
+      containsAll(['segment-a', 'segment-b']),
+    );
   });
 }
 
@@ -340,6 +437,8 @@ class _GoalApi extends SeeRayApi {
   String? lastMethod;
   String? lastPath;
   Object? lastBody;
+  List<Map<String, dynamic>> segments = const [];
+  final List<Uri> goalRequests = [];
 
   @override
   Future<dynamic> request(
@@ -348,12 +447,44 @@ class _GoalApi extends SeeRayApi {
     Object? body,
     bool retried = false,
   }) async {
+    final uri = Uri.parse(path);
     if (method != 'GET') {
       lastMethod = method;
       lastPath = path;
       lastBody = body;
     }
-    if (path.endsWith('/goals')) return const <dynamic>[];
+    if (uri.path.endsWith('/analytics/goals')) {
+      goalRequests.add(uri);
+      final segment = uri.queryParameters['segmentId'];
+      final from = uri.queryParameters['from'];
+      final count = segment == 'segment-a'
+          ? 15
+          : segment == 'segment-b'
+          ? 7
+          : from == '2026-09-03'
+          ? 10
+          : 20;
+      final rate = segment == 'segment-a'
+          ? 0.15
+          : segment == 'segment-b'
+          ? 0.07
+          : from == '2026-09-03'
+          ? 0.08
+          : 0.10;
+      return [
+        {
+          'name': 'Signup',
+          'count': count,
+          'convertedSessions': count - 2,
+          'value': count * 3,
+          'conversionRate': rate,
+        },
+      ];
+    }
+    if (uri.path.endsWith('/segments')) return segments;
+    if (uri.path == '/api/v1/sites/site-1/goals') {
+      return const <dynamic>[];
+    }
     if (path.contains('/analytics/overview')) {
       return {
         'pageViews': 0,

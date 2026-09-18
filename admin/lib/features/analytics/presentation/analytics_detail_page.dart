@@ -46,6 +46,18 @@ class AnalyticsDetailPage extends ConsumerWidget {
                 ),
                 data: (data) => _BehaviourBody(siteId: siteId, data: data),
               )
+        : view == AnalyticsView.goals
+        ? ref
+              .watch(analyticsGoalsProvider(query))
+              .when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => Center(
+                  child: Text(
+                    context.tr('Could not load analytics', '无法加载分析数据'),
+                  ),
+                ),
+                data: (goals) => _GoalsBody(siteId: siteId, goals: goals),
+              )
         : ref
               .watch(analyticsDashboardRangeProvider(query))
               .when(
@@ -55,9 +67,7 @@ class AnalyticsDetailPage extends ConsumerWidget {
                     context.tr('Could not load analytics', '无法加载分析数据'),
                   ),
                 ),
-                data: (data) => view == AnalyticsView.goals
-                    ? _GoalsBody(siteId: siteId, data: data)
-                    : _Body(view: view, data: data, siteId: siteId),
+                data: (data) => _Body(view: view, data: data, siteId: siteId),
               );
     return Scaffold(
       backgroundColor: const Color(0xfff3f5f8),
@@ -75,8 +85,8 @@ class AnalyticsDetailPage extends ConsumerWidget {
                 englishTitle: 'Analytics view',
                 chineseTitle: '分析视图说明',
                 englishBody:
-                    'These reports use the selected site and the last 30 days. Empty panels mean no collected matching events yet.',
-                chineseBody: '这些报表显示当前站点最近 30 天的数据。空白面板表示尚未采集到匹配事件。',
+                    'These reports use the selected site, date range, and optional saved audience segment. Empty panels mean no collected matching events yet.',
+                chineseBody: '这些报表使用当前站点、所选日期范围和可选的已保存分群。空白面板表示尚未采集到匹配事件。',
               ),
             ),
       body: reportBody,
@@ -1293,11 +1303,28 @@ class _AcquisitionMetric extends StatelessWidget {
   }
 }
 
+enum _GoalComparisonMode { previousPeriod, audiences }
+
+AnalyticsDateRange _previousAnalyticsRange(AnalyticsDateRange range) {
+  final days = range.to.difference(range.from).inDays + 1;
+  final to = range.from.subtract(const Duration(days: 1));
+  final from = to.subtract(Duration(days: days - 1));
+  return AnalyticsDateRange(from, to);
+}
+
+String _signedInteger(int value) => value > 0 ? '+$value' : '$value';
+
+String _signedPercent(double value) =>
+    '${value > 0 ? '+' : ''}${value.toStringAsFixed(1)}';
+
+String _signedDecimal(double value) =>
+    '${value > 0 ? '+' : ''}${value.toStringAsFixed(2)}';
+
 class _GoalsBody extends ConsumerStatefulWidget {
-  const _GoalsBody({required this.siteId, required this.data});
+  const _GoalsBody({required this.siteId, required this.goals});
 
   final String siteId;
-  final AnalyticsDashboard data;
+  final List<AnalyticsGoal> goals;
 
   @override
   ConsumerState<_GoalsBody> createState() => _GoalsBodyState();
@@ -1307,6 +1334,10 @@ class _GoalsBodyState extends ConsumerState<_GoalsBody> {
   List<Map<String, dynamic>> _definitions = const [];
   bool _loading = true;
   String? _error;
+  _GoalComparisonMode _comparisonMode = _GoalComparisonMode.previousPeriod;
+  String? _audienceA;
+  String? _audienceB;
+  bool _audiencesInitialized = false;
 
   @override
   void initState() {
@@ -1419,6 +1450,26 @@ class _GoalsBodyState extends ConsumerState<_GoalsBody> {
     final segmentId = ref.read(
       analyticsSegmentSelectionProvider(widget.siteId),
     );
+    final savedSegments = ref
+        .read(analyticsSegmentOptionsProvider(widget.siteId))
+        .maybeWhen(
+          data: (segments) => segments.map((segment) => segment.id),
+          orElse: () => const <String>[],
+        );
+    final segmentIds = <String?>{null, segmentId, ...savedSegments};
+    for (final period in [range, _previousAnalyticsRange(range)]) {
+      for (final selectedSegment in segmentIds) {
+        ref.invalidate(
+          analyticsGoalsProvider(
+            AnalyticsDashboardQuery(
+              widget.siteId,
+              period,
+              segmentId: selectedSegment,
+            ),
+          ),
+        );
+      }
+    }
     ref.invalidate(
       analyticsDashboardRangeProvider(
         AnalyticsDashboardQuery(widget.siteId, range, segmentId: segmentId),
@@ -1427,81 +1478,526 @@ class _GoalsBodyState extends ConsumerState<_GoalsBody> {
   }
 
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(20),
-    children: [
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              context.tr('Goals', '目标'),
-              style: Theme.of(context).textTheme.headlineSmall,
+  Widget build(BuildContext context) {
+    final rangeState = ref.watch(analyticsRangeProvider(widget.siteId));
+    final selectedSegmentId = ref.watch(
+      analyticsSegmentSelectionProvider(widget.siteId),
+    );
+    final segmentOptions = ref.watch(
+      analyticsSegmentOptionsProvider(widget.siteId),
+    );
+    ref.listen(analyticsSegmentOptionsProvider(widget.siteId), (_, next) {
+      next.whenData((segments) {
+        if (!mounted) return;
+        final currentSelection = ref.read(
+          analyticsSegmentSelectionProvider(widget.siteId),
+        );
+        final ids = segments.map((segment) => segment.id).toSet();
+        setState(() {
+          if (!_audiencesInitialized) {
+            _audienceA = ids.contains(currentSelection)
+                ? currentSelection
+                : segments.firstOrNull?.id;
+            _audienceB = segments
+                .where((segment) => segment.id != _audienceA)
+                .firstOrNull
+                ?.id;
+            _audiencesInitialized = true;
+          } else {
+            if (_audienceA != null && !ids.contains(_audienceA)) {
+              _audienceA = segments.firstOrNull?.id;
+            }
+            if (_audienceB != null && !ids.contains(_audienceB)) {
+              _audienceB = null;
+            }
+            if (_audienceA == _audienceB) _audienceB = null;
+          }
+        });
+      });
+    });
+
+    final range = rangeState.range;
+    final previousRange = _previousAnalyticsRange(range);
+    final audienceA = _audiencesInitialized ? _audienceA : selectedSegmentId;
+    final audienceB = _audiencesInitialized ? _audienceB : null;
+    final firstRange = range;
+    final secondRange = _comparisonMode == _GoalComparisonMode.previousPeriod
+        ? previousRange
+        : range;
+    final firstSegment = _comparisonMode == _GoalComparisonMode.previousPeriod
+        ? selectedSegmentId
+        : audienceA;
+    final secondSegment = _comparisonMode == _GoalComparisonMode.previousPeriod
+        ? selectedSegmentId
+        : audienceB;
+    final comparisonQuery = AnalyticsGoalsComparisonQuery(
+      first: AnalyticsDashboardQuery(
+        widget.siteId,
+        firstRange,
+        segmentId: firstSegment,
+      ),
+      second: AnalyticsDashboardQuery(
+        widget.siteId,
+        secondRange,
+        segmentId: secondSegment,
+      ),
+    );
+    final comparison = ref.watch(
+      analyticsGoalsComparisonProvider(comparisonQuery),
+    );
+    final firstLabel = _comparisonMode == _GoalComparisonMode.previousPeriod
+        ? context.tr('Selected period', '当前周期')
+        : _audienceLabel(context, audienceA, segmentOptions);
+    final secondLabel = _comparisonMode == _GoalComparisonMode.previousPeriod
+        ? context.tr('Previous equal-length period', '前一等长周期')
+        : _audienceLabel(context, audienceB, segmentOptions);
+    final firstDates = '${firstRange.fromQuery} – ${firstRange.toQuery}';
+    final secondDates = '${secondRange.fromQuery} – ${secondRange.toQuery}';
+    final audienceOptionsUnavailable =
+        _comparisonMode == _GoalComparisonMode.audiences &&
+        (segmentOptions.isLoading ||
+            segmentOptions.hasError ||
+            segmentOptions.maybeWhen(
+              data: (items) => items.isEmpty,
+              orElse: () => false,
+            ));
+
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                context.tr('Goals', '目标'),
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+            ),
+            IconButton(
+              tooltip: context.tr('Refresh', '刷新'),
+              onPressed: _loading ? null : _load,
+              icon: const Icon(Icons.refresh),
+            ),
+            FilledButton.icon(
+              onPressed: _loading ? null : () => _edit(),
+              icon: const Icon(Icons.add),
+              label: Text(context.tr('Create goal', '新建目标')),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (_error != null)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(_error!),
             ),
           ),
-          IconButton(
-            tooltip: context.tr('Refresh', '刷新'),
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh),
+        Text(
+          context.tr('Conversion report', '转化报告'),
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 8),
+        if (widget.goals.isEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(context.tr('No goal conversions yet.', '暂无目标转化。')),
+            ),
+          )
+        else
+          ...widget.goals.map(
+            (goal) => _Metric(goal.name, 'Conversions', '${goal.count}'),
           ),
-          FilledButton.icon(
-            onPressed: _loading ? null : () => _edit(),
-            icon: const Icon(Icons.add),
-            label: Text(context.tr('Create goal', '新建目标')),
-          ),
-        ],
-      ),
-      const SizedBox(height: 16),
-      if (_error != null)
+        const SizedBox(height: 20),
+        Text(
+          context.tr('Compare conversions', '对比目标转化'),
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 8),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Text(_error!),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: Text(context.tr('Previous period', '对比前一周期')),
+                      selected:
+                          _comparisonMode == _GoalComparisonMode.previousPeriod,
+                      onSelected: (_) => setState(
+                        () => _comparisonMode =
+                            _GoalComparisonMode.previousPeriod,
+                      ),
+                    ),
+                    ChoiceChip(
+                      label: Text(context.tr('Compare audiences', '对比分群')),
+                      selected:
+                          _comparisonMode == _GoalComparisonMode.audiences,
+                      onSelected: (_) => setState(
+                        () => _comparisonMode = _GoalComparisonMode.audiences,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (_comparisonMode == _GoalComparisonMode.previousPeriod)
+                  Text(
+                    context.tr(
+                      'Compares the selected dates with the immediately preceding period of the same length. The site-wide segment filter applies to both.',
+                      '将当前日期范围与紧邻其前、长度相同的周期比较；站点顶部选择的分群会同时应用于两侧。',
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  )
+                else ...[
+                  Text(
+                    context.tr(
+                      'Compare two saved audiences over the same dates. These choices replace the site-wide segment filter for this comparison.',
+                      '在相同日期内比较两个已保存分群；本对比使用下方选择，不受站点顶部的分群筛选影响。',
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 10),
+                  segmentOptions.when(
+                    loading: () => const LinearProgressIndicator(),
+                    error: (error, stack) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => ref.invalidate(
+                          analyticsSegmentOptionsProvider(widget.siteId),
+                        ),
+                        icon: const Icon(Icons.refresh),
+                        label: Text(
+                          context.tr('Retry loading segments', '重试加载分群'),
+                        ),
+                      ),
+                    ),
+                    data: (segments) => segments.isEmpty
+                        ? Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  context.tr(
+                                    'Create a saved segment before comparing audiences.',
+                                    '请先创建已保存的分群，再进行受众对比。',
+                                  ),
+                                ),
+                              ),
+                              TextButton.icon(
+                                onPressed: () => context.go(
+                                  '/sites/${widget.siteId}/segments',
+                                ),
+                                icon: const Icon(Icons.groups_outlined),
+                                label: Text(
+                                  context.tr('Manage segments', '管理分群'),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              SizedBox(
+                                width: 260,
+                                child: _audienceDropdown(
+                                  context,
+                                  label: context.tr('Audience A', '分群 A'),
+                                  value: _segmentValue(audienceA),
+                                  excludedValue: _segmentValue(audienceB),
+                                  segments: segments,
+                                  onChanged: (value) => setState(() {
+                                    _audiencesInitialized = true;
+                                    _audienceA = _segmentId(value);
+                                  }),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 260,
+                                child: _audienceDropdown(
+                                  context,
+                                  label: context.tr('Audience B', '分群 B'),
+                                  value: _segmentValue(audienceB),
+                                  excludedValue: _segmentValue(audienceA),
+                                  segments: segments,
+                                  onChanged: (value) => setState(() {
+                                    _audiencesInitialized = true;
+                                    _audienceB = _segmentId(value);
+                                  }),
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '$firstLabel · $firstDates',
+                        style: Theme.of(context).textTheme.labelMedium,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '$secondLabel · $secondDates',
+                        style: Theme.of(context).textTheme.labelMedium,
+                        textAlign: TextAlign.end,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(height: 20),
+                if (audienceOptionsUnavailable)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      segmentOptions.hasError
+                          ? context.tr(
+                              'Load saved segments to compare audiences.',
+                              '加载已保存分群后才能对比受众。',
+                            )
+                          : segmentOptions.isLoading
+                          ? context.tr('Loading saved segments…', '正在加载已保存分群…')
+                          : context.tr(
+                              'Create a saved segment to compare audiences.',
+                              '创建已保存分群后即可对比受众。',
+                            ),
+                    ),
+                  )
+                else
+                  comparison.when(
+                    loading: () => const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: LinearProgressIndicator(),
+                    ),
+                    error: (error, stack) => Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            context.tr(
+                              'Could not load the goal comparison.',
+                              '无法加载目标对比数据。',
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: context.tr('Retry', '重试'),
+                          onPressed: () => ref.invalidate(
+                            analyticsGoalsComparisonProvider(comparisonQuery),
+                          ),
+                          icon: const Icon(Icons.refresh),
+                        ),
+                      ],
+                    ),
+                    data: (report) => _comparisonRows(
+                      context,
+                      report.first,
+                      report.second,
+                      firstLabel,
+                      secondLabel,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
-      Text(
-        context.tr('Conversion report', '转化报告'),
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
-      const SizedBox(height: 8),
-      if (widget.data.goals.isEmpty)
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(context.tr('No goal conversions yet.', '暂无目标转化。')),
-          ),
-        )
-      else
-        ...widget.data.goals.map(
-          (goal) => _Metric(goal.name, 'Conversions', '${goal.count}'),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                context.tr('Configured goals', '已配置目标'),
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            if (_loading)
+              const SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
         ),
-      const SizedBox(height: 20),
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              context.tr('Configured goals', '已配置目标'),
-              style: Theme.of(context).textTheme.titleLarge,
+        const SizedBox(height: 8),
+        if (!_loading && _definitions.isEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(context.tr('No configured goals.', '还没有配置目标。')),
             ),
+          )
+        else
+          ..._definitions.map(_definitionCard),
+      ],
+    );
+  }
+
+  Widget _audienceDropdown(
+    BuildContext context, {
+    required String label,
+    required String value,
+    required String excludedValue,
+    required List<AnalyticsSegmentOption> segments,
+    required ValueChanged<String> onChanged,
+  }) => DropdownButtonFormField<String>(
+    isExpanded: true,
+    initialValue: value,
+    decoration: InputDecoration(labelText: label),
+    items: [
+      if (excludedValue != '')
+        DropdownMenuItem(
+          value: '',
+          child: Text(context.tr('All visitors', '全部访客')),
+        ),
+      for (final segment in segments)
+        if (segment.id != excludedValue)
+          DropdownMenuItem(
+            value: segment.id,
+            child: Text(segment.name, overflow: TextOverflow.ellipsis),
           ),
-          if (_loading)
-            const SizedBox.square(
-              dimension: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-        ],
-      ),
-      const SizedBox(height: 8),
-      if (!_loading && _definitions.isEmpty)
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(context.tr('No configured goals.', '还没有配置目标。')),
-          ),
-        )
-      else
-        ..._definitions.map(_definitionCard),
     ],
+    onChanged: (selected) {
+      if (selected != null) onChanged(selected);
+    },
   );
+
+  Widget _comparisonRows(
+    BuildContext context,
+    List<AnalyticsGoal> first,
+    List<AnalyticsGoal> second,
+    String firstLabel,
+    String secondLabel,
+  ) {
+    final firstByName = {for (final goal in first) goal.name: goal};
+    final secondByName = {for (final goal in second) goal.name: goal};
+    final names = {...firstByName.keys, ...secondByName.keys}.toList()
+      ..sort((a, b) {
+        final aCount =
+            (firstByName[a]?.count ?? 0) + (secondByName[a]?.count ?? 0);
+        final bCount =
+            (firstByName[b]?.count ?? 0) + (secondByName[b]?.count ?? 0);
+        final byCount = bCount.compareTo(aCount);
+        return byCount == 0 ? a.compareTo(b) : byCount;
+      });
+    if (names.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Text(
+          context.tr(
+            'No matching goal conversions in either range.',
+            '两个比较范围内都没有目标转化。',
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        for (final name in names)
+          _goalComparisonRow(
+            context,
+            name,
+            firstByName[name],
+            secondByName[name],
+            firstLabel,
+            secondLabel,
+          ),
+      ],
+    );
+  }
+
+  Widget _goalComparisonRow(
+    BuildContext context,
+    String name,
+    AnalyticsGoal? first,
+    AnalyticsGoal? second,
+    String firstLabel,
+    String secondLabel,
+  ) {
+    final firstCount = first?.count ?? 0;
+    final secondCount = second?.count ?? 0;
+    final conversionDelta = firstCount - secondCount;
+    final conversionChange = secondCount == 0
+        ? context.tr('change unavailable from zero', '基数为 0，无法计算增幅')
+        : '${_signedPercent((conversionDelta / secondCount) * 100)}%';
+    final rateDelta =
+        ((first?.conversionRate ?? 0) - (second?.conversionRate ?? 0)) * 100;
+    final valueDelta = (first?.value ?? 0) - (second?.value ?? 0);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(name, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final firstValue = _GoalComparisonValue(
+                label: firstLabel,
+                goal: first,
+              );
+              final secondValue = _GoalComparisonValue(
+                label: secondLabel,
+                goal: second,
+              );
+              if (constraints.maxWidth < 560) {
+                return Column(
+                  children: [
+                    firstValue,
+                    const SizedBox(height: 8),
+                    secondValue,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: firstValue),
+                  const SizedBox(width: 8),
+                  Expanded(child: secondValue),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 6),
+          Text(
+            context.tr(
+              '${_signedInteger(conversionDelta)} conversions ($conversionChange) · ${_signedPercent(rateDelta)} pp conversion rate · ${_signedDecimal(valueDelta)} goal value',
+              '${_signedInteger(conversionDelta)} 次转化（$conversionChange）· 转化率 ${_signedPercent(rateDelta)} 个百分点 · 目标价值 ${_signedDecimal(valueDelta)}',
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const Divider(height: 18),
+        ],
+      ),
+    );
+  }
+
+  String _audienceLabel(
+    BuildContext context,
+    String? segmentId,
+    AsyncValue<List<AnalyticsSegmentOption>> options,
+  ) {
+    if (segmentId == null) return context.tr('All visitors', '全部访客');
+    final segments = options.maybeWhen(
+      data: (value) => value,
+      orElse: () => const <AnalyticsSegmentOption>[],
+    );
+    return segments
+            .where((segment) => segment.id == segmentId)
+            .firstOrNull
+            ?.name ??
+        context.tr('Saved segment', '已保存分群');
+  }
+
+  String _segmentValue(String? segmentId) => segmentId ?? '';
+
+  String? _segmentId(String value) => value.isEmpty ? null : value;
 
   Widget _definitionCard(Map<String, dynamic> definition) {
     final event = definition['triggerType'] == 'event';
@@ -1538,6 +2034,53 @@ class _GoalsBodyState extends ConsumerState<_GoalsBody> {
 
   String _message(Object error) =>
       error is ApiFailure ? error.message : '$error';
+}
+
+class _GoalComparisonValue extends StatelessWidget {
+  const _GoalComparisonValue({required this.label, required this.goal});
+
+  final String label;
+  final AnalyticsGoal? goal;
+
+  @override
+  Widget build(BuildContext context) {
+    final rate = (goal?.conversionRate ?? 0) * 100;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xfff3f5f8),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.labelMedium),
+          const SizedBox(height: 4),
+          Text(
+            '${goal?.count ?? 0}',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          Text(context.tr('conversions', '次转化')),
+          const SizedBox(height: 3),
+          Text(
+            context.tr(
+              '${goal?.convertedSessions ?? 0} converted visits · ${rate.toStringAsFixed(1)}% rate',
+              '${goal?.convertedSessions ?? 0} 次转化访问 · 转化率 ${rate.toStringAsFixed(1)}%',
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          Text(
+            context.tr(
+              'Goal value ${goal?.value.toStringAsFixed(2) ?? '0.00'}',
+              '目标价值 ${goal?.value.toStringAsFixed(2) ?? '0.00'}',
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _GoalEditorDialog extends StatefulWidget {

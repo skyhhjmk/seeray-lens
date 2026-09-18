@@ -558,12 +558,26 @@ class AnalyticsEvent {
 }
 
 class AnalyticsGoal {
-  const AnalyticsGoal(this.name, this.count);
+  const AnalyticsGoal(
+    this.name,
+    this.count, {
+    this.convertedSessions = 0,
+    this.value = 0,
+    this.conversionRate = 0,
+  });
+
   final String name;
   final int count;
+  final int convertedSessions;
+  final double value;
+  final double conversionRate;
+
   factory AnalyticsGoal.fromJson(Map<String, dynamic> json) => AnalyticsGoal(
     json['name'] as String? ?? 'Unnamed goal',
     (json['count'] as num?)?.toInt() ?? 0,
+    convertedSessions: (json['convertedSessions'] as num?)?.toInt() ?? 0,
+    value: (json['value'] as num?)?.toDouble() ?? 0,
+    conversionRate: (json['conversionRate'] as num?)?.toDouble() ?? 0,
   );
 }
 
@@ -775,6 +789,68 @@ class AnalyticsDashboardQuery {
   int get hashCode =>
       Object.hash(siteId, segmentId, range.fromQuery, range.toQuery);
 }
+
+final analyticsGoalsProvider =
+    FutureProvider.family<List<AnalyticsGoal>, AnalyticsDashboardQuery>((
+      ref,
+      query,
+    ) async {
+      final parameters = <String, String>{
+        'from': query.range.fromQuery,
+        'to': query.range.toQuery,
+        if (query.segmentId != null) 'segmentId': query.segmentId!,
+      };
+      final path = Uri(
+        path: '/api/v1/sites/${query.siteId}/analytics/goals',
+        queryParameters: parameters,
+      );
+      final result =
+          await ref.read(apiProvider).request('GET', path.toString()) as List;
+      return result
+          .whereType<Map>()
+          .map(
+            (item) => AnalyticsGoal.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false);
+    });
+
+class AnalyticsGoalsComparisonQuery {
+  const AnalyticsGoalsComparisonQuery({
+    required this.first,
+    required this.second,
+  });
+
+  final AnalyticsDashboardQuery first;
+  final AnalyticsDashboardQuery second;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AnalyticsGoalsComparisonQuery &&
+      other.first == first &&
+      other.second == second;
+
+  @override
+  int get hashCode => Object.hash(first, second);
+}
+
+class AnalyticsGoalsComparison {
+  const AnalyticsGoalsComparison({required this.first, required this.second});
+
+  final List<AnalyticsGoal> first;
+  final List<AnalyticsGoal> second;
+}
+
+final analyticsGoalsComparisonProvider =
+    FutureProvider.family<
+      AnalyticsGoalsComparison,
+      AnalyticsGoalsComparisonQuery
+    >((ref, query) async {
+      final reports = await Future.wait([
+        ref.watch(analyticsGoalsProvider(query.first).future),
+        ref.watch(analyticsGoalsProvider(query.second).future),
+      ]);
+      return AnalyticsGoalsComparison(first: reports[0], second: reports[1]);
+    });
 
 class CustomReportRow {
   const CustomReportRow(
