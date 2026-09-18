@@ -58,6 +58,7 @@ public class CrashAnalyticsService {
                       max(e.event_data->'data'->>'functionName') function_name,
                       count(*)::bigint occurrences,count(distinct e.page_path)::integer affected_pages,
                       coalesce(string_agg(distinct coalesce(e.event_data->'context'->>'browser','Other'), ', ' order by coalesce(e.event_data->'context'->>'browser','Other')), 'Other') browsers,
+                      coalesce(string_agg(distinct coalesce(e.event_data->'data'->>'platform','web'), ', ' order by coalesce(e.event_data->'data'->>'platform','web')), 'web') platforms,
                       min(e.occurred_at) first_seen,max(e.occurred_at) last_seen,count(*) over() total_rows
                     """
                             + base
@@ -71,7 +72,7 @@ public class CrashAnalyticsService {
                 try (ResultSet result = statement.executeQuery()) {
                     int totalRows = 0;
                     while (result.next()) {
-                        totalRows = result.getInt(13);
+                        totalRows = result.getInt(14);
                         int line = result.getInt(5);
                         Integer lineNumber = result.wasNull() ? null : line;
                         int column = result.getInt(6);
@@ -87,8 +88,9 @@ public class CrashAnalyticsService {
                                 result.getLong(8),
                                 result.getInt(9),
                                 result.getString(10),
-                                result.getTimestamp(11).toInstant(),
-                                result.getTimestamp(12).toInstant()));
+                                result.getString(11),
+                                result.getTimestamp(12).toInstant(),
+                                result.getTimestamp(13).toInstant()));
                     }
                     return new Report(
                             range.from(),
@@ -126,6 +128,7 @@ public class CrashAnalyticsService {
             long occurrences,
             int affectedPages,
             String browsers,
+            String platforms,
             Instant firstSeen,
             Instant lastSeen) {}
 }

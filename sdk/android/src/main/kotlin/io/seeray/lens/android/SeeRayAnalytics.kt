@@ -3,10 +3,13 @@ package io.seeray.lens.android
 import android.content.Context
 import android.content.SharedPreferences
 import java.io.Closeable
+import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -26,6 +29,9 @@ data class SeeRayAnalyticsOptions(
     val requireConsent: Boolean = false,
     val batchSize: Int = 10,
     val flushInterval: Duration = Duration.ofSeconds(10),
+    val captureNativeCrashes: Boolean = false,
+    val appRelease: String? = null,
+    val crashContextUrl: String? = null,
 )
 
 enum class AnalyticsConsent { UNKNOWN, GRANTED, DENIED }
@@ -64,12 +70,23 @@ class SeeRayAnalytics internal constructor(
     private var sessionLastActivity: Long? = null
     private var userId: String? = null
     private var droppedEventCount = 0L
+    private val queuedNativeCrashIds = mutableSetOf<String>()
+    private var previousExceptionHandler: Thread.UncaughtExceptionHandler? = null
+    private var installedExceptionHandler: Thread.UncaughtExceptionHandler? = null
+    private var lastPageUrl: String? = null
 
     init {
         options.validated()
         if (startScheduler) {
             val interval = options.flushInterval.toMillis().coerceIn(MIN_FLUSH_MS, MAX_FLUSH_MS)
             scheduler.scheduleWithFixedDelay({ flush() }, interval, interval, TimeUnit.MILLISECONDS)
+        }
+        if (options.captureNativeCrashes) {
+            installNativeCrashHandler()
+            synchronized(lock) { restorePendingNativeCrashes() }
+        } else {
+            store.clearNativeCrashes(options.siteId)
+            removeStored(KEY_LAST_PAGE_URL)
         }
     }
 
@@ -89,14 +106,36 @@ class SeeRayAnalytics internal constructor(
                 ensureIdentity(clock.millis())
             } else {
                 writeStored(KEY_CONSENT, CONSENT_DENIED)
+                writeStored(KEY_NATIVE_CRASH_CONSENT, CONSENT_DENIED)
                 clearIdentity()
+                lastPageUrl = null
+                removeStored(KEY_LAST_PAGE_URL)
                 queue.clear()
+                queuedNativeCrashIds.clear()
                 userId = null
+                store.clearNativeCrashes(options.siteId)
             }
         }
+        if (granted) synchronized(lock) { restorePendingNativeCrashes() }
     }
 
     fun optOut() = setConsent(granted = false)
+
+    /** Native crash diagnostics always require a separate, explicit application-level choice. */
+    fun setNativeCrashConsent(granted: Boolean) {
+        synchronized(lock) {
+            val allowed = granted && consentState() == AnalyticsConsent.GRANTED && options.captureNativeCrashes
+            writeStored(KEY_NATIVE_CRASH_CONSENT, if (allowed) CONSENT_GRANTED else CONSENT_DENIED)
+            if (allowed) {
+                restorePendingNativeCrashes()
+            } else {
+                queue.removeAll { it.pendingCrashId != null }
+                queuedNativeCrashIds.clear()
+                store.clearNativeCrashes(options.siteId)
+            }
+        }
+        if (granted && pendingEventCount() >= batchSize) flush()
+    }
 
     /**
      * Sets an opaque application-owned ID only while consent is granted. The server hashes it
@@ -165,6 +204,11 @@ class SeeRayAnalytics internal constructor(
 
     override fun close() {
         if (!closing.compareAndSet(false, true)) return
+        installedExceptionHandler?.let { installed ->
+            if (Thread.getDefaultUncaughtExceptionHandler() === installed) {
+                Thread.setDefaultUncaughtExceptionHandler(previousExceptionHandler)
+            }
+        }
         try {
             // Drain one final batch on the worker. Never block an Activity/main-thread shutdown.
             scheduler.execute {
@@ -199,6 +243,10 @@ class SeeRayAnalytics internal constructor(
                 return
             }
             val now = clock.instant()
+            if (options.captureNativeCrashes) {
+                lastPageUrl = safeCrashPageUrl(pageUrl)
+                lastPageUrl?.let { writeStored(KEY_LAST_PAGE_URL, it) }
+            }
             val ids = ensureIdentity(now.toEpochMilli())
             queue.addLast(
                 AnalyticsEvent(
@@ -217,6 +265,7 @@ class SeeRayAnalytics internal constructor(
                     properties = cleanProperties(properties),
                     language = Locale.getDefault().toLanguageTag().take(MAX_LANGUAGE),
                     androidVersion = android.os.Build.VERSION.RELEASE?.take(MAX_VERSION),
+                    pendingCrashId = null,
                 ),
             )
         }
@@ -246,6 +295,10 @@ class SeeRayAnalytics internal constructor(
                 if (success) {
                     writeStored(KEY_SESSION_LAST_ACTIVITY, clock.millis().toString())
                     sessionLastActivity = clock.millis()
+                    batch.mapNotNull { it.pendingCrashId }.forEach { crashId ->
+                        store.removeNativeCrash(options.siteId, crashId)
+                        queuedNativeCrashIds.remove(crashId)
+                    }
                 } else {
                     for (event in batch.asReversed()) {
                         if (queue.size < MAX_PENDING_EVENTS) queue.addFirst(event) else droppedEventCount++
@@ -255,6 +308,65 @@ class SeeRayAnalytics internal constructor(
         }
         sending.set(false)
         return success
+    }
+
+    /** Persist a redacted, anonymous top frame before the platform terminates the process. */
+    internal fun captureNativeCrash(throwable: Throwable) {
+        if (!options.captureNativeCrashes || closing.get()) return
+        synchronized(lock) {
+            if (consentState() != AnalyticsConsent.GRANTED
+                || readStored(KEY_NATIVE_CRASH_CONSENT) != CONSENT_GRANTED) return
+            val pageUrl = safeCrashPageUrl(lastPageUrl ?: readStored(KEY_LAST_PAGE_URL) ?: options.crashContextUrl)
+                ?: return
+            val frame = throwable.stackTrace.firstOrNull { element ->
+                !element.className.startsWith("io.seeray.lens.android.")
+                    && !element.className.startsWith("java.lang.Thread")
+            }
+            val errorName = cleanErrorName(throwable.javaClass.simpleName)
+            val framePath = frame?.fileName?.substringAfterLast('/')?.substringAfterLast('\\')
+                ?.filterNot(Char::isISOControl)?.take(160)?.takeIf(String::isNotBlank)
+                ?: frame?.className?.filter { it.isLetterOrDigit() || it in "._-" || it == '$' }?.take(160)
+                ?: "Android"
+            val functionName = frame?.let { "${it.className}.${it.methodName}" }
+                ?.filterNot(Char::isISOControl)?.take(240)
+            val report = PendingNativeCrash(
+                eventId = UUID.randomUUID().toString(),
+                occurredAt = clock.instant().toString(),
+                url = pageUrl,
+                errorName = errorName,
+                message = sanitizeCrashMessage(throwable.message),
+                sourcePath = safeCrashPath(framePath),
+                line = frame?.lineNumber?.takeIf { it > 0 },
+                functionName = functionName,
+                releaseId = options.appRelease,
+            )
+            runCatching { store.saveNativeCrash(options.siteId, report) }
+        }
+    }
+
+    private fun installNativeCrashHandler() {
+        previousExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+        val next = previousExceptionHandler ?: return
+        val handler = Thread.UncaughtExceptionHandler { thread, error ->
+            runCatching { captureNativeCrash(error) }
+            next.uncaughtException(thread, error)
+        }
+        installedExceptionHandler = handler
+        Thread.setDefaultUncaughtExceptionHandler(handler)
+    }
+
+    private fun restorePendingNativeCrashes() {
+        if (!options.captureNativeCrashes
+            || consentState() != AnalyticsConsent.GRANTED
+            || readStored(KEY_NATIVE_CRASH_CONSENT) != CONSENT_GRANTED) return
+        store.pendingNativeCrashes(options.siteId).take(MAX_PENDING_CRASH_REPORTS).forEach { report ->
+            if (!queuedNativeCrashIds.add(report.eventId)) return@forEach
+            if (queue.size >= MAX_PENDING_EVENTS) {
+                queuedNativeCrashIds.remove(report.eventId)
+                return@forEach
+            }
+            queue.addLast(report.toAnalyticsEvent())
+        }
     }
 
     private fun ensureIdentity(nowMillis: Long): Pair<String, String> {
@@ -296,8 +408,8 @@ class SeeRayAnalytics internal constructor(
         val url: String,
         val title: String?,
         val referrer: String?,
-        val visitorId: String,
-        val sessionId: String,
+        val visitorId: String?,
+        val sessionId: String?,
         val userId: String?,
         val category: String?,
         val action: String?,
@@ -305,6 +417,7 @@ class SeeRayAnalytics internal constructor(
         val properties: Map<String, Any>,
         val language: String,
         val androidVersion: String?,
+        val pendingCrashId: String?,
     ) {
         fun toJson(): String = jsonObject(
             linkedMapOf(
@@ -343,16 +456,50 @@ class SeeRayAnalytics internal constructor(
         )
     }
 
+    private fun PendingNativeCrash.toAnalyticsEvent(): AnalyticsEvent {
+        val data = linkedMapOf<String, Any>(
+            "errorName" to errorName,
+            "message" to message,
+            "sourcePath" to sourcePath,
+            "platform" to "android",
+            "releaseId" to (releaseId ?: ""),
+            "functionName" to (functionName ?: ""),
+        )
+        if (line != null) data["line"] = line
+        data.entries.removeIf { it.value == "" }
+        return AnalyticsEvent(
+            eventId = eventId,
+            type = "client_error",
+            occurredAt = occurredAt,
+            url = url,
+            title = null,
+            referrer = null,
+            visitorId = null,
+            sessionId = null,
+            userId = null,
+            category = "error",
+            action = "native_android",
+            name = errorName,
+            properties = data,
+            language = Locale.getDefault().toLanguageTag().take(MAX_LANGUAGE),
+            androidVersion = android.os.Build.VERSION.RELEASE?.take(MAX_VERSION),
+            pendingCrashId = eventId,
+        )
+    }
+
     private data class JsonFragment(val value: String)
 
     companion object {
         private const val KEY_CONSENT = "consent"
+        private const val KEY_NATIVE_CRASH_CONSENT = "native_crash_consent"
         private const val KEY_VISITOR_ID = "visitor_id"
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_SESSION_LAST_ACTIVITY = "session_last_activity"
+        private const val KEY_LAST_PAGE_URL = "last_page_url"
         private const val CONSENT_GRANTED = "granted"
         private const val CONSENT_DENIED = "denied"
         private const val MAX_PENDING_EVENTS = 100
+        private const val MAX_PENDING_CRASH_REPORTS = 10
         private const val MAX_BATCH_SIZE = 10
         private const val MAX_EVENT_TYPE = 64
         private const val MAX_TITLE = 256
@@ -378,7 +525,52 @@ class SeeRayAnalytics internal constructor(
             require(siteId.matches(Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"))) { "siteId is invalid" }
             endpoint(apiOrigin)
             require(!flushInterval.isNegative && !flushInterval.isZero) { "flushInterval must be positive" }
+            if (captureNativeCrashes) {
+                require(appRelease?.matches(Regex("^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$")) == true) {
+                    "appRelease must be set to an immutable 1-100 character release identifier when crash capture is enabled"
+                }
+                val crashUrl = validatedPageUrl(crashContextUrl)
+                require(crashUrl != null && URI(crashUrl).scheme.equals("https", ignoreCase = true)) {
+                    "crashContextUrl must be an HTTPS URL on an allowed domain when native crash capture is enabled"
+                }
+            }
             return copy(batchSize = batchSize.coerceIn(1, MAX_BATCH_SIZE))
+        }
+
+        private fun safeCrashPageUrl(value: String?): String? {
+            val url = validatedPageUrl(value) ?: return null
+            val uri = URI(url)
+            return "${uri.scheme}://${uri.rawAuthority}${safeCrashPath(uri.rawPath?.ifEmpty { "/" } ?: "/")}"
+        }
+
+        private fun safeCrashPath(value: String): String = value
+            .replace(Regex("[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}"), "<email>")
+            .replace(Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"), "<id>")
+            .replace(Regex("\\b(?:[A-Za-z0-9_-]{32,}|\\d{4,})\\b"), "<value>")
+            .replace(Regex("[^A-Za-z0-9._~!$&'()*+,;=:@%/-]"), "_")
+            .take(1024)
+
+        private fun cleanErrorName(value: String): String = value
+            .replace(Regex("[^A-Za-z0-9_.$-]"), "")
+            .take(80)
+            .ifBlank { "Error" }
+
+        private fun sanitizeCrashMessage(value: String?): String {
+            var clean = value.orEmpty().filterNot(Char::isISOControl).replace(Regex("\\s+"), " ").trim()
+            clean = clean.replace(Regex("(?i)bearer\\s+[^\\s,;]+"), "Bearer <redacted>")
+                .replace(
+                    Regex("(?i)(api[_-]?key|token|secret|password)\\s*[:=]\\s*[^\\s,;]+"),
+                    "${'$'}1=<redacted>",
+                )
+                .replace(Regex("https?://\\S+"), "<url>")
+                .replace(Regex("[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}"), "<email>")
+                .replace(
+                    Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"),
+                    "<id>",
+                )
+                .replace(Regex("(?:[A-Za-z]:\\\\|/(?:home|Users|tmp|var|opt)/)[^\\s:]+"), "<path>")
+                .replace(Regex("\\b(?:[A-Za-z0-9_-]{32,}|\\d{4,})\\b"), "<value>")
+            return clean.take(240).ifBlank { "No error message" }
         }
 
         private fun validatedPageUrl(value: String?): String? {
@@ -459,17 +651,132 @@ internal interface AnalyticsStore {
     fun get(key: String): String?
     fun put(key: String, value: String)
     fun remove(key: String)
+    fun saveNativeCrash(siteId: String, report: PendingNativeCrash) = Unit
+    fun pendingNativeCrashes(siteId: String): List<PendingNativeCrash> = emptyList()
+    fun removeNativeCrash(siteId: String, eventId: String) = Unit
+    fun clearNativeCrashes(siteId: String) = Unit
+}
+
+internal data class PendingNativeCrash(
+    val eventId: String,
+    val occurredAt: String,
+    val url: String,
+    val errorName: String,
+    val message: String,
+    val sourcePath: String,
+    val line: Int?,
+    val functionName: String?,
+    val releaseId: String?,
+) {
+    fun encode(): String = listOf(
+        eventId,
+        occurredAt,
+        url,
+        errorName,
+        message,
+        sourcePath,
+        line?.toString().orEmpty(),
+        functionName.orEmpty(),
+        releaseId.orEmpty(),
+    ).joinToString("\t")
+
+    companion object {
+        fun decode(value: String): PendingNativeCrash? {
+            val fields = value.split('\t')
+            if (fields.size != 9) return null
+            return runCatching {
+                PendingNativeCrash(
+                    eventId = fields[0],
+                    occurredAt = fields[1],
+                    url = fields[2],
+                    errorName = fields[3],
+                    message = fields[4],
+                    sourcePath = fields[5],
+                    line = fields[6].toIntOrNull(),
+                    functionName = fields[7].ifEmpty { null },
+                    releaseId = fields[8].ifEmpty { null },
+                ).takeIf {
+                    runCatching { UUID.fromString(it.eventId) }.isSuccess
+                        && runCatching { Instant.parse(it.occurredAt) }.isSuccess
+                        && URI(it.url).scheme.equals("https", ignoreCase = true)
+                }
+            }.getOrNull()
+        }
+    }
 }
 
 internal interface AnalyticsTransport {
     fun post(endpoint: String, body: String): Boolean
 }
 
-private class AndroidAnalyticsStore(context: Context) : AnalyticsStore {
+private class AndroidAnalyticsStore(private val context: Context) : AnalyticsStore {
     private val preferences: SharedPreferences = context.getSharedPreferences("seeray_analytics", Context.MODE_PRIVATE)
+    private val crashOutbox = NoBackupCrashOutbox(context.noBackupFilesDir)
     override fun get(key: String): String? = preferences.getString(key, null)
     override fun put(key: String, value: String) { preferences.edit().putString(key, value).apply() }
     override fun remove(key: String) { preferences.edit().remove(key).apply() }
+
+    override fun saveNativeCrash(siteId: String, report: PendingNativeCrash) = crashOutbox.save(siteId, report)
+
+    override fun pendingNativeCrashes(siteId: String): List<PendingNativeCrash> = crashOutbox.pending(siteId)
+
+    override fun removeNativeCrash(siteId: String, eventId: String) = crashOutbox.remove(siteId, eventId)
+
+    override fun clearNativeCrashes(siteId: String) = crashOutbox.clear(siteId)
+}
+
+/** Durable outbox deliberately lives outside Android auto-backup and excludes raw stack traces. */
+internal class NoBackupCrashOutbox(private val noBackupFilesDir: File) {
+    fun save(siteId: String, report: PendingNativeCrash) {
+        val directory = crashDirectory(siteId)
+        if (!directory.isDirectory && !directory.mkdirs()) return
+        val existing = directory.listFiles { file -> file.name.endsWith(".crash") }.orEmpty()
+        if (existing.size >= 10) return
+        val time = runCatching { Instant.parse(report.occurredAt).toEpochMilli() }.getOrDefault(0L)
+        val target = File(directory, "%013d--%s.crash".format(Locale.ROOT, time, report.eventId))
+        val temporary = File(directory, ".${report.eventId}.tmp")
+        try {
+            FileOutputStream(temporary).use { stream ->
+                stream.write(report.encode().toByteArray(StandardCharsets.UTF_8))
+                stream.fd.sync()
+            }
+            if (!temporary.renameTo(target)) temporary.delete()
+        } catch (_: Exception) {
+            temporary.delete()
+        }
+    }
+
+    fun pending(siteId: String): List<PendingNativeCrash> {
+        val directory = crashDirectory(siteId)
+        directory.listFiles { file -> file.name.endsWith(".tmp") }.orEmpty().forEach(File::delete)
+        return directory.listFiles { file -> file.name.endsWith(".crash") }
+            .orEmpty()
+            .sortedBy(File::getName)
+            .mapNotNull { file ->
+                val report = runCatching {
+                    PendingNativeCrash.decode(file.readText(StandardCharsets.UTF_8))
+                }.getOrNull()
+                if (report == null) file.delete()
+                report
+            }
+    }
+
+    fun remove(siteId: String, eventId: String) {
+        crashDirectory(siteId).listFiles { file -> file.name.endsWith("--$eventId.crash") }
+            .orEmpty().forEach(File::delete)
+    }
+
+    fun clear(siteId: String) {
+        crashDirectory(siteId).listFiles().orEmpty().forEach(File::delete)
+    }
+
+    private fun crashDirectory(siteId: String): File {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(siteId.toByteArray(StandardCharsets.UTF_8))
+            .take(16)
+            .joinToString("") { "%02x".format(Locale.ROOT, it) }
+        return File(File(noBackupFilesDir, "seeray-analytics-crashes"), digest)
+    }
 }
 
 private class UrlConnectionAnalyticsTransport : AnalyticsTransport {

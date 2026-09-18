@@ -20,8 +20,10 @@ public final class CrashDataSanitizer {
         Integer column = position(source.get("column"));
         String releaseId = safeRelease(source.get("releaseId"));
         String functionName = safeFunctionName(source.get("functionName"));
-        String fingerprint = fingerprint(errorName, message, sourcePath, line, column);
+        String platform = safePlatform(source.get("platform"));
+        String fingerprint = fingerprint(platform, errorName, message, sourcePath, line, column);
         Map<String, Object> clean = new LinkedHashMap<>();
+        clean.put("platform", platform);
         clean.put("errorName", errorName);
         clean.put("message", message);
         clean.put("sourcePath", sourcePath);
@@ -37,11 +39,20 @@ public final class CrashDataSanitizer {
         clean.put(
                 "fingerprint",
                 fingerprint(
+                        String.valueOf(clean.getOrDefault("platform", "web")),
                         String.valueOf(clean.getOrDefault("errorName", "Error")),
                         String.valueOf(clean.getOrDefault("message", "No error message")),
                         String.valueOf(clean.getOrDefault("sourcePath", "/")),
                         clean.get("line") instanceof Integer line ? line : null,
                         clean.get("column") instanceof Integer column ? column : null));
+    }
+
+    private static String safePlatform(Object value) {
+        if (!(value instanceof String platform)) return "web";
+        return switch (platform) {
+            case "web", "android", "ios" -> platform;
+            default -> "web";
+        };
     }
 
     private static String safeRelease(Object value) {
@@ -99,10 +110,11 @@ public final class CrashDataSanitizer {
     }
 
     private static String fingerprint(
-            String errorName, String message, String sourcePath, Integer line, Integer column) {
+            String platform, String errorName, String message, String sourcePath, Integer line, Integer column) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest((errorName + "\n" + message + "\n" + sourcePath + "\n" + (line == null ? "" : line) + "\n"
+                    .digest((("web".equals(platform) ? "" : platform + "\n") + errorName + "\n" + message + "\n"
+                                    + sourcePath + "\n" + (line == null ? "" : line) + "\n"
                                     + (column == null ? "" : column))
                             .getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest, 0, 8).toLowerCase(Locale.ROOT);

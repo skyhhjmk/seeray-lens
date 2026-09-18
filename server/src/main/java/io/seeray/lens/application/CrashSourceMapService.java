@@ -124,6 +124,7 @@ public class CrashSourceMapService {
 
     /** Returns a mapped, path-scrubbed position or leaves the already sanitized location unchanged. */
     public boolean symbolicate(UUID siteId, java.util.Map<String, Object> cleanCrashData) {
+        if (!"web".equals(cleanCrashData.get("platform"))) return false;
         Object rawRelease = cleanCrashData.get("releaseId");
         Object rawPath = cleanCrashData.get("sourcePath");
         Object rawLine = cleanCrashData.get("line");
