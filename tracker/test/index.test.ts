@@ -577,7 +577,7 @@ describe('tracker package', () => {
     expect(listeners.has('error')).toBe(false);
     expect(listeners.has('unhandledrejection')).toBe(false);
 
-    const tracker = new Tracker({ siteId: 'srl_errors', trackErrors: true, requireConsent: true, trackDownloads: false, trackOutlinks: false });
+    const tracker = new Tracker({ siteId: 'srl_errors', trackErrors: true, crashRelease: 'web-2026.09.18', requireConsent: true, trackDownloads: false, trackOutlinks: false });
     expect(listeners.has('error')).toBe(false);
     tracker.setConsent(true);
     const errorListener = listeners.get('error');
@@ -590,7 +590,7 @@ describe('tracker package', () => {
       message: 'ignored fallback',
       filename: 'https://app.example.test/assets/app.js?token=source-secret',
       lineno: 18,
-      colno: 7,
+      colno: 0,
     } as unknown as Event);
     errorListener?.({ target: {}, message: 'image resource failure' } as unknown as Event);
     rejectionListener?.({ reason: new Error('Promise rejected for bob@example.test with secret-value-012345678901234567890123456789') } as PromiseRejectionEvent);
@@ -610,7 +610,8 @@ describe('tracker package', () => {
         errorName: 'TypeError',
         sourcePath: '/assets/app.js',
         line: 18,
-        column: 7,
+        column: 1,
+        releaseId: 'web-2026.09.18',
       },
     });
     expect(events[0].properties.message).toContain('<url>');

@@ -21,6 +21,7 @@
     trackForms: script.hasAttribute('data-track-forms'),
     trackMedia: script.hasAttribute('data-track-media'),
     trackErrors: script.hasAttribute('data-track-errors'),
+    crashRelease: script.getAttribute('data-release') || undefined,
     heatmap: {
       enabled: true,
       navigationMode: script.getAttribute('data-navigation-mode') === 'manual' ? 'manual' : 'auto',

@@ -27,18 +27,21 @@ public class TrackingResource {
     private final MutinyEmitter<String> publisher;
     private final TrackingRateLimiter rateLimiter;
     private final GeoLocationResolver geoLocationResolver;
+    private final CrashSourceMapService crashSourceMaps;
 
     public TrackingResource(
             ObjectMapper mapper,
             SiteService sites,
             @Channel("tracking-out") MutinyEmitter<String> publisher,
             TrackingRateLimiter rateLimiter,
-            GeoLocationResolver geoLocationResolver) {
+            GeoLocationResolver geoLocationResolver,
+            CrashSourceMapService crashSourceMaps) {
         this.mapper = mapper;
         this.sites = sites;
         this.publisher = publisher;
         this.rateLimiter = rateLimiter;
         this.geoLocationResolver = geoLocationResolver;
+        this.crashSourceMaps = crashSourceMaps;
     }
 
     @POST
@@ -76,6 +79,12 @@ public class TrackingResource {
             } catch (Exception e) {
                 throw new ControlPlaneException(400, "INVALID_EVENT_ID", "Event id is invalid");
             }
+            Map<String, Object> eventData = eventData(event, location, mapper);
+            if (clientError && eventData.get("data") instanceof Map<?, ?> crashData) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> cleanCrashData = (Map<String, Object>) crashData;
+                crashSourceMaps.symbolicate(site.id, cleanCrashData);
+            }
             TrackingMessage message = new TrackingMessage(
                     1,
                     UuidV7.next(),
@@ -86,7 +95,7 @@ public class TrackingResource {
                     event.type(),
                     page,
                     ref,
-                    TrackingSanitizer.json(eventData(event, location, mapper), mapper),
+                    TrackingSanitizer.json(eventData, mapper),
                     event.durationMs(),
                     clientError ? null : event.visitorId(),
                     clientError ? null : event.sessionId());
@@ -133,7 +142,9 @@ public class TrackingResource {
         value.put(
                 "action",
                 clientError
-                        ? Set.of("javascript", "unhandled_rejection").contains(event.action()) ? event.action() : "javascript"
+                        ? Set.of("javascript", "unhandled_rejection").contains(event.action())
+                                ? event.action()
+                                : "javascript"
                         : event.action() == null ? "" : event.action());
         value.put("name", clientError ? crashData.get("errorName") : event.name() == null ? "" : event.name());
         Map<String, Object> context = event.context() == null ? new LinkedHashMap<>() : context(event.context());
@@ -149,7 +160,8 @@ public class TrackingResource {
         }
         value.put("context", context);
         if (clientError) value.put("data", crashData);
-        else value.put(
+        else
+            value.put(
                     "data",
                     event.data() == null && event.properties() == null
                             ? Map.of()
@@ -160,7 +172,8 @@ public class TrackingResource {
     private static Map<String, Object> crashData(TrackingPayload.TrackingEvent event, ObjectMapper mapper) {
         Map<String, ?> supplied = event.data();
         if (supplied == null && event.properties() != null && event.properties().isObject()) {
-            supplied = mapper.convertValue(event.properties(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            supplied =
+                    mapper.convertValue(event.properties(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
         }
         return CrashDataSanitizer.sanitize(supplied);
     }

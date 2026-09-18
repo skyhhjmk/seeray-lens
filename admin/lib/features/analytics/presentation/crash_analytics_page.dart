@@ -345,8 +345,14 @@ class _Metric extends StatelessWidget {
   );
 }
 
-String _source(CrashIssue issue) =>
-    issue.line == null ? issue.sourcePath : '${issue.sourcePath}:${issue.line}';
+String _source(CrashIssue issue) => [
+  if (issue.functionName != null && issue.functionName!.isNotEmpty)
+    issue.functionName!,
+  if (issue.line == null)
+    issue.sourcePath
+  else
+    '${issue.sourcePath}:${issue.line}${issue.column == null ? '' : ':${issue.column}'}',
+].join(' · ');
 
 String _timestamp(DateTime? value) => value == null
     ? '—'

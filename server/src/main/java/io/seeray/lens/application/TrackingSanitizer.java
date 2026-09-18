@@ -82,7 +82,8 @@ public final class TrackingSanitizer {
         if (path == null || path.isBlank()) return "/";
         if (!path.startsWith("/")) path = "/" + path;
         path = path.replaceAll("(?i)[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}", "<email>");
-        path = path.replaceAll("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b", "<id>");
+        path = path.replaceAll(
+                "(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b", "<id>");
         path = path.replaceAll("(^|/)\\d{4,}(?=/|$)", "$1<id>");
         path = path.replaceAll("(^|/)[A-Za-z0-9_-]{32,}(?=/|$)", "$1<id>");
         return path.length() > 1024 ? path.substring(0, 1024) : path;

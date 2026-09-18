@@ -27,6 +27,8 @@ class CrashIssue {
     required this.message,
     required this.sourcePath,
     required this.line,
+    required this.column,
+    required this.functionName,
     required this.occurrences,
     required this.affectedPages,
     required this.browsers,
@@ -39,6 +41,8 @@ class CrashIssue {
   final String message;
   final String sourcePath;
   final int? line;
+  final int? column;
+  final String? functionName;
   final int occurrences;
   final int affectedPages;
   final String browsers;
@@ -51,6 +55,8 @@ class CrashIssue {
     message: json['message'] as String? ?? '',
     sourcePath: json['sourcePath'] as String? ?? '/',
     line: (json['line'] as num?)?.toInt(),
+    column: (json['column'] as num?)?.toInt(),
+    functionName: json['functionName'] as String?,
     occurrences: (json['occurrences'] as num?)?.toInt() ?? 0,
     affectedPages: (json['affectedPages'] as num?)?.toInt() ?? 0,
     browsers: json['browsers'] as String? ?? 'Other',

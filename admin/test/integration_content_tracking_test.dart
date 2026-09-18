@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:seeray_lens_admin/core/network/seeray_api.dart';
+import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 import 'package:seeray_lens_admin/features/integration/presentation/integration_page.dart';
 import 'package:seeray_lens_admin/features/sites/application/site_controller.dart';
 
@@ -103,7 +105,10 @@ void main() {
   ) async {
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [sitesProvider.overrideWith(_SitesController.new)],
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(_IntegrationApi()),
+        ],
         child: const MaterialApp(
           home: IntegrationPage(siteId: 'site-1', embedded: true),
         ),
@@ -114,12 +119,29 @@ void main() {
     await tester.ensureVisible(find.text('Crash analytics'));
     await tester.tap(find.text('Crash analytics'));
     await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpAndSettle();
 
     expect(find.text('Measure browser JavaScript crashes'), findsOneWidget);
     final snippet = tester.widget<SelectableText>(find.byType(SelectableText));
     expect(snippet.data, contains('data-track-errors'));
     expect(snippet.data, contains('data-require-consent="true"'));
     expect(find.textContaining('never sends stack traces'), findsOneWidget);
+    expect(find.text('Release identifier'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Upload a JavaScript source map'),
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Upload a JavaScript source map'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Uploaded source maps'),
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Uploaded source maps'), findsOneWidget);
   });
 }
 
@@ -139,4 +161,20 @@ class _SitesController extends SitesController {
       aggregateRetentionDays: 730,
     ),
   ];
+}
+
+class _IntegrationApi extends SeeRayApi {
+  _IntegrationApi() : super(baseUrl: 'https://lens.example.test');
+
+  @override
+  Future<dynamic> request(
+    String method,
+    String path, {
+    Object? body,
+    bool retried = false,
+  }) async {
+    expect(method, 'GET');
+    expect(path, '/api/v1/sites/site-1/crash-source-maps');
+    return {'canManage': true, 'maps': <Map<String, dynamic>>[]};
+  }
 }

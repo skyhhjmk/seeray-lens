@@ -874,6 +874,48 @@ class ControlPlaneResourceTest {
                 .post("/api/v1/sites/" + site + "/domains")
                 .then()
                 .statusCode(201);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"releaseId\":\"web-1\",\"bundlePath\":\"/assets/app.js\","
+                                + "\"sourceMap\":{\"version\":3,\"file\":\"app.js\",\"sources\":[\"../src/app.ts\"],"
+                                + "\"sourcesContent\":[\"private-source-code\"],\"names\":[\"render\"],\"mappings\":\"AAAAA\"}}")
+                .put("/api/v1/sites/" + site + "/crash-source-maps")
+                .then()
+                .statusCode(200)
+                .body("releaseId", equalTo("web-1"))
+                .body("sourceCount", equalTo(1));
+        String viewerEmail = "crash-viewer" + System.nanoTime() + "@example.test";
+        Tokens viewer = register(viewerEmail);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + viewerEmail + "\",\"role\":\"viewer\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/members")
+                .then()
+                .statusCode(201);
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get("/api/v1/sites/" + site + "/crash-source-maps")
+                .then()
+                .statusCode(200)
+                .body("canManage", equalTo(false))
+                .body("maps.size()", equalTo(1));
+        given().header("Authorization", "Bearer " + viewer.access())
+                .contentType("application/json")
+                .body("{\"releaseId\":\"web-1\",\"bundlePath\":\"/assets/app.js\","
+                        + "\"sourceMap\":{\"version\":3,\"sources\":[\"../src/app.ts\"],"
+                        + "\"names\":[\"render\"],\"mappings\":\"AAAAA\"}}")
+                .put("/api/v1/sites/" + site + "/crash-source-maps")
+                .then()
+                .statusCode(403);
+        try (var connection = dataSource.getConnection();
+                var statement =
+                        connection.prepareStatement("select map_json::text from crash_source_map where site_id=?")) {
+            statement.setObject(1, UUID.fromString(site));
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertFalse(result.getString(1).contains("private-source-code"));
+            }
+        }
         LocalDate today = LocalDate.now(ZoneId.of("UTC"));
         Instant occurred = Instant.now();
         String visitor = UUID.randomUUID().toString();
@@ -885,7 +927,7 @@ class ControlPlaneResourceTest {
                 + "\"context\":{\"browser\":\"Chrome\",\"operatingSystem\":\"Linux\",\"deviceType\":\"desktop\"},"
                 + "\"properties\":{\"errorName\":\"TypeError\","
                 + "\"message\":\"Request https://api.example.test/users?token=url-secret failed for alice@example.test; Bearer bearer-secret; id 550e8400-e29b-41d4-a716-446655440000; account 123456789\","
-                + "\"sourcePath\":\"/assets/123456789/app.js?api_key=source-secret\",\"line\":28,\"column\":9,"
+                + "\"sourcePath\":\"/assets/app.js?api_key=source-secret\",\"line\":1,\"column\":1,\"releaseId\":\"web-1\","
                 + "\"stack\":\"private stack with stack-secret\"}}";
         String firstEvent = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"client_error\","
                 + "\"occurredAt\":\"" + occurred
@@ -960,8 +1002,10 @@ class ControlPlaneResourceTest {
         assertEquals(2L, ((Number) report.path("occurrences")).longValue());
         assertEquals(1, ((Number) report.path("issueCount")).intValue());
         assertEquals("TypeError", report.path("rows[0].errorName"));
-        assertEquals("/assets/<id>/app.js", report.path("rows[0].sourcePath"));
-        assertEquals(28, ((Number) report.path("rows[0].line")).intValue());
+        assertEquals("/src/app.ts", report.path("rows[0].sourcePath"));
+        assertEquals(1, ((Number) report.path("rows[0].line")).intValue());
+        assertEquals(1, ((Number) report.path("rows[0].column")).intValue());
+        assertEquals("render", report.path("rows[0].functionName"));
         assertEquals(2, ((Number) report.path("rows[0].affectedPages")).intValue());
         assertEquals("Chrome", report.path("rows[0].browsers"));
         assertFalse(report.asString().contains(visitor));

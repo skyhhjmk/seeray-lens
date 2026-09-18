@@ -25,7 +25,8 @@ public class CrashAnalyticsService {
 
     public Report report(UUID siteId, AnalyticsQueryService.Range range) {
         Site site = sites.site(siteId);
-        String base = """
+        String base =
+                """
                 from raw_event e
                 where e.site_id=? and e.event_type='client_error'
                   and (e.occurred_at at time zone ?)::date between ? and ?
@@ -44,17 +45,23 @@ public class CrashAnalyticsService {
                 }
             }
             List<Row> rows = new ArrayList<>();
-            String query = """
+            String query =
+                    """
                     select e.event_data->'data'->>'fingerprint' fingerprint,
                       e.event_data->'data'->>'errorName' error_name,
                       e.event_data->'data'->>'message' message,
                       e.event_data->'data'->>'sourcePath' source_path,
                       max(case when e.event_data->'data'->>'line' ~ '^[0-9]{1,8}$'
                         then (e.event_data->'data'->>'line')::integer end) line,
+                      max(case when e.event_data->'data'->>'column' ~ '^[0-9]{1,8}$'
+                        then (e.event_data->'data'->>'column')::integer end) column,
+                      max(e.event_data->'data'->>'functionName') function_name,
                       count(*)::bigint occurrences,count(distinct e.page_path)::integer affected_pages,
                       coalesce(string_agg(distinct coalesce(e.event_data->'context'->>'browser','Other'), ', ' order by coalesce(e.event_data->'context'->>'browser','Other')), 'Other') browsers,
                       min(e.occurred_at) first_seen,max(e.occurred_at) last_seen,count(*) over() total_rows
-                    """ + base + """
+                    """
+                            + base
+                            + """
                     group by fingerprint,error_name,message,source_path
                     order by count(*) desc,max(e.occurred_at) desc,fingerprint
                     limit 100
@@ -64,23 +71,32 @@ public class CrashAnalyticsService {
                 try (ResultSet result = statement.executeQuery()) {
                     int totalRows = 0;
                     while (result.next()) {
-                        totalRows = result.getInt(11);
+                        totalRows = result.getInt(13);
                         int line = result.getInt(5);
                         Integer lineNumber = result.wasNull() ? null : line;
+                        int column = result.getInt(6);
+                        Integer columnNumber = result.wasNull() ? null : column;
                         rows.add(new Row(
                                 result.getString(1),
                                 result.getString(2),
                                 result.getString(3),
                                 result.getString(4),
                                 lineNumber,
-                                result.getLong(6),
-                                result.getInt(7),
-                                result.getString(8),
-                                result.getTimestamp(9).toInstant(),
-                                result.getTimestamp(10).toInstant()));
+                                columnNumber,
+                                result.getString(7),
+                                result.getLong(8),
+                                result.getInt(9),
+                                result.getString(10),
+                                result.getTimestamp(11).toInstant(),
+                                result.getTimestamp(12).toInstant()));
                     }
                     return new Report(
-                            range.from(), range.to(), occurrences, issueCount, List.copyOf(rows), totalRows > rows.size());
+                            range.from(),
+                            range.to(),
+                            occurrences,
+                            issueCount,
+                            List.copyOf(rows),
+                            totalRows > rows.size());
                 }
             }
         } catch (SQLException error) {
@@ -96,7 +112,8 @@ public class CrashAnalyticsService {
         statement.setObject(4, to);
     }
 
-    public record Report(LocalDate from, LocalDate to, long occurrences, int issueCount, List<Row> rows, boolean hasMore) {}
+    public record Report(
+            LocalDate from, LocalDate to, long occurrences, int issueCount, List<Row> rows, boolean hasMore) {}
 
     public record Row(
             String fingerprint,
@@ -104,6 +121,8 @@ public class CrashAnalyticsService {
             String message,
             String sourcePath,
             Integer line,
+            Integer column,
+            String functionName,
             long occurrences,
             int affectedPages,
             String browsers,

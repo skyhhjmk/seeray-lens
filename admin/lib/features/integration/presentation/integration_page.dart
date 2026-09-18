@@ -9,6 +9,7 @@ import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../sites/application/site_controller.dart';
+import 'crash_analytics_setup.dart';
 import 'product_features_page.dart';
 
 class IntegrationPage extends ConsumerWidget {
@@ -246,17 +247,11 @@ class IntegrationPage extends ConsumerWidget {
                       '此功能需要两处显式启用：追踪代码添加 data-track-media，每个 audio/video 元素添加稳定且不含个人信息的 data-seeray-media ID。每次页面访问记录一次开始播放、25/50/75/90% 进度节点和自然 ended 完成事件；不会读取或发送媒体源地址、标题、字幕、封面地址或媒体内容。拖动到进度节点会计为到达该节点，但直接拖到结尾不会计为完成。敏感嵌入请加 data-seeray-no-track。跨域媒体需由所属页面正常接收到 HTML 媒体事件。',
                     ),
                   ),
-                  _Snippet(
-                    title: context.tr(
-                      'Measure browser JavaScript crashes',
-                      '采集浏览器 JavaScript 崩溃',
-                    ),
-                    body:
-                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-track-errors></script>',
-                    note: context.tr(
-                      'Crash collection is off by default. Add data-track-errors only after reviewing your privacy notice and consent policy. The tracker records uncaught JavaScript exceptions and unhandled promise rejections; it ignores resource load errors. It never sends stack traces, document titles, referrers, query strings, or visitor/session IDs. Messages are redacted again on the server, source/page paths have common IDs removed, and native iOS/Android crashes are not included. Do not enable crash collection on sensitive pages: data-seeray-no-track does not suppress global JavaScript error hooks, and applications can put secrets into error messages.',
-                      '崩溃采集默认关闭。请先检查隐私告知和同意策略，再添加 data-track-errors。追踪器记录未捕获的 JavaScript 异常和未处理的 Promise 拒绝，忽略资源加载错误；不会发送 stack、页面标题、来源页、查询参数或访客/会话 ID。服务器会再次脱敏错误消息，并从页面/脚本路径中移除常见标识；不包含 iOS/Android 原生崩溃。敏感页面不要启用崩溃采集：data-seeray-no-track 不会屏蔽全局 JavaScript 错误钩子，而且应用可能把机密放入异常消息。',
-                    ),
+                  CrashAnalyticsSetup(
+                    siteId: siteId,
+                    trackingId: site.trackingId,
+                    trackerUrl: script,
+                    requireConsent: site.requireConsent,
                   ),
                 ],
               ),

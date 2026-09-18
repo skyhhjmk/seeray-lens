@@ -6,7 +6,7 @@ export interface HeatmapOptions { enabled?: boolean; sampleRate?: number; naviga
 export interface PageReadyOptions { url?: string; layoutVersion?: string; }
 export interface ScrollContainerOptions { id: string; element: HTMLElement; }
 export interface TagManagerPreviewOptions { sessionId: string; token: string; }
-export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; trackErrors?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
+export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; trackErrors?: boolean; crashRelease?: string; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
 export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; anonymous?: boolean; }
 export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
 export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
@@ -55,6 +55,8 @@ const crashText = (value: unknown, max: number): string | undefined => {
     .slice(0, max);
   return safe || undefined;
 };
+const crashRelease = (value: unknown): string | undefined =>
+  typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$/.test(value.trim()) ? value.trim() : undefined;
 const crashPath = (value: string | undefined): string => {
   let path = (value?.split(/[?#]/, 1)[0] || '/').replace(/\\/g, '/');
   try {
@@ -499,6 +501,8 @@ export class Tracker {
     const sourcePath = crashPath(rawSource);
     const validPosition = (value: number | undefined): number | undefined =>
       Number.isSafeInteger(value) && value! > 0 && value! <= 10_000_000 ? value : undefined;
+    const validColumn = (value: number | undefined): number | undefined =>
+      Number.isSafeInteger(value) && value! >= 0 && value! <= 10_000_000 ? Math.max(1, value!) : undefined;
     const pagePath = crashPath(globalThis.location?.pathname);
     const origin = globalThis.location?.origin;
     this.track('client_error', {
@@ -514,7 +518,8 @@ export class Tracker {
         message,
         sourcePath,
         line: validPosition(line),
-        column: validPosition(column),
+        column: validColumn(column),
+        releaseId: crashRelease(this.options.crashRelease),
       },
     });
   }

@@ -286,3 +286,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0041-page-overlay.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0042-crash-source-maps
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0042-crash-source-maps.sql
+            relativeToChangelogFile: false

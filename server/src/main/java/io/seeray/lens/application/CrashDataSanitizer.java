@@ -18,15 +18,50 @@ public final class CrashDataSanitizer {
         String sourcePath = TrackingSanitizer.safeCrashPath(text(source.get("sourcePath"), 1024));
         Integer line = position(source.get("line"));
         Integer column = position(source.get("column"));
-        String fingerprint = fingerprint(errorName, message, sourcePath, line);
+        String releaseId = safeRelease(source.get("releaseId"));
+        String functionName = safeFunctionName(source.get("functionName"));
+        String fingerprint = fingerprint(errorName, message, sourcePath, line, column);
         Map<String, Object> clean = new LinkedHashMap<>();
         clean.put("errorName", errorName);
         clean.put("message", message);
         clean.put("sourcePath", sourcePath);
         if (line != null) clean.put("line", line);
         if (column != null) clean.put("column", column);
+        if (releaseId != null) clean.put("releaseId", releaseId);
+        if (functionName != null) clean.put("functionName", functionName);
         clean.put("fingerprint", fingerprint);
         return clean;
+    }
+
+    public static void refreshFingerprint(Map<String, Object> clean) {
+        clean.put(
+                "fingerprint",
+                fingerprint(
+                        String.valueOf(clean.getOrDefault("errorName", "Error")),
+                        String.valueOf(clean.getOrDefault("message", "No error message")),
+                        String.valueOf(clean.getOrDefault("sourcePath", "/")),
+                        clean.get("line") instanceof Integer line ? line : null,
+                        clean.get("column") instanceof Integer column ? column : null));
+    }
+
+    private static String safeRelease(Object value) {
+        if (!(value instanceof String release)) return null;
+        String clean = release.strip();
+        return clean.matches("[A-Za-z0-9][A-Za-z0-9._+-]{0,99}") ? clean : null;
+    }
+
+    static String safeFunctionName(Object value) {
+        if (!(value instanceof String name)) return null;
+        String clean = name.replaceAll("[\\p{Cc}]", "")
+                .replaceAll("(?i)bearer\\s+[^\\s,;]+", "Bearer <redacted>")
+                .replaceAll("(?i)(api[_-]?key|token|secret|password)\\s*[:=]\\s*[^\\s,;]+", "$1=<redacted>")
+                .replaceAll("https?://\\S+", "<url>")
+                .replaceAll("[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}", "<email>")
+                .replaceAll("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b", "<id>")
+                .replaceAll("\\b(?:[A-Za-z0-9_-]{32,}|\\d{4,})\\b", "<value>")
+                .strip();
+        if (clean.isBlank()) return null;
+        return clean.length() > 120 ? clean.substring(0, 120) : clean;
     }
 
     private static String safeName(Object value) {
@@ -63,10 +98,12 @@ public final class CrashDataSanitizer {
         return (int) position;
     }
 
-    private static String fingerprint(String errorName, String message, String sourcePath, Integer line) {
+    private static String fingerprint(
+            String errorName, String message, String sourcePath, Integer line, Integer column) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest((errorName + "\n" + message + "\n" + sourcePath + "\n" + (line == null ? "" : line))
+                    .digest((errorName + "\n" + message + "\n" + sourcePath + "\n" + (line == null ? "" : line) + "\n"
+                                    + (column == null ? "" : column))
                             .getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest, 0, 8).toLowerCase(Locale.ROOT);
         } catch (Exception error) {
