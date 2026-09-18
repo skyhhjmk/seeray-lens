@@ -8,6 +8,7 @@ import '../../../core/i18n/app_i18n.dart';
 import '../../../core/network/seeray_api.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../analytics/application/analytics_segment.dart';
+import '../application/experiment_sample_size.dart';
 import '../application/tag_manager_preview.dart';
 
 enum ProductFeatureMode { funnels, experiments, tagManager }
@@ -714,6 +715,10 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
   final _targetDeviceTypes = <String>{};
   String? _targetSegmentId;
   int _segmentLookbackDays = 30;
+  double _baselineConversionRate = 0.05;
+  double _minimumDetectableLift = 0.20;
+  int _confidenceLevel = 95;
+  int _statisticalPower = 80;
   String? _error;
 
   bool get _editing => widget.initial != null;
@@ -949,6 +954,8 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
         label: Text(context.tr('Add variant', '添加变体')),
       ),
       const SizedBox(height: 16),
+      _buildExperimentSampleSizePlanner(context),
+      const SizedBox(height: 12),
       const Divider(),
       const SizedBox(height: 8),
       Text(
@@ -1030,6 +1037,180 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
     ],
   );
 
+  Widget _buildExperimentSampleSizePlanner(BuildContext context) {
+    final estimate = estimateExperimentSampleSize(
+      baselineConversionRate: _baselineConversionRate,
+      relativeMinimumDetectableLift: _minimumDetectableLift,
+      confidenceLevel: _confidenceLevel,
+      power: _statisticalPower,
+      variantCount: _variants.length,
+    );
+    return Card(
+      key: const ValueKey('experiment-sample-size-planner'),
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              context.tr('Sample size estimate', '样本量预估'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.tr(
+                'Plan traffic before launch. Adjust the expected control rate and the smallest relative lift worth detecting.',
+                '上线前规划流量：设置预期对照转化率，以及值得检测的最小相对提升幅度。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.tr('Expected control conversion', '预期对照组转化率'),
+                  ),
+                ),
+                Text(
+                  '${(_baselineConversionRate * 100).toStringAsFixed(1)}%',
+                  key: const ValueKey('experiment-baseline-rate-value'),
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ],
+            ),
+            Slider(
+              key: const ValueKey('experiment-baseline-rate'),
+              value: _baselineConversionRate,
+              min: 0.001,
+              max: 0.49,
+              divisions: 489,
+              label: '${(_baselineConversionRate * 100).toStringAsFixed(1)}%',
+              onChanged: (value) =>
+                  setState(() => _baselineConversionRate = value),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.tr('Minimum detectable relative lift', '最小可检测相对提升'),
+                  ),
+                ),
+                Text(
+                  '+${(_minimumDetectableLift * 100).toStringAsFixed(0)}%',
+                  key: const ValueKey('experiment-minimum-lift-value'),
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ],
+            ),
+            Slider(
+              key: const ValueKey('experiment-minimum-lift'),
+              value: _minimumDetectableLift,
+              min: 0.05,
+              max: 1,
+              divisions: 19,
+              label: '+${(_minimumDetectableLift * 100).toStringAsFixed(0)}%',
+              onChanged: (value) =>
+                  setState(() => _minimumDetectableLift = value),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    key: const ValueKey('experiment-confidence-level'),
+                    initialValue: _confidenceLevel,
+                    decoration: InputDecoration(
+                      labelText: context.tr('Confidence', '置信水平'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final value in const [90, 95, 99])
+                        DropdownMenuItem(value: value, child: Text('$value%')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _confidenceLevel = value);
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    key: const ValueKey('experiment-statistical-power'),
+                    initialValue: _statisticalPower,
+                    decoration: InputDecoration(
+                      labelText: context.tr('Statistical power', '统计功效'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final value in const [80, 90])
+                        DropdownMenuItem(value: value, child: Text('$value%')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _statisticalPower = value);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              key: const ValueKey('experiment-sample-size-result'),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.groups_2_outlined,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          context.tr(
+                            '${_formatSampleCount(estimate.perVariant)} exposures needed per variant',
+                            '每个变体约需 ${_formatSampleCount(estimate.perVariant)} 次曝光',
+                          ),
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        Text(
+                          context.tr(
+                            'About ${_formatSampleCount(estimate.totalExposures)} exposures across ${_variants.length} variants',
+                            '${_variants.length} 个变体合计约需 ${_formatSampleCount(estimate.totalExposures)} 次曝光',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              context.tr(
+                'Two-sided normal approximation with equal allocation. For 3+ variants the total is a traffic estimate only; it does not correct for multiple comparisons. Do not use this estimate alone as a stopping rule.',
+                '按双侧正态近似、各组等比例分流计算。3 个及以上变体的总量仅为流量估算，未校正多重比较；不要仅凭该估算决定提前停止实验。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSavedSegmentTargeting(BuildContext context) => ref
       .watch(analyticsSegmentOptionsProvider(widget.siteId))
       .when(
@@ -1091,6 +1272,7 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
               if (_targetSegmentId != null) ...[
                 const SizedBox(height: 10),
                 DropdownButtonFormField<int>(
+                  key: const ValueKey('experiment-segment-lookback'),
                   initialValue: _segmentLookbackDays,
                   decoration: InputDecoration(
                     labelText: context.tr('Audience lookback', '受众回溯期'),
@@ -3935,6 +4117,11 @@ class _TagPropertyEntry {
   }
 }
 
+String _formatSampleCount(int value) => value.toString().replaceAllMapped(
+  RegExp(r'\B(?=(\d{3})+(?!\d))'),
+  (match) => ',',
+);
+
 class _ReportDialog extends StatelessWidget {
   const _ReportDialog({required this.mode, required this.report});
 
@@ -3946,6 +4133,70 @@ class _ReportDialog extends StatelessWidget {
     final rows = mode == ProductFeatureMode.funnels
         ? ((report['steps'] as List?) ?? const [])
         : ((report['variants'] as List?) ?? const []);
+    if (mode == ProductFeatureMode.experiments) {
+      final variants = rows.whereType<Map>().toList(growable: false);
+      final highestInterval = variants.fold<double>(0, (highest, row) {
+        final upper = (row['conversionRateCiUpper'] as num?)?.toDouble() ?? 0;
+        return upper > highest ? upper : highest;
+      });
+      final intervalScaleMax = highestInterval <= 0
+          ? 1.0
+          : (highestInterval * 1.25).clamp(0.01, 1.0).toDouble();
+      final from = report['from'] as String?;
+      final to = report['to'] as String?;
+      return AlertDialog(
+        title: Text(report['name'] as String? ?? context.tr('Report', '报告')),
+        content: SizedBox(
+          width: 560,
+          child: variants.isEmpty
+              ? Text(context.tr('No data yet.', '暂无数据。'))
+              : SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (from != null && to != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Text(
+                            '$from – $to',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                      Text(
+                        context.tr(
+                          'Conversion performance by variant',
+                          '各变体转化表现',
+                        ),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      for (var index = 0; index < variants.length; index++)
+                        _experimentVariantCard(
+                          context,
+                          variants[index],
+                          isControl: index == 0,
+                          intervalScaleMax: intervalScaleMax,
+                        ),
+                      const SizedBox(height: 4),
+                      Text(
+                        context.tr(
+                          'Conversion-rate intervals use the pointwise 95% Wilson score method. Variant differences use the pointwise 95% Newcombe-Wilson interval; intervals are not adjusted for multiple comparisons. A confidence interval describes uncertainty, not a guarantee or automatic stop signal.',
+                          '转化率区间采用逐项 95% Wilson 得分法，变体差值采用逐项 95% Newcombe-Wilson 区间；区间未针对多重比较调整。置信区间用于表达不确定性，不是保证，也不会自动触发停止。',
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(context.tr('Close', '关闭')),
+          ),
+        ],
+      );
+    }
     return AlertDialog(
       title: Text(report['name'] as String? ?? context.tr('Report', '报告')),
       content: SizedBox(
@@ -3983,6 +4234,173 @@ class _ReportDialog extends StatelessWidget {
   String _percent(dynamic value) =>
       '${(((value as num?)?.toDouble() ?? 0) * 100).toStringAsFixed(1)}%';
 
+  Widget _experimentVariantCard(
+    BuildContext context,
+    Map row, {
+    required bool isControl,
+    required double intervalScaleMax,
+  }) {
+    final rate = (row['conversionRate'] as num?)?.toDouble() ?? 0;
+    final interval = _formatRateInterval(
+      context,
+      row['conversionRateCiLower'],
+      row['conversionRateCiUpper'],
+    );
+    final exposures = (row['exposures'] as num?)?.toInt() ?? 0;
+    final conversions = (row['conversions'] as num?)?.toInt() ?? 0;
+    final rateDifference = (row['conversionRateDifference'] as num?)
+        ?.toDouble();
+    final differenceInterval = _formatDifferenceInterval(
+      context,
+      row['conversionRateDifferenceCiLower'],
+      row['conversionRateDifferenceCiUpper'],
+    );
+    final pValue = (row['pValue'] as num?)?.toDouble();
+    final significant = row['statisticallySignificant'] == true;
+    final relativeLift = (row['relativeLift'] as num?)?.toDouble();
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    row['variant'] as String? ?? '',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                Chip(
+                  label: Text(
+                    isControl
+                        ? context.tr('Control', '对照组')
+                        : context.tr('Variant', '实验组'),
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            Text(
+              context.tr(
+                '$conversions conversions from $exposures exposed sessions',
+                '$exposures 个曝光会话中转化 $conversions 个',
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.tr('Conversion rate', '转化率'),
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ),
+                Text(
+                  _percent(rate),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            _ConfidenceIntervalBar(
+              lower: (row['conversionRateCiLower'] as num?)?.toDouble(),
+              upper: (row['conversionRateCiUpper'] as num?)?.toDouble(),
+              estimate: rate,
+              scaleMax: intervalScaleMax,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              context.tr('95% rate interval: $interval', '95% 转化率区间：$interval'),
+            ),
+            if (!isControl) ...[
+              const Divider(height: 20),
+              if (rateDifference != null)
+                Text(
+                  context.tr(
+                    'Absolute difference: ${_signedPercentagePoints(rateDifference)}',
+                    '绝对转化率差：${_signedPercentagePoints(rateDifference)}',
+                  ),
+                ),
+              Text(
+                context.tr(
+                  '95% difference interval: $differenceInterval',
+                  '95% 差值区间：$differenceInterval',
+                ),
+              ),
+              if (relativeLift != null)
+                Text(
+                  context.tr(
+                    'Relative lift: ${_signedPercent(relativeLift * 100)}%',
+                    '相对提升：${_signedPercent(relativeLift * 100)}%',
+                  ),
+                ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(
+                    significant
+                        ? Icons.check_circle_outline
+                        : pValue == null
+                        ? Icons.hourglass_empty
+                        : Icons.info_outline,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      pValue == null
+                          ? context.tr(
+                              'Not enough data for a significance estimate',
+                              '数据不足，暂无法估计显著性',
+                            )
+                          : context.tr(
+                              '${significant ? 'Statistically significant' : 'Not conclusive'} · p=${pValue.toStringAsFixed(3)}',
+                              '${significant ? '达到统计显著性' : '暂无明确结论'} · p=${pValue.toStringAsFixed(3)}',
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatRateInterval(
+    BuildContext context,
+    dynamic lower,
+    dynamic upper,
+  ) {
+    if (lower is! num || upper is! num) {
+      return context.tr('Not available', '暂无');
+    }
+    return '${_percent(lower)} – ${_percent(upper)}';
+  }
+
+  String _formatDifferenceInterval(
+    BuildContext context,
+    dynamic lower,
+    dynamic upper,
+  ) {
+    if (lower is! num || upper is! num) {
+      return context.tr('Not available', '暂无');
+    }
+    return '${_signedPercentagePoints(lower.toDouble())} – ${_signedPercentagePoints(upper.toDouble())}';
+  }
+
+  String _signedPercentagePoints(double value) {
+    final points = value * 100;
+    return '${points > 0 ? '+' : ''}${points.toStringAsFixed(1)} pp';
+  }
+
+  String _signedPercent(double value) =>
+      '${value > 0 ? '+' : ''}${value.toStringAsFixed(1)}';
+
   String _experimentComparison(Map row) {
     if (mode != ProductFeatureMode.experiments || row['relativeLift'] == null) {
       return '';
@@ -3998,6 +4416,87 @@ class _ReportDialog extends StatelessWidget {
     final dropOff = row['dropOff'] as num?;
     if (dropOff == null || dropOff == 0) return '';
     return ' · ${dropOff.toInt()} drop-off (${_percent(row['dropOffRate'])})';
+  }
+}
+
+class _ConfidenceIntervalBar extends StatelessWidget {
+  const _ConfidenceIntervalBar({
+    required this.lower,
+    required this.upper,
+    required this.estimate,
+    required this.scaleMax,
+  });
+
+  final double? lower;
+  final double? upper;
+  final double estimate;
+  final double scaleMax;
+
+  @override
+  Widget build(BuildContext context) {
+    if (lower == null || upper == null) {
+      return Text(context.tr('Interval unavailable', '区间暂无数据'));
+    }
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          key: const ValueKey('experiment-rate-confidence-interval'),
+          height: 24,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final intervalStart =
+                  (lower!.clamp(0.0, scaleMax) / scaleMax) * width;
+              final intervalEnd =
+                  (upper!.clamp(0.0, scaleMax) / scaleMax) * width;
+              final point = (estimate.clamp(0.0, scaleMax) / scaleMax) * width;
+              final pointLeft = (point - 6).clamp(0.0, width - 12).toDouble();
+              return Stack(
+                alignment: Alignment.centerLeft,
+                children: [
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 11,
+                    child: Container(height: 2, color: colors.outlineVariant),
+                  ),
+                  Positioned(
+                    left: intervalStart,
+                    width: (intervalEnd - intervalStart)
+                        .clamp(2.0, width)
+                        .toDouble(),
+                    top: 10,
+                    child: Container(height: 4, color: colors.primary),
+                  ),
+                  Positioned(
+                    left: pointLeft,
+                    top: 5,
+                    child: Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: colors.primary,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: colors.surface, width: 2),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('0%'),
+            Text('${(scaleMax * 100).toStringAsFixed(1)}%'),
+          ],
+        ),
+      ],
+    );
   }
 }
 

@@ -161,8 +161,11 @@ public class ExperimentService {
         for (Map.Entry<String, Counts> entry : counts.entrySet()) {
             Counts value = entry.getValue();
             double rate = value.exposures == 0 ? 0 : (double) value.conversions / value.exposures;
+            Interval rateInterval = wilsonInterval(value);
             Comparison comparison =
-                    index++ == 0 ? new Comparison(null, null, false) : compare(controlRate, control, rate, value);
+                    index++ == 0
+                            ? new Comparison(null, null, false, null, null, null)
+                            : compare(controlRate, control, rate, value);
             reports.add(new VariantReport(
                     entry.getKey(),
                     value.exposures,
@@ -170,7 +173,12 @@ public class ExperimentService {
                     rate,
                     comparison.relativeLift(),
                     comparison.pValue(),
-                    comparison.significant()));
+                    comparison.significant(),
+                    rateInterval == null ? null : rateInterval.lower(),
+                    rateInterval == null ? null : rateInterval.upper(),
+                    comparison.conversionRateDifference(),
+                    comparison.conversionRateDifferenceCiLower(),
+                    comparison.conversionRateDifferenceCiUpper()));
         }
         return new Report(e.id, e.name, range.from(), range.to(), reports);
     }
@@ -297,15 +305,68 @@ public class ExperimentService {
     }
 
     private static Comparison compare(double controlRate, Counts control, double variantRate, Counts variant) {
+        Interval difference = newcombeDifferenceInterval(control, variant);
+        Double rateDifference = variant.exposures == 0 || control.exposures == 0
+                ? null
+                : variantRate - controlRate;
         if (control.exposures == 0 || variant.exposures == 0)
-            return new Comparison(controlRate == 0 ? null : (variantRate - controlRate) / controlRate, null, false);
+            return new Comparison(
+                    controlRate == 0 ? null : (variantRate - controlRate) / controlRate,
+                    null,
+                    false,
+                    rateDifference,
+                    difference == null ? null : difference.lower(),
+                    difference == null ? null : difference.upper());
         Double lift = controlRate == 0 ? null : (variantRate - controlRate) / controlRate;
         double pooled = (control.conversions + variant.conversions) / (double) (control.exposures + variant.exposures);
         double variance = pooled * (1 - pooled) * (1.0 / control.exposures + 1.0 / variant.exposures);
-        if (variance <= 0) return new Comparison(lift, null, false);
+        if (variance <= 0)
+            return new Comparison(
+                    lift,
+                    null,
+                    false,
+                    rateDifference,
+                    difference == null ? null : difference.lower(),
+                    difference == null ? null : difference.upper());
         double z = (variantRate - controlRate) / Math.sqrt(variance);
         double pValue = Math.min(1, 2 * (1 - normalCdf(Math.abs(z))));
-        return new Comparison(lift, pValue, pValue < 0.05);
+        return new Comparison(
+                lift,
+                pValue,
+                pValue < 0.05,
+                rateDifference,
+                difference == null ? null : difference.lower(),
+                difference == null ? null : difference.upper());
+    }
+
+    private static Interval newcombeDifferenceInterval(Counts control, Counts variant) {
+        Interval controlInterval = wilsonInterval(control);
+        Interval variantInterval = wilsonInterval(variant);
+        if (controlInterval == null || variantInterval == null) return null;
+        double controlRate = (double) control.conversions / control.exposures;
+        double variantRate = (double) variant.conversions / variant.exposures;
+        double difference = variantRate - controlRate;
+        double lower = difference
+                - Math.sqrt(Math.pow(variantRate - variantInterval.lower(), 2)
+                        + Math.pow(controlInterval.upper() - controlRate, 2));
+        double upper = difference
+                + Math.sqrt(Math.pow(variantInterval.upper() - variantRate, 2)
+                        + Math.pow(controlRate - controlInterval.lower(), 2));
+        return new Interval(Math.max(-1, lower), Math.min(1, upper));
+    }
+
+    private static Interval wilsonInterval(Counts counts) {
+        if (counts.exposures <= 0) return null;
+        final double z = 1.959963984540054;
+        double n = counts.exposures;
+        double p = (double) counts.conversions / n;
+        double zSquared = z * z;
+        double denominator = 1 + zSquared / n;
+        double center = (p + zSquared / (2 * n)) / denominator;
+        double halfWidth = z
+                * Math.sqrt(p * (1 - p) / n + zSquared / (4 * n * n))
+                / denominator;
+        return new Interval(Math.max(0, center - halfWidth), Math.min(1, center + halfWidth));
     }
 
     private static double normalCdf(double value) {
@@ -336,7 +397,12 @@ public class ExperimentService {
             double conversionRate,
             Double relativeLift,
             Double pValue,
-            boolean statisticallySignificant) {}
+            boolean statisticallySignificant,
+            Double conversionRateCiLower,
+            Double conversionRateCiUpper,
+            Double conversionRateDifference,
+            Double conversionRateDifferenceCiLower,
+            Double conversionRateDifferenceCiUpper) {}
 
     public record Report(UUID id, String name, LocalDate from, LocalDate to, List<VariantReport> variants) {}
 
@@ -345,5 +411,13 @@ public class ExperimentService {
         long conversions;
     }
 
-    private record Comparison(Double relativeLift, Double pValue, boolean significant) {}
+    private record Comparison(
+            Double relativeLift,
+            Double pValue,
+            boolean significant,
+            Double conversionRateDifference,
+            Double conversionRateDifferenceCiLower,
+            Double conversionRateDifferenceCiUpper) {}
+
+    private record Interval(double lower, double upper) {}
 }

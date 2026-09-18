@@ -2221,8 +2221,13 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("variants[0].conversionRate", is(0.1f))
                 .body("variants[0].relativeLift", nullValue())
+                .body("variants[0].conversionRateCiLower", greaterThan(0.02f))
+                .body("variants[0].conversionRateCiUpper", lessThan(0.31f))
                 .body("variants[1].conversionRate", is(0.6f))
                 .body("variants[1].relativeLift", is(5.0f))
+                .body("variants[1].conversionRateDifference", is(0.5f))
+                .body("variants[1].conversionRateDifferenceCiLower", greaterThan(0.20f))
+                .body("variants[1].conversionRateDifferenceCiUpper", lessThan(0.70f))
                 .body("variants[1].pValue", lessThan(0.01f))
                 .body("variants[1].statisticallySignificant", is(true));
     }

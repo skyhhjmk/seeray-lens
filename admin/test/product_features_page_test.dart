@@ -666,6 +666,8 @@ void main() {
     expect(find.text('Variants (comma separated)'), findsNothing);
     expect(find.text('Add variant'), findsOneWidget);
     expect(find.text('Audience targeting'), findsOneWidget);
+    expect(find.text('Sample size estimate'), findsOneWidget);
+    expect(find.textContaining('exposures needed per variant'), findsOneWidget);
     expect(find.text('Devices'), findsOneWidget);
     await tester.enterText(find.byType(TextField).at(0), 'Homepage hero');
     await tester.ensureVisible(find.text('Add page path'));
@@ -733,8 +735,11 @@ void main() {
       find.textContaining('New or unknown visitors are excluded'),
       findsOneWidget,
     );
-    await tester.ensureVisible(find.byType(DropdownButtonFormField<int>));
-    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    final lookbackDropdown = find.byKey(
+      const ValueKey('experiment-segment-lookback'),
+    );
+    await tester.ensureVisible(lookbackDropdown);
+    await tester.tap(lookbackDropdown);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Last 90 days').last);
     await tester.pumpAndSettle();
@@ -811,6 +816,83 @@ void main() {
       'segmentId': null,
       'segmentLookbackDays': 30,
     });
+  });
+
+  testWidgets('shows experiment confidence intervals as visual variant cards', (
+    tester,
+  ) async {
+    final api = _EditorFeatureApi.experiment(
+      items: [
+        {
+          'id': 'experiment-1',
+          'name': 'Pricing hero',
+          'enabled': true,
+          'variants': ['control', 'new_copy'],
+        },
+      ],
+      report: {
+        'id': 'experiment-1',
+        'name': 'Pricing hero',
+        'from': '2026-09-01',
+        'to': '2026-09-30',
+        'variants': [
+          {
+            'variant': 'control',
+            'exposures': 100,
+            'conversions': 10,
+            'conversionRate': 0.1,
+            'conversionRateCiLower': 0.055,
+            'conversionRateCiUpper': 0.174,
+            'statisticallySignificant': false,
+          },
+          {
+            'variant': 'new_copy',
+            'exposures': 100,
+            'conversions': 15,
+            'conversionRate': 0.15,
+            'conversionRateCiLower': 0.093,
+            'conversionRateCiUpper': 0.233,
+            'relativeLift': 0.5,
+            'pValue': 0.2,
+            'statisticallySignificant': false,
+            'conversionRateDifference': 0.05,
+            'conversionRateDifferenceCiLower': -0.04,
+            'conversionRateDifferenceCiUpper': 0.14,
+          },
+        ],
+      },
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.experiments,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Report'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Control'), findsOneWidget);
+    expect(find.text('Variant'), findsOneWidget);
+    expect(find.text('2026-09-01 – 2026-09-30'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('experiment-rate-confidence-interval')),
+      findsNWidgets(2),
+    );
+    expect(find.text('95% rate interval: 5.5% – 17.4%'), findsOneWidget);
+    expect(
+      find.text('95% difference interval: -4.0 pp – +14.0 pp'),
+      findsOneWidget,
+    );
+    expect(find.text('Not conclusive · p=0.200'), findsOneWidget);
+    expect(find.textContaining('Newcombe-Wilson'), findsOneWidget);
   });
 }
 
@@ -908,6 +990,7 @@ class _EditorFeatureApi extends SeeRayApi {
     this.mode, {
     this.items = const [],
     this.segments = const [],
+    this.report = const {},
   }) : super(baseUrl: 'https://lens.example.test');
 
   factory _EditorFeatureApi.funnel() => _EditorFeatureApi._('funnel');
@@ -915,11 +998,18 @@ class _EditorFeatureApi extends SeeRayApi {
   factory _EditorFeatureApi.experiment({
     List<dynamic> items = const [],
     List<dynamic> segments = const [],
-  }) => _EditorFeatureApi._('experiment', items: items, segments: segments);
+    Map<String, dynamic> report = const {},
+  }) => _EditorFeatureApi._(
+    'experiment',
+    items: items,
+    segments: segments,
+    report: report,
+  );
 
   final String mode;
   final List<dynamic> items;
   final List<dynamic> segments;
+  final Map<String, dynamic> report;
   String? lastMutationMethod;
   String? lastMutationPath;
   Object? lastMutationBody;
@@ -955,6 +1045,9 @@ class _EditorFeatureApi extends SeeRayApi {
       ];
     }
     if (method == 'GET' && path.endsWith('/segments')) return segments;
+    if (method == 'GET' && mode == 'experiment' && path.contains('/report?')) {
+      return report;
+    }
     if (method == 'GET' && mode == 'experiment') return items;
     return {'id': 'saved', 'name': 'saved', 'enabled': true};
   }
