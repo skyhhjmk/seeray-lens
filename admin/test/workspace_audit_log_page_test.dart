@@ -35,6 +35,19 @@ void main() {
     expect(find.textContaining('invite-1'), findsOneWidget);
     expect(find.textContaining('invite-token'), findsNothing);
     expect(api.lastPath, contains('/api/v1/workspaces/workspace-1/audit-log'));
+
+    await tester.tap(find.text('API read access').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Human-user API read access'), findsOneWidget);
+    expect(
+      find.textContaining('/api/v1/sites/{siteId}/analytics/overview'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Status 200'), findsOneWidget);
+    expect(
+      api.lastPath,
+      contains('/api/v1/workspaces/workspace-1/api-read-log'),
+    );
   });
 }
 
@@ -42,6 +55,7 @@ class _WorkspaceAuditApi extends SeeRayApi {
   _WorkspaceAuditApi() : super(baseUrl: 'https://lens.example.test');
 
   String? lastPath;
+  final paths = <String>[];
 
   @override
   Future<dynamic> request(
@@ -51,6 +65,25 @@ class _WorkspaceAuditApi extends SeeRayApi {
     bool retried = false,
   }) async {
     lastPath = path;
+    paths.add(path);
+    if (path.contains('/api-read-log')) {
+      return {
+        'entries': [
+          {
+            'id': 'read-1',
+            'actorEmail': 'owner@example.test',
+            'siteId': 'site-1',
+            'siteName': 'Production',
+            'method': 'GET',
+            'routeTemplate': '/api/v1/sites/{siteId}/analytics/overview',
+            'statusCode': 200,
+            'createdAt': '2026-09-19T08:35:00Z',
+          },
+        ],
+        'nextCursor': null,
+        'retentionDays': 30,
+      };
+    }
     return {
       'entries': [
         {

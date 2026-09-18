@@ -405,3 +405,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0058-api-token-request-history.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0059-workspace-api-read-history
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0059-workspace-api-read-history.sql
+            relativeToChangelogFile: false

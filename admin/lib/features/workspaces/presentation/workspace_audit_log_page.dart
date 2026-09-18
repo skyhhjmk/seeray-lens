@@ -7,6 +7,8 @@ import '../../../shared/presentation/app_back_button.dart';
 import '../../../shared/presentation/page_help_button.dart';
 import '../application/workspace_audit_log.dart';
 
+enum _WorkspaceActivityView { changes, apiReads }
+
 class WorkspaceAuditLogPage extends ConsumerStatefulWidget {
   const WorkspaceAuditLogPage({required this.workspaceId, super.key});
 
@@ -23,10 +25,13 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
   );
   late DateTime _to = _day(DateTime.now().toUtc());
   final List<WorkspaceAuditEntry> _entries = [];
+  final List<WorkspaceApiReadEntry> _apiReadEntries = [];
   String? _cursor;
+  _WorkspaceActivityView _view = _WorkspaceActivityView.changes;
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -44,9 +49,9 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
           englishTitle: 'Workspace activity',
           chineseTitle: '工作区活动记录',
           englishBody:
-              'Review successful workspace and access-management changes. This history stores the actor, action, resource type, and resource ID only; it never stores request bodies, passwords, API-token values, or invitation tokens.',
+              'Review administrative changes or human-user API reads. Read history stores the actor, optional site, route template, status and time for 30 days; it never stores query values, request or response bodies, credentials, IP addresses or user agents.',
           chineseBody:
-              '查看工作区和访问管理相关的成功变更。日志只保存操作者、动作、资源类型和资源 ID，不保存请求正文、密码、API Token 明文或邀请 Token。',
+              '查看管理变更或真人用户的 API 读取记录。读取历史保留 30 天，只记录操作者、可选站点、路由模板、状态和时间；不保存查询值、请求或响应正文、凭据、IP 或 User-Agent。',
         ),
         const LanguageMenu(),
         IconButton(
@@ -85,6 +90,24 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
             ],
           ),
         const SizedBox(height: 16),
+        SegmentedButton<_WorkspaceActivityView>(
+          segments: [
+            ButtonSegment(
+              value: _WorkspaceActivityView.changes,
+              icon: const Icon(Icons.edit_note_outlined),
+              label: Text(context.tr('Admin changes', '管理变更')),
+            ),
+            ButtonSegment(
+              value: _WorkspaceActivityView.apiReads,
+              icon: const Icon(Icons.visibility_outlined),
+              label: Text(context.tr('API read access', 'API 读取记录')),
+            ),
+          ],
+          selected: {_view},
+          showSelectedIcon: false,
+          onSelectionChanged: (selection) => _selectView(selection.first),
+        ),
+        const SizedBox(height: 16),
         if (_error != null) ...[
           Card(
             child: ListTile(
@@ -98,26 +121,39 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
           ),
           const SizedBox(height: 12),
         ],
-        if (_entries.isEmpty && _error == null)
+        if (_activeEntriesEmpty && _error == null)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(28),
               child: Column(
                 children: [
-                  const Icon(Icons.history, size: 40, color: Color(0xff748398)),
+                  Icon(
+                    _view == _WorkspaceActivityView.changes
+                        ? Icons.history
+                        : Icons.visibility_outlined,
+                    size: 40,
+                    color: const Color(0xff748398),
+                  ),
                   const SizedBox(height: 12),
                   Text(
-                    context.tr(
-                      'No administrative changes in this period.',
-                      '此时间段内没有管理变更。',
-                    ),
+                    _view == _WorkspaceActivityView.changes
+                        ? context.tr(
+                            'No administrative changes in this period.',
+                            '此时间段内没有管理变更。',
+                          )
+                        : context.tr(
+                            'No human-user API reads in the retained period.',
+                            '保留时间段内没有真人用户 API 读取记录。',
+                          ),
                   ),
                 ],
               ),
             ),
           )
+        else if (_view == _WorkspaceActivityView.changes)
+          ..._entries.map(_entryCard)
         else
-          ..._entries.map(_entryCard),
+          ..._apiReadEntries.map(_apiReadCard),
         if (_cursor != null)
           Align(
             child: Padding(
@@ -143,15 +179,22 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Text(
-        context.tr('Administrative history', '管理操作历史'),
+        _view == _WorkspaceActivityView.changes
+            ? context.tr('Administrative history', '管理操作历史')
+            : context.tr('Human-user API read access', '真人用户 API 读取记录'),
         style: Theme.of(context).textTheme.headlineSmall,
       ),
       const SizedBox(height: 4),
       Text(
-        context.tr(
-          'Workspace, member, invitation, site-creation, and API-token changes · date filter in UTC, event times shown locally',
-          '工作区、成员、邀请、站点创建与 API Token 变更 · 日期筛选按 UTC，事件时间按本地时区显示',
-        ),
+        _view == _WorkspaceActivityView.changes
+            ? context.tr(
+                'Workspace, member, invitation, site-creation, and API-token changes · date filter in UTC, event times shown locally',
+                '工作区、成员、邀请、站点创建与 API Token 变更 · 日期筛选按 UTC，事件时间按本地时区显示',
+              )
+            : context.tr(
+                'Authenticated user GET/HEAD reads only · route templates, status and site scope · retained for 30 days',
+                '只记录已认证用户的 GET/HEAD 读取 · 路由模板、状态与站点范围 · 保留 30 天',
+              ),
       ),
     ],
   );
@@ -190,6 +233,45 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
         isThreeLine: entry.resourceId != null,
       ),
     );
+  }
+
+  Widget _apiReadCard(WorkspaceApiReadEntry entry) => Card(
+    margin: const EdgeInsets.only(bottom: 8),
+    child: ListTile(
+      leading: CircleAvatar(
+        backgroundColor: const Color(0xffe8edf4),
+        child: Icon(
+          entry.statusCode < 400
+              ? Icons.visibility_outlined
+              : Icons.error_outline,
+          color: entry.statusCode < 400
+              ? const Color(0xff385172)
+              : Colors.deepOrange,
+          size: 20,
+        ),
+      ),
+      title: Text(
+        '${entry.actorEmail ?? context.tr('Former user', '已移除用户')} · ${entry.method} ${entry.routeTemplate}',
+      ),
+      subtitle: Text(
+        [
+          entry.siteName ?? context.tr('Workspace endpoint', '工作区接口'),
+          '${context.tr('Status', '状态')} ${entry.statusCode}',
+          _dateTime(entry.createdAt),
+        ].join('  ·  '),
+      ),
+      isThreeLine: true,
+    ),
+  );
+
+  bool get _activeEntriesEmpty => _view == _WorkspaceActivityView.changes
+      ? _entries.isEmpty
+      : _apiReadEntries.isEmpty;
+
+  void _selectView(_WorkspaceActivityView view) {
+    if (view == _view) return;
+    setState(() => _view = view);
+    _load(reset: true);
   }
 
   String _action(String action) => switch (action) {
@@ -243,27 +325,42 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
   };
 
   Future<void> _load({required bool reset}) async {
+    final generation = reset ? ++_loadGeneration : _loadGeneration;
     if (reset) {
       setState(() {
         _loading = true;
+        _loadingMore = false;
         _error = null;
         _cursor = null;
         _entries.clear();
+        _apiReadEntries.clear();
       });
     }
     try {
-      final page = await ref
-          .read(workspaceAuditLogProvider)
-          .load(workspaceId: widget.workspaceId, from: _from, to: _to);
-      if (!mounted) return;
+      String? nextCursor;
+      WorkspaceAuditPage? changePage;
+      WorkspaceApiReadPage? readPage;
+      if (_view == _WorkspaceActivityView.changes) {
+        changePage = await ref
+            .read(workspaceAuditLogProvider)
+            .load(workspaceId: widget.workspaceId, from: _from, to: _to);
+        nextCursor = changePage.nextCursor;
+      } else {
+        readPage = await ref
+            .read(workspaceApiReadLogProvider)
+            .load(workspaceId: widget.workspaceId, from: _from, to: _to);
+        nextCursor = readPage.nextCursor;
+      }
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _entries.addAll(page.entries);
-        _cursor = page.nextCursor;
+        if (changePage != null) _entries.addAll(changePage.entries);
+        if (readPage != null) _apiReadEntries.addAll(readPage.entries);
+        _cursor = nextCursor;
         _loading = false;
         _error = null;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _loading = false;
         _error = error is ApiFailure
@@ -276,24 +373,42 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
   Future<void> _loadMore() async {
     final cursor = _cursor;
     if (cursor == null) return;
+    final generation = _loadGeneration;
     setState(() => _loadingMore = true);
     try {
-      final page = await ref
-          .read(workspaceAuditLogProvider)
-          .load(
-            workspaceId: widget.workspaceId,
-            from: _from,
-            to: _to,
-            cursor: cursor,
-          );
-      if (!mounted) return;
+      String? nextCursor;
+      WorkspaceAuditPage? changePage;
+      WorkspaceApiReadPage? readPage;
+      if (_view == _WorkspaceActivityView.changes) {
+        changePage = await ref
+            .read(workspaceAuditLogProvider)
+            .load(
+              workspaceId: widget.workspaceId,
+              from: _from,
+              to: _to,
+              cursor: cursor,
+            );
+        nextCursor = changePage.nextCursor;
+      } else {
+        readPage = await ref
+            .read(workspaceApiReadLogProvider)
+            .load(
+              workspaceId: widget.workspaceId,
+              from: _from,
+              to: _to,
+              cursor: cursor,
+            );
+        nextCursor = readPage.nextCursor;
+      }
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _entries.addAll(page.entries);
-        _cursor = page.nextCursor;
+        if (changePage != null) _entries.addAll(changePage.entries);
+        if (readPage != null) _apiReadEntries.addAll(readPage.entries);
+        _cursor = nextCursor;
         _loadingMore = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _loadingMore = false;
         _error = error is ApiFailure

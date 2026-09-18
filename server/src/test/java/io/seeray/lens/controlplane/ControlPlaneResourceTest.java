@@ -5349,6 +5349,15 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(204);
         String siteId = createSite(owner.access(), workspaceId, "Activity site");
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("private_marker", "never-store-human-query")
+                .get("/api/v1/sites/" + siteId + "/analytics/overview")
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/overview")
+                .then()
+                .statusCode(200);
         String tokenId = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Automation\",\"scopes\":[\"sites:read\"]}")
@@ -5419,6 +5428,59 @@ class ControlPlaneResourceTest {
                 "REVOKE_API_TOKEN",
                 "CREATE_INVITATION",
                 "REVOKE_INVITATION")));
+        String readEndpoint = "/api/v1/workspaces/" + workspaceId + "/api-read-log";
+        var readHistory = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 100)
+                .get(readEndpoint)
+                .then()
+                .statusCode(200)
+                .body("retentionDays", is(30))
+                .body(
+                        "entries.find { it.actorEmail == '" + ownerEmail
+                                + "' && it.siteName == 'Activity site' && it.routeTemplate == '/api/v1/sites/{siteId}/analytics/overview' && it.statusCode == 200 }",
+                        notNullValue())
+                .body(
+                        "entries.find { it.actorEmail == '" + viewerEmail
+                                + "' && it.siteName == 'Activity site' && it.method == 'GET' }",
+                        notNullValue())
+                .extract()
+                .response();
+        assertFalse(readHistory.asString().contains("never-store-human-query"));
+        assertFalse(readHistory.path("entries.routeTemplate").toString().contains(siteId));
+        var firstReadPage = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 1)
+                .get(readEndpoint)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", is(1))
+                .extract();
+        String readCursor = firstReadPage.path("nextCursor");
+        assertNotNull(readCursor);
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 1)
+                .queryParam("cursor", readCursor)
+                .get(readEndpoint)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", is(1));
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get(readEndpoint)
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + admin.access())
+                .get(readEndpoint)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(readEndpoint)
+                .then()
+                .statusCode(404);
         given().header("Authorization", "Bearer " + owner.access())
                 .queryParam("from", day)
                 .queryParam("to", day)
