@@ -73,6 +73,69 @@ void main() {
     expect(find.text('Copy tracking examples'), findsOneWidget);
   });
 
+  testWidgets('provides a site-specific native iOS SwiftPM setup flow', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(_IntegrationApi()),
+        ],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('iOS SDK'));
+    await tester.tap(find.text('iOS SDK'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Connect an iOS app'), findsOneWidget);
+    expect(find.text('Public source package · master branch'), findsOneWidget);
+    expect(find.text('HTTPS required for iOS'), findsNothing);
+    expect(find.textContaining('requires consent.'), findsOneWidget);
+    expect(find.textContaining('skyhhjmk/seeray-lens.git'), findsWidgets);
+    expect(find.textContaining('srl_demo'), findsWidgets);
+    expect(find.textContaining('https://lens.example.test'), findsWidgets);
+    expect(find.text('Copy initialization code'), findsOneWidget);
+    expect(find.text('Copy consent call'), findsOneWidget);
+    expect(find.text('Copy tracking examples'), findsOneWidget);
+  });
+
+  testWidgets('blocks generated iOS initialization over plaintext HTTP', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 1500);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(
+            SeeRayApi(baseUrl: 'http://localhost:8080'),
+          ),
+        ],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('iOS SDK'));
+    await tester.tap(find.text('iOS SDK'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('HTTPS required for iOS'), findsOneWidget);
+    expect(find.text('Copy initialization code'), findsNothing);
+    expect(find.text('Copy tracking examples'), findsOneWidget);
+  });
+
   testWidgets('provides an opt-in Core Web Vitals snippet', (tester) async {
     await tester.pumpWidget(
       ProviderScope(

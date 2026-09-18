@@ -11,6 +11,7 @@ import '../../auth/application/auth_controller.dart';
 import '../../sites/application/site_controller.dart';
 import 'android_sdk_setup.dart';
 import 'crash_analytics_setup.dart';
+import 'ios_sdk_setup.dart';
 import 'product_features_page.dart';
 
 class IntegrationPage extends ConsumerWidget {
@@ -45,21 +46,23 @@ class IntegrationPage extends ConsumerWidget {
     )?.state.uri.queryParameters['tab'];
     final initialTab = requestedTab == 'android-sdk'
         ? 1
+        : requestedTab == 'ios-sdk'
+        ? 2
         : requestedTab == 'web-vitals'
-        ? 7
+        ? 8
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'forms'
-        ? 14
-        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
         ? 15
+        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
+        ? 16
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
               'hosted-privacy'
-        ? 13
+        ? 14
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
               'crashes'
-        ? 16
+        ? 17
         : 0;
     return DefaultTabController(
-      length: 18,
+      length: 19,
       initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
@@ -84,6 +87,7 @@ class IntegrationPage extends ConsumerWidget {
                 tabs: [
                   Tab(text: context.tr('JavaScript', 'JavaScript')),
                   Tab(text: context.tr('Android SDK', 'Android SDK')),
+                  Tab(text: context.tr('iOS SDK', 'iOS SDK')),
                   Tab(text: context.tr('Image fallback', '图片回退')),
                   Tab(text: context.tr('SVG fallback', 'SVG 回退')),
                   Tab(text: context.tr('Goals', '目标事件')),
@@ -119,6 +123,11 @@ class IntegrationPage extends ConsumerWidget {
                     ),
                   ),
                   AndroidSdkSetup(
+                    trackingId: site.trackingId,
+                    apiOrigin: Uri.parse(base).origin,
+                    requireConsent: site.requireConsent,
+                  ),
+                  IosSdkSetup(
                     trackingId: site.trackingId,
                     apiOrigin: Uri.parse(base).origin,
                     requireConsent: site.requireConsent,
