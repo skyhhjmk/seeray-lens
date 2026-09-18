@@ -32,6 +32,7 @@ class CrashIssue {
     required this.occurrences,
     required this.affectedPages,
     required this.browsers,
+    required this.platforms,
     required this.firstSeen,
     required this.lastSeen,
   });
@@ -46,6 +47,7 @@ class CrashIssue {
   final int occurrences;
   final int affectedPages;
   final String browsers;
+  final String platforms;
   final DateTime? firstSeen;
   final DateTime? lastSeen;
 
@@ -60,6 +62,7 @@ class CrashIssue {
     occurrences: (json['occurrences'] as num?)?.toInt() ?? 0,
     affectedPages: (json['affectedPages'] as num?)?.toInt() ?? 0,
     browsers: json['browsers'] as String? ?? 'Other',
+    platforms: json['platforms'] as String? ?? 'web',
     firstSeen: DateTime.tryParse(json['firstSeen'] as String? ?? ''),
     lastSeen: DateTime.tryParse(json['lastSeen'] as String? ?? ''),
   );

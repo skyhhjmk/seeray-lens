@@ -280,6 +280,7 @@ class IntegrationPage extends ConsumerWidget {
                     siteId: siteId,
                     trackingId: site.trackingId,
                     trackerUrl: script,
+                    apiOrigin: Uri.parse(base).origin,
                     requireConsent: site.requireConsent,
                   ),
                   _Snippet(

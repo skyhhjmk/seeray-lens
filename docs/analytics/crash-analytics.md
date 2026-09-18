@@ -1,4 +1,4 @@
-# JavaScript crash analytics
+# Browser and Android crash analytics
 
 Crash collection is opt-in and disabled unless the tracker snippet has `data-track-errors`. It requires the ordinary consent policy and respects Do Not Track. The browser listener captures uncaught JavaScript exceptions and unhandled promise rejections, not script/image/network resource failures.
 
@@ -8,4 +8,10 @@ Owners and admins can upload flat Source Map v3 files from Integration → Crash
 
 The report at `/sites/:siteId/behaviour/crashes` aggregates occurrences by fingerprint for the selected site and date range. It shows error summaries, mapped source/function and line/column when available, affected page count, browser families, and first/last occurrence; it does not expose event IDs, visitor IDs, session IDs, source contents, or stack frames. Setup and map management are available from the site's Integration → Crash analytics tab.
 
-This is browser JavaScript crash analytics only. Native iOS/Android crash SDKs, browser acceptance, and production acceptance remain separate work. Error messages can still contain application-specific sensitive text that generic redaction cannot recognize, so enable this only after reviewing the site's privacy notice and consent requirements; do not enable it on sensitive pages or for applications that put secrets into error messages.
+## Android native exceptions
+
+The first-party Android SDK can optionally capture uncaught native exceptions. This is a separate opt-in from general analytics and is disabled by default. The SDK records one top application frame and a bounded redacted message, writes it synchronously to Android no-backup app storage, then retries it after the next process launch. The app must call `setNativeCrashConsent(true)` after a separate crash-diagnostics choice; if the site requires analytics consent, that consent must also be granted. Withdrawing either applicable choice clears pending native reports. The original process exception handler is still called.
+
+Android reports use the same site crash page and display their platform and app release. They omit full stacks and all visitor/session/user identifiers. The selected URL comes from the last tracked screen, or from `crashContextUrl` for a crash before the first screen event; both must use a host enabled in the site's domain allowlist. The existing source-map manager applies only to browser JavaScript. R8/ProGuard retrace is not yet available, so minified Android builds may show obfuscated top-frame names.
+
+Native iOS crash capture, Android R8/ProGuard mapping support, browser acceptance, real-device acceptance, and production acceptance remain separate work. Error messages can still contain application-specific sensitive text that generic redaction cannot recognize, so enable collection only after reviewing the site's privacy notice and consent requirements; do not enable it for applications that put secrets into error messages.

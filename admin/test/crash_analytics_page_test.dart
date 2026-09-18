@@ -20,14 +20,60 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Crash analytics'), findsOneWidget);
-    expect(find.text('No browser errors in this period'), findsOneWidget);
+    expect(find.text('No client errors in this period'), findsOneWidget);
     expect(find.textContaining('visitor/session IDs'), findsOneWidget);
     expect(find.text('View setup instructions'), findsOneWidget);
+  });
+
+  testWidgets('separates Android native errors from browser errors', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiProvider.overrideWithValue(
+            _CrashAnalyticsApi(
+              rows: [
+                {
+                  'fingerprint': '0123456789abcdef',
+                  'errorName': 'IllegalStateException',
+                  'message': 'failed safely',
+                  'sourcePath': 'CheckoutActivity.kt',
+                  'line': 48,
+                  'column': null,
+                  'functionName': 'CheckoutActivity.onCreate',
+                  'occurrences': 3,
+                  'affectedPages': 1,
+                  'browsers': 'Other',
+                  'platforms': 'android',
+                  'firstSeen': '2026-09-19T01:00:00Z',
+                  'lastSeen': '2026-09-19T02:00:00Z',
+                },
+              ],
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: CrashAnalyticsPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Platforms'), findsOneWidget);
+    expect(find.text('android'), findsOneWidget);
+    expect(find.text('IllegalStateException'), findsOneWidget);
   });
 }
 
 class _CrashAnalyticsApi extends SeeRayApi {
-  _CrashAnalyticsApi() : super(baseUrl: 'https://lens.example.test');
+  _CrashAnalyticsApi({this.rows = const []})
+    : super(baseUrl: 'https://lens.example.test');
+
+  final List<Map<String, dynamic>> rows;
 
   @override
   Future<dynamic> request(
@@ -42,9 +88,12 @@ class _CrashAnalyticsApi extends SeeRayApi {
     return {
       'from': uri.queryParameters['from'],
       'to': uri.queryParameters['to'],
-      'occurrences': 0,
-      'issueCount': 0,
-      'rows': <Map<String, dynamic>>[],
+      'occurrences': rows.fold<int>(
+        0,
+        (sum, row) => sum + (row['occurrences'] as int),
+      ),
+      'issueCount': rows.length,
+      'rows': rows,
       'hasMore': false,
     };
   }

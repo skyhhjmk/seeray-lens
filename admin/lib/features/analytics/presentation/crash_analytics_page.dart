@@ -37,9 +37,9 @@ class CrashAnalyticsPage extends ConsumerWidget {
                 englishTitle: 'Crash analytics',
                 chineseTitle: '崩溃分析说明',
                 englishBody:
-                    'Reports opt-in JavaScript exceptions and unhandled promise rejections grouped by a privacy-scrubbed fingerprint. Resource load failures and native mobile crashes are not included.',
+                    'Reports opt-in browser JavaScript errors and Android native crashes grouped by a privacy-scrubbed fingerprint. Full stack traces and visitor/session identifiers are not collected.',
                 chineseBody:
-                    '报告明确启用后的 JavaScript 异常和未处理 Promise 拒绝，并按脱敏指纹聚类。不包含资源加载失败和原生移动端崩溃。',
+                    '报告明确启用后的浏览器 JavaScript 错误和 Android 原生崩溃，并按脱敏指纹聚类。不采集完整堆栈或访客/会话标识。',
               ),
               rangeState: range,
               onSelectRange: () =>
@@ -94,8 +94,8 @@ class _CrashReport extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   context.tr(
-                    'Find recurring browser exceptions by error, script location and affected pages.',
-                    '按错误类型、脚本位置和受影响页面定位重复出现的浏览器异常。',
+                    'Find recurring browser and Android errors by sanitized source frame and affected pages.',
+                    '按脱敏来源帧和受影响页面定位重复出现的浏览器或 Android 错误。',
                   ),
                 ),
               ],
@@ -122,8 +122,8 @@ class _CrashReport extends StatelessWidget {
               Expanded(
                 child: Text(
                   context.tr(
-                    'Collection is off by default and requires the data-track-errors flag. The server stores only redacted error summaries and source positions; it discards stack traces, page titles, referrers, query strings and visitor/session IDs.',
-                    '默认不采集，需显式添加 data-track-errors。服务器只保存脱敏后的错误摘要和脚本位置；会丢弃 stack、页面标题、来源页、查询参数及访客/会话 ID。',
+                    'Browser errors require data-track-errors. Android crash diagnostics require captureNativeCrashes plus a separate explicit app choice and are sent on the next launch. The server stores only redacted summaries and a top frame; it discards full stacks, titles, referrers, queries and visitor/session IDs.',
+                    '浏览器错误需显式添加 data-track-errors。Android 崩溃诊断需启用 captureNativeCrashes 并单独取得应用内明确同意，且在下次启动时发送。服务器只保存脱敏摘要和首个有效堆栈帧；完整 stack、标题、来源页、查询参数及访客/会话 ID 均不保存。',
                   ),
                 ),
               ),
@@ -155,7 +155,7 @@ class _CrashReport extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                context.tr('Recurring browser errors', '重复出现的浏览器错误'),
+                context.tr('Recurring client errors', '重复出现的客户端错误'),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 10),
@@ -187,6 +187,9 @@ class _CrashReport extends StatelessWidget {
                               ),
                               DataColumn(
                                 label: Text(context.tr('Browsers', '浏览器')),
+                              ),
+                              DataColumn(
+                                label: Text(context.tr('Platforms', '平台')),
                               ),
                               DataColumn(
                                 label: Text(context.tr('First seen', '首次发生')),
@@ -229,6 +232,7 @@ class _CrashReport extends StatelessWidget {
                                       DataCell(Text('${issue.occurrences}')),
                                       DataCell(Text('${issue.affectedPages}')),
                                       DataCell(Text(issue.browsers)),
+                                      DataCell(Text(issue.platforms)),
                                       DataCell(
                                         Text(_timestamp(issue.firstSeen)),
                                       ),
@@ -271,7 +275,7 @@ class _CrashCard extends StatelessWidget {
     child: ListTile(
       title: Text(issue.errorName),
       subtitle: Text(
-        '${issue.message}\n${_source(issue)} · ${issue.browsers}\n${context.tr('Affected pages', '受影响页面')}: ${issue.affectedPages} · ${context.tr('First seen', '首次发生')}: ${_timestamp(issue.firstSeen)} · ${context.tr('Last seen', '最近发生')}: ${_timestamp(issue.lastSeen)}',
+        '${issue.message}\n${_source(issue)} · ${issue.platforms} · ${issue.browsers}\n${context.tr('Affected pages', '受影响页面')}: ${issue.affectedPages} · ${context.tr('First seen', '首次发生')}: ${_timestamp(issue.firstSeen)} · ${context.tr('Last seen', '最近发生')}: ${_timestamp(issue.lastSeen)}',
         maxLines: 5,
         overflow: TextOverflow.ellipsis,
       ),
@@ -293,14 +297,14 @@ class _EmptyCrashes extends StatelessWidget {
         const Icon(Icons.bug_report_outlined, size: 40),
         const SizedBox(height: 8),
         Text(
-          context.tr('No browser errors in this period', '此周期暂无浏览器错误'),
+          context.tr('No client errors in this period', '此周期暂无客户端错误'),
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 6),
         Text(
           context.tr(
-            'Crash tracking is optional. Add data-track-errors to the tracker only if your privacy notice and consent policy allow it.',
-            '崩溃追踪为可选功能；请确认隐私告知与同意策略允许后，再为追踪代码添加 data-track-errors。',
+            'Crash tracking is optional. Enable browser errors or Android crash diagnostics only after reviewing your privacy notice and explicit consent flow.',
+            '崩溃追踪为可选功能；请先检查隐私告知及明确同意流程，再启用浏览器错误或 Android 崩溃诊断。',
           ),
           textAlign: TextAlign.center,
         ),
