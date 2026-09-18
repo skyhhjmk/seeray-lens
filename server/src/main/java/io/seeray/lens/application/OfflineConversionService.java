@@ -25,6 +25,7 @@ public class OfflineConversionService {
     private static final int MAX_IMPORT_ROWS = 5_000;
     private static final int MAX_GOOGLE_ADS_ROWS = 2_000;
     private static final int MAX_META_ADS_ROWS = 1_000;
+    private static final int MAX_LINKEDIN_ADS_ROWS = 5_000;
     private static final int MAX_IMPORT_CHARACTERS = 2 * 1024 * 1024;
     private static final Set<String> PLATFORMS =
             Set.of("google_ads", "microsoft_ads", "meta_ads", "tiktok_ads", "linkedin_ads", "x_ads");
@@ -49,6 +50,7 @@ public class OfflineConversionService {
     private final GoogleAdsDataManagerGateway googleAds;
     private final MicrosoftAdsCapiGateway microsoftAds;
     private final MetaAdsCapiGateway metaAds;
+    private final LinkedInConversionsGateway linkedInAds;
     private final SecretEncryptionService encryption;
 
     @Inject
@@ -60,6 +62,7 @@ public class OfflineConversionService {
             GoogleAdsDataManagerGateway googleAds,
             MicrosoftAdsCapiGateway microsoftAds,
             MetaAdsCapiGateway metaAds,
+            LinkedInConversionsGateway linkedInAds,
             SecretEncryptionService encryption) {
         this.dataSource = dataSource;
         this.sites = sites;
@@ -68,6 +71,7 @@ public class OfflineConversionService {
         this.googleAds = googleAds;
         this.microsoftAds = microsoftAds;
         this.metaAds = metaAds;
+        this.linkedInAds = linkedInAds;
         this.encryption = encryption;
     }
 
@@ -610,6 +614,290 @@ public class OfflineConversionService {
         MetaAdsCapiGateway.Result result =
                 metaAds.send(destination.datasetId(), encryption.decrypt(destination.tokenCiphertext()), payload);
         return new MetaAdsTransferResult(events.size(), result.eventsReceived());
+    }
+
+    public LinkedInAdsConfigView linkedInAdsConfig(UUID siteId) {
+        Site site = readableSite(siteId);
+        var member = access.member(site.organization.id);
+        boolean canManage = member.role == WorkspaceRole.OWNER || member.role == WorkspaceRole.ADMIN;
+        String currencyCode = null;
+        boolean configured = false;
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select currency_code from analytics_linkedin_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (row.next()) {
+                    currencyCode = row.getString(1);
+                    configured = true;
+                }
+            }
+            List<LinkedInAdsGoalMappingView> mappings = new ArrayList<>();
+            try (PreparedStatement mappingStatement = connection.prepareStatement(
+                    "select m.goal_id,g.name,m.conversion_urn from analytics_linkedin_ads_goal_mapping m "
+                            + "join goal_definition g on g.id=m.goal_id and g.site_id=m.site_id "
+                            + "where m.site_id=? and g.enabled order by g.name,m.goal_id")) {
+                mappingStatement.setObject(1, siteId);
+                try (ResultSet rows = mappingStatement.executeQuery()) {
+                    while (rows.next()) {
+                        mappings.add(new LinkedInAdsGoalMappingView(
+                                rows.getObject(1, UUID.class), rows.getString(2), rows.getString(3)));
+                    }
+                }
+            }
+            return new LinkedInAdsConfigView(canManage, configured, configured, currencyCode, List.copyOf(mappings));
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read LinkedIn Conversions API configuration", error);
+        }
+    }
+
+    @Transactional
+    public LinkedInAdsConfigView saveLinkedInAdsConfig(UUID siteId, LinkedInAdsConfigInput input) {
+        writableSite(siteId);
+        if (input == null) throw invalid("Enter a currency and LinkedIn Conversions API access token.");
+        String currencyCode =
+                input.currencyCode() == null ? "" : input.currencyCode().strip().toUpperCase(Locale.ROOT);
+        try {
+            Currency.getInstance(currencyCode);
+        } catch (IllegalArgumentException error) {
+            throw invalid("Choose a valid three-letter ISO currency code.");
+        }
+        ExistingLinkedInAdsConfig existing = existingLinkedInAdsConfig(siteId);
+        byte[] encryptedToken;
+        if (input.apiToken() == null || input.apiToken().isBlank()) {
+            if (existing == null) {
+                throw new ControlPlaneException(
+                        400,
+                        "LINKEDIN_ADS_TOKEN_REQUIRED",
+                        "Enter a LinkedIn Marketing API OAuth access token for the first connection.");
+            }
+            encryptedToken = existing.tokenCiphertext();
+        } else {
+            String token = input.apiToken().strip();
+            if (token.length() > 8_192) throw invalid("The LinkedIn access token is too long.");
+            encryptedToken = encryption.encrypt(token);
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_linkedin_ads_capi_config(site_id,currency_code,api_token_ciphertext,updated_by,updated_at) "
+                                + "values(?,?,?,?,now()) on conflict(site_id) do update set currency_code=excluded.currency_code,"
+                                + "api_token_ciphertext=excluded.api_token_ciphertext,updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, currencyCode);
+            statement.setBytes(3, encryptedToken);
+            statement.setObject(4, access.userId());
+            statement.executeUpdate();
+            return linkedInAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save LinkedIn Conversions API configuration", error);
+        }
+    }
+
+    @Transactional
+    public LinkedInAdsConfigView mapLinkedInAdsGoal(UUID siteId, UUID goalId, String conversionUrnValue) {
+        writableSite(siteId);
+        goal(siteId, goalId, true);
+        String conversionUrn = conversionUrnValue == null ? "" : conversionUrnValue.strip();
+        if (!conversionUrn.matches("urn:lla:llaPartnerConversion:[0-9]{1,32}")) {
+            throw invalid("Enter a LinkedIn conversion rule URN such as urn:lla:llaPartnerConversion:123456.");
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_linkedin_ads_goal_mapping(site_id,goal_id,conversion_urn,updated_by,updated_at) "
+                                + "values(?,?,?,?,now()) on conflict(site_id,goal_id) do update set conversion_urn=excluded.conversion_urn,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.setString(3, conversionUrn);
+            statement.setObject(4, access.userId());
+            statement.executeUpdate();
+            return linkedInAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save LinkedIn goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public LinkedInAdsConfigView removeLinkedInAdsGoalMapping(UUID siteId, UUID goalId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "delete from analytics_linkedin_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.executeUpdate();
+            return linkedInAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove LinkedIn goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public LinkedInAdsConfigView removeLinkedInAdsConfig(UUID siteId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("delete from analytics_linkedin_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            statement.executeUpdate();
+            return linkedInAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove LinkedIn Conversions API configuration", error);
+        }
+    }
+
+    public LinkedInAdsTransferResult transferToLinkedInAds(UUID siteId, LinkedInAdsTransferInput input) {
+        writableSite(siteId);
+        if (input == null
+                || input.goalId() == null
+                || input.rows() == null
+                || input.rows().isEmpty()
+                || input.rows().size() > MAX_LINKEDIN_ADS_ROWS) {
+            throw invalid("Choose 1 to 5,000 LinkedIn conversion rows per send.");
+        }
+        if (!input.consentConfirmed()) {
+            throw new ControlPlaneException(
+                    400,
+                    "LINKEDIN_ADS_CONSENT_CONFIRMATION_REQUIRED",
+                    "Confirm that every exported row has consent for ad-storage and conversion measurement.");
+        }
+        LinkedInAdsDestination destination = linkedInAdsDestination(siteId);
+        Goal goal = goal(siteId, input.goalId(), true);
+        String conversionUrn = linkedInAdsConversionUrn(siteId, input.goalId());
+        List<NormalizedRow> normalized = normalizeRows(siteId, input.rows());
+        ensureRowsMatchImportedConversions(siteId, input.goalId(), normalized, "linkedin_ads");
+        Instant now = Instant.now();
+        Map<String, RowInput> rawRows = new HashMap<>();
+        for (RowInput row : input.rows()) {
+            String key = TrackingIdentityHasher.hash(
+                    siteId, "offline-conversion:" + row.conversionId().trim());
+            rawRows.put(key, row);
+        }
+        Map<String, NavigableSet<Instant>> clickVisits = linkedinClickVisits(siteId, normalized);
+        List<Map<String, Object>> events = new ArrayList<>(normalized.size());
+        for (NormalizedRow row : normalized) {
+            RowInput raw = rawRows.get(row.conversionKeyHash());
+            if (!"linkedin_ads".equals(row.platform())) {
+                throw invalid("Every row must use platform linkedin_ads.");
+            }
+            String clickId = field(raw.clickId(), 2_048, "li_fat_id", 0);
+            if (!clickId.matches("[A-Za-z0-9._~-]{1,2048}")) {
+                throw invalid("Every LinkedIn click ID must contain only letters, digits, '.', '_', '~' or '-'.");
+            }
+            if (row.convertedAt().isBefore(now.minus(Duration.ofDays(90)))
+                    || row.convertedAt().isAfter(now)) {
+                throw invalid("LinkedIn Conversions API accepts conversion timestamps from the past 90 days only.");
+            }
+            NavigableSet<Instant> visits = clickVisits.get(row.clickIdHash());
+            Instant clickAt = visits == null ? null : visits.floor(row.convertedAt());
+            if (clickAt == null || clickAt.isBefore(row.convertedAt().minus(Duration.ofDays(90)))) {
+                throw new ControlPlaneException(
+                        409,
+                        "LINKEDIN_ADS_MATCHED_VISIT_REQUIRED",
+                        "Every row must match a tracked LinkedIn ad click from this site within 90 days before conversion.");
+            }
+            Map<String, Object> userId = Map.of("idType", "LINKEDIN_FIRST_PARTY_ADS_TRACKING_UUID", "idValue", clickId);
+            Map<String, Object> user = Map.of("userIds", List.of(userId));
+            Map<String, Object> conversionValue = Map.of(
+                    "currencyCode",
+                    destination.currencyCode(),
+                    "amount",
+                    goal.fixedValue().toPlainString());
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("conversion", conversionUrn);
+            event.put("conversionHappenedAt", row.convertedAt().toEpochMilli());
+            event.put("conversionValue", conversionValue);
+            event.put("user", user);
+            event.put(
+                    "eventId",
+                    TrackingIdentityHasher.hash(
+                            siteId, "linkedin-ads-event:" + raw.conversionId().trim()));
+            events.add(event);
+        }
+        Map<String, Object> payload = Map.of("elements", events);
+        LinkedInConversionsGateway.Result result =
+                linkedInAds.send(encryption.decrypt(destination.tokenCiphertext()), payload);
+        return new LinkedInAdsTransferResult(events.size(), result.eventsReceived());
+    }
+
+    private Map<String, NavigableSet<Instant>> linkedinClickVisits(UUID siteId, List<NormalizedRow> rows) {
+        Set<String> clickHashes = new HashSet<>();
+        Instant earliestConversion = rows.stream()
+                .map(NormalizedRow::convertedAt)
+                .min(Instant::compareTo)
+                .orElseThrow();
+        Instant latestConversion = rows.stream()
+                .map(NormalizedRow::convertedAt)
+                .max(Instant::compareTo)
+                .orElseThrow();
+        rows.forEach(row -> clickHashes.add(row.clickIdHash()));
+        if (clickHashes.isEmpty()) return Map.of();
+        String[] values = clickHashes.toArray(String[]::new);
+        Map<String, NavigableSet<Instant>> visits = new HashMap<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select ad_click_id_hash,started_at from analytics_session where site_id=? "
+                                + "and ad_click_platform='linkedin_ads' and ad_click_id_hash=any(?) "
+                                + "and started_at>=? and started_at<=? order by ad_click_id_hash,started_at")) {
+            statement.setObject(1, siteId);
+            statement.setArray(2, connection.createArrayOf("varchar", values));
+            statement.setTimestamp(3, Timestamp.from(earliestConversion.minus(Duration.ofDays(90))));
+            statement.setTimestamp(4, Timestamp.from(latestConversion));
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    visits.computeIfAbsent(result.getString(1), ignored -> new TreeSet<>())
+                            .add(result.getTimestamp(2).toInstant());
+                }
+            }
+            return visits;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not match imported LinkedIn click IDs to tracked visits", error);
+        }
+    }
+
+    private ExistingLinkedInAdsConfig existingLinkedInAdsConfig(UUID siteId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select currency_code,api_token_ciphertext from analytics_linkedin_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return null;
+                return new ExistingLinkedInAdsConfig(row.getString(1), row.getBytes(2));
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read LinkedIn Conversions API credentials", error);
+        }
+    }
+
+    private LinkedInAdsDestination linkedInAdsDestination(UUID siteId) {
+        ExistingLinkedInAdsConfig config = existingLinkedInAdsConfig(siteId);
+        if (config == null) {
+            throw new ControlPlaneException(
+                    409, "LINKEDIN_ADS_CONFIG_REQUIRED", "Save the LinkedIn access token and currency first.");
+        }
+        return new LinkedInAdsDestination(config.currencyCode(), config.tokenCiphertext());
+    }
+
+    private String linkedInAdsConversionUrn(UUID siteId, UUID goalId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select conversion_urn from analytics_linkedin_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) {
+                    throw new ControlPlaneException(
+                            409,
+                            "LINKEDIN_ADS_GOAL_MAPPING_REQUIRED",
+                            "Map this SeeRay goal to a LinkedIn Conversions API conversion rule before sending events.");
+                }
+                return row.getString(1);
+            }
+        } catch (ControlPlaneException error) {
+            throw error;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not load LinkedIn conversion rule mapping", error);
+        }
     }
 
     private Map<String, NavigableSet<Instant>> metaClickVisits(UUID siteId, List<NormalizedRow> rows) {
@@ -1176,6 +1464,21 @@ public class OfflineConversionService {
 
     public record MetaAdsTransferResult(int rowsProcessed, int eventsReceived) {}
 
+    public record LinkedInAdsConfigInput(String currencyCode, String apiToken) {}
+
+    public record LinkedInAdsConfigView(
+            boolean canManage,
+            boolean configured,
+            boolean credentialConfigured,
+            String currencyCode,
+            List<LinkedInAdsGoalMappingView> goalMappings) {}
+
+    public record LinkedInAdsGoalMappingView(UUID goalId, String goalName, String conversionUrn) {}
+
+    public record LinkedInAdsTransferInput(UUID goalId, boolean consentConfirmed, List<RowInput> rows) {}
+
+    public record LinkedInAdsTransferResult(int rowsProcessed, int eventsReceived) {}
+
     public record RowInput(String conversionId, String platform, String clickId, String convertedAt) {}
 
     public record ImportBatch(UUID id, UUID goalId, String goalName, int rowCount, Instant importedAt) {}
@@ -1220,6 +1523,10 @@ public class OfflineConversionService {
     private record ExistingMetaAdsConfig(String datasetId, String currencyCode, byte[] tokenCiphertext) {}
 
     private record MetaAdsDestination(String datasetId, String currencyCode, byte[] tokenCiphertext) {}
+
+    private record ExistingLinkedInAdsConfig(String currencyCode, byte[] tokenCiphertext) {}
+
+    private record LinkedInAdsDestination(String currencyCode, byte[] tokenCiphertext) {}
 
     private record StoredConversion(String platform, String clickIdHash, Instant convertedAt) {}
 

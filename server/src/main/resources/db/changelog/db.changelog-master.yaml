@@ -461,3 +461,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0066-workspace-human-write-history.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0067-linkedin-ads-capi-config
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0067-linkedin-ads-capi-config.sql
+            relativeToChangelogFile: false

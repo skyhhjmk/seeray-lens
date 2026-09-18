@@ -13,6 +13,7 @@ import io.seeray.lens.application.AnalyticsFactBuilder;
 import io.seeray.lens.application.BingWebmasterGateway;
 import io.seeray.lens.application.GoogleAdsDataManagerGateway;
 import io.seeray.lens.application.HeatmapAggregationService;
+import io.seeray.lens.application.LinkedInConversionsGateway;
 import io.seeray.lens.application.MetaAdsCapiGateway;
 import io.seeray.lens.application.MicrosoftAdsCapiGateway;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
@@ -31,6 +32,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -2578,6 +2580,170 @@ class ControlPlaneResourceTest {
             try (var result = statement.executeQuery()) {
                 assertTrue(result.next());
                 assertEquals("SEND_TO_META_ADS", result.getString(1));
+            }
+        }
+    }
+
+    @Test
+    void sendsMatchedConsentedLinkedInConversionsWithOnlyFirstPartyClickIdAndEncryptedToken() throws Exception {
+        Tokens owner = register("linkedin-ads-capi" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "LinkedIn Ads CAPI site");
+        String goalId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Qualified lead\",\"triggerType\":\"page_view\","
+                        + "\"pathPattern\":\"/qualified\",\"pathMatchMode\":\"exact\",\"fixedValue\":25}")
+                .post("/api/v1/sites/" + siteId + "/goals")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        UUID siteUuid = UUID.fromString(siteId);
+        Instant clickAt = Instant.now().minusSeconds(7_200);
+        Instant convertedAt = clickAt.plusSeconds(3_600);
+        String clientSession = "linkedin-click-session-" + UUID.randomUUID();
+        insertAttributionPage(
+                siteUuid,
+                UUID.randomUUID().toString(),
+                clientSession,
+                clickAt,
+                "/landing",
+                null,
+                "linkedin",
+                "paid_social",
+                "spring-launch");
+        factBuilder.rebuild(siteUuid, clickAt.minusSeconds(1), clickAt.plusSeconds(1));
+
+        String rawClickId = "li-fat-id-a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        String clickHash = io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "ad-click:" + rawClickId);
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update analytics_session set ad_click_platform='linkedin_ads',ad_click_id_hash=? "
+                                + "where site_id=? and client_session_id=?")) {
+            statement.setString(1, clickHash);
+            statement.setObject(2, siteUuid);
+            statement.setString(3, clientSession);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        String endpoint = "/api/v1/sites/" + siteId + "/offline-conversions/linkedin-ads";
+        String matchedRow = "{\"conversionId\":\"crm-linkedin-lead-0081\",\"platform\":\"linkedin_ads\","
+                + "\"clickId\":\"" + rawClickId + "\",\"convertedAt\":\"" + convertedAt + "\"}";
+        String unmatchedClickId = "li-fat-id-unmatched-1111-2222";
+        String unmatchedRow = "{\"conversionId\":\"crm-linkedin-lead-0082\",\"platform\":\"linkedin_ads\","
+                + "\"clickId\":\"" + unmatchedClickId + "\",\"convertedAt\":\"" + convertedAt + "\"}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"rows\":[" + matchedRow + "," + unmatchedRow + "]}")
+                .post("/api/v1/sites/" + siteId + "/offline-conversions/imports")
+                .then()
+                .statusCode(200)
+                .body("rowsImported", is(2));
+
+        AtomicReference<Map<String, Object>> outboundPayload = new AtomicReference<>();
+        AtomicReference<String> outboundToken = new AtomicReference<>();
+        QuarkusMock.installMockForType(
+                (LinkedInConversionsGateway) (token, payload) -> {
+                    outboundToken.set(token);
+                    outboundPayload.set(payload);
+                    return new LinkedInConversionsGateway.Result(1);
+                },
+                LinkedInConversionsGateway.class);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"currencyCode\":\"USD\",\"apiToken\":\"linkedin-secret-value\"}")
+                .put(endpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("credentialConfigured", is(true))
+                .body("apiToken", nullValue());
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("apiToken", nullValue());
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select api_token_ciphertext from analytics_linkedin_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertFalse(new String(result.getBytes(1), StandardCharsets.UTF_8).contains("linkedin-secret-value"));
+            }
+        }
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"conversionUrn\":\"urn:lla:llaPartnerConversion:123456\"}")
+                .put(endpoint + "/config/goals/" + goalId)
+                .then()
+                .statusCode(200)
+                .body("goalMappings.size()", is(1))
+                .body("goalMappings[0].conversionUrn", is("urn:lla:llaPartnerConversion:123456"));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":false,\"rows\":[" + matchedRow + "]}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(400)
+                .body("code", is("LINKEDIN_ADS_CONSENT_CONFIRMATION_REQUIRED"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":true,\"rows\":[" + matchedRow + ","
+                        + unmatchedRow + "]}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(409)
+                .body("code", is("LINKEDIN_ADS_MATCHED_VISIT_REQUIRED"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":true,\"rows\":[" + matchedRow + "]}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(200)
+                .body("rowsProcessed", is(1))
+                .body("eventsReceived", is(1));
+
+        assertEquals("linkedin-secret-value", outboundToken.get());
+        Map<?, ?> event = (Map<?, ?>) ((List<?>) outboundPayload.get().get("elements")).getFirst();
+        assertEquals("urn:lla:llaPartnerConversion:123456", event.get("conversion"));
+        assertEquals(convertedAt.toEpochMilli(), ((Number) event.get("conversionHappenedAt")).longValue());
+        assertEquals(Map.of("currencyCode", "USD", "amount", "25.0000"), event.get("conversionValue"));
+        Map<?, ?> user = (Map<?, ?>) event.get("user");
+        assertEquals(
+                List.of(Map.of("idType", "LINKEDIN_FIRST_PARTY_ADS_TRACKING_UUID", "idValue", rawClickId)),
+                user.get("userIds"));
+        assertEquals(1, user.size());
+        assertEquals(
+                Set.of("conversion", "conversionHappenedAt", "conversionValue", "user", "eventId"), event.keySet());
+        assertNotEquals("crm-linkedin-lead-0081", event.get("eventId"));
+
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select ad_click_id_hash from analytics_offline_conversion where site_id=? order by conversion_key_hash")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertNotEquals(rawClickId, result.getString(1));
+                assertTrue(result.next());
+                assertNotEquals(unmatchedClickId, result.getString(1));
+            }
+        }
+
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select action from site_audit_log where site_id=? and action='SEND_TO_LINKEDIN_ADS'")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals("SEND_TO_LINKEDIN_ADS", result.getString(1));
             }
         }
     }
