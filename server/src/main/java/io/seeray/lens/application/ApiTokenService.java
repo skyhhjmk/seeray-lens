@@ -1,5 +1,6 @@
 package io.seeray.lens.application;
 
+import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.common.ControlPlaneException;
 import io.seeray.lens.domain.common.UuidV7;
 import io.seeray.lens.domain.token.ApiToken;
@@ -26,16 +27,19 @@ public class ApiTokenService {
         var member = access.require(workspaceId, WorkspaceRole.OWNER);
         if (scopes == null || scopes.isEmpty() || !VALID_SCOPES.containsAll(scopes))
             throw new ControlPlaneException(400, "INVALID_SCOPE", "Scopes must be sites:read or sites:write");
+        LinkedHashSet<String> grantedScopes = new LinkedHashSet<>(scopes);
+        if (grantedScopes.contains("sites:write")) grantedScopes.add("sites:read");
         if (expiresAt != null && !expiresAt.isAfter(Instant.now()))
             throw new ControlPlaneException(400, "INVALID_EXPIRY", "Expiry must be in the future");
         String plain = random();
         ApiToken token = new ApiToken();
         token.id = UuidV7.next();
         token.organization = member.organization;
+        token.createdBy = AppUser.findById(access.userId());
         token.name = name.trim();
         token.tokenPrefix = plain.substring(0, 12);
         token.tokenHash = AuthService.hash(plain);
-        token.scopes = "[\"" + String.join("\",\"", scopes) + "\"]";
+        token.scopes = "[\"" + String.join("\",\"", grantedScopes) + "\"]";
         token.createdAt = Instant.now();
         token.expiresAt = expiresAt;
         token.persist();
@@ -44,7 +48,7 @@ public class ApiTokenService {
     }
 
     public List<ApiToken> list(UUID workspaceId) {
-        access.member(workspaceId);
+        access.require(workspaceId, WorkspaceRole.OWNER);
         return ApiToken.list("organization.id", workspaceId);
     }
 

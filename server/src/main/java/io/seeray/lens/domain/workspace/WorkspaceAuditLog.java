@@ -20,6 +20,9 @@ public class WorkspaceAuditLog extends PanacheEntityBase {
     @JoinColumn(name = "actor_user_id")
     public AppUser actor;
 
+    @Column(name = "actor_api_token_id")
+    public UUID actorApiTokenId;
+
     @Column(nullable = false, length = 32)
     public String action;
 

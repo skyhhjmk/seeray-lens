@@ -27,6 +27,10 @@ public class WorkspaceResource {
 
     @GET
     public List<WorkspaceDto> list() {
+        if (access.isApiToken()) {
+            OrganizationMember member = access.member(access.apiTokenWorkspaceId());
+            return List.of(dto(member.organization, member.role));
+        }
         return OrganizationMember.<OrganizationMember>list("id.userId", access.userId()).stream()
                 .map(m -> dto(m.organization, m.role))
                 .toList();
@@ -35,6 +39,7 @@ public class WorkspaceResource {
     @POST
     @Transactional
     public Response create(CreateWorkspace request) {
+        access.requireInteractiveUser();
         Instant now = Instant.now();
         Organization organization = new Organization();
         organization.id = UuidV7.next();

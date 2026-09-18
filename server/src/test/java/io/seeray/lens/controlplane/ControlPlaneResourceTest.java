@@ -112,6 +112,110 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void apiTokensAuthenticateWithBoundSiteScopesAndAuditAttribution() throws Exception {
+        Tokens owner = register("api-token-owner" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "API token site");
+
+        var readToken = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Read integration\",\"scopes\":[\"sites:read\"]}")
+                .post("/api/v1/workspaces/" + workspaceId + "/api-tokens")
+                .then()
+                .statusCode(201)
+                .extract();
+        String readSecret = readToken.path("plainToken");
+        String readId = readToken.path("token.id");
+        String auth = "Bearer " + readSecret;
+
+        var workspaceResponse = given().header("Authorization", auth).get("/api/v1/workspaces");
+        assertEquals(200, workspaceResponse.statusCode(), workspaceResponse.asString());
+        workspaceResponse.then().body("size()", is(1)).body("[0].id", is(workspaceId));
+        given().header("Authorization", auth)
+                .get("/api/v1/workspaces/" + workspaceId + "/sites")
+                .then()
+                .statusCode(200)
+                .body("size()", is(1));
+        given().header("Authorization", auth)
+                .get("/api/v1/sites/" + siteId + "/analytics/overview")
+                .then()
+                .statusCode(200);
+        given().header("Authorization", auth)
+                .contentType("application/json")
+                .body("{\"name\":\"Should be blocked\",\"host\":\"blocked.example.test\"}")
+                .post("/api/v1/sites/" + siteId + "/domains")
+                .then()
+                .statusCode(403)
+                .body("code", is("API_TOKEN_SCOPE_REQUIRED"));
+        given().header("Authorization", auth)
+                .get("/api/v1/workspaces/" + workspaceId + "/api-tokens")
+                .then()
+                .statusCode(403);
+        given().header("Authorization", auth)
+                .contentType("application/json")
+                .body("{\"name\":\"Forbidden workspace\"}")
+                .post("/api/v1/workspaces")
+                .then()
+                .statusCode(403);
+
+        Tokens other = register("api-token-other" + System.nanoTime() + "@example.test");
+        String otherWorkspace = workspace(other.access()).extract().path("[0].id");
+        String otherSite = createSite(other.access(), otherWorkspace, "Out of scope site");
+        given().header("Authorization", auth)
+                .get("/api/v1/workspaces/" + otherWorkspace + "/sites")
+                .then()
+                .statusCode(404);
+        given().header("Authorization", auth)
+                .get("/api/v1/sites/" + otherSite + "/analytics/overview")
+                .then()
+                .statusCode(404);
+        assertNotNull(readToken.path("token.scopes"));
+
+        var writeToken = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Domain writer\",\"scopes\":[\"sites:write\"]}")
+                .post("/api/v1/workspaces/" + workspaceId + "/api-tokens")
+                .then()
+                .statusCode(201)
+                .body("token.scopes", containsString("sites:read"))
+                .extract();
+        String writeSecret = writeToken.path("plainToken");
+        given().header("Authorization", "Bearer " + writeSecret)
+                .contentType("application/json")
+                .body("{\"host\":\"api.example.test\",\"allowSubdomains\":false,\"enabled\":true}")
+                .post("/api/v1/sites/" + siteId + "/domains")
+                .then()
+                .statusCode(201);
+        given().header("Authorization", "Bearer " + writeSecret)
+                .contentType("application/json")
+                .body("{\"email\":\"should-not-be-added@example.test\",\"role\":\"viewer\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/members")
+                .then()
+                .statusCode(403);
+        String today = LocalDate.now(ZoneId.of("UTC")).toString();
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", today)
+                .queryParam("to", today)
+                .get("/api/v1/sites/" + siteId + "/audit-log")
+                .then()
+                .statusCode(200)
+                .body("entries.find { it.resource == 'domains' }.actorApiTokenName", is("Domain writer"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/workspaces/" + workspaceId + "/api-tokens")
+                .then()
+                .statusCode(200)
+                .body("find { it.id == '" + readId + "' }.lastUsedAt", notNullValue());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{}")
+                .post("/api/v1/workspaces/" + workspaceId + "/api-tokens/" + readId + "/revoke")
+                .then()
+                .statusCode(204);
+        workspace(auth).statusCode(401);
+    }
+
+    @Test
     void disabledUserCannotLoginOrRefresh() throws Exception {
         String email = "disabled" + System.nanoTime() + "@example.test";
         Tokens tokens = register(email);

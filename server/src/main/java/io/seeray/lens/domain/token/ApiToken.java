@@ -1,6 +1,7 @@
 package io.seeray.lens.domain.token;
 
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
+import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.workspace.Organization;
 import jakarta.persistence.*;
 import java.time.Instant;
@@ -17,6 +18,10 @@ public class ApiToken extends PanacheEntityBase {
     @ManyToOne
     @JoinColumn(name = "organization_id", nullable = false)
     public Organization organization;
+
+    @ManyToOne
+    @JoinColumn(name = "created_by_user_id", nullable = false)
+    public AppUser createdBy;
 
     @Column(nullable = false)
     public String name;

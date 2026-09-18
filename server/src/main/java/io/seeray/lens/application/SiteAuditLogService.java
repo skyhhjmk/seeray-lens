@@ -31,8 +31,10 @@ public class SiteAuditLogService {
             throw new ControlPlaneException(400, "AUDIT_RANGE_INVALID", "Choose a date range of at most 366 days");
         int limit = Math.max(1, Math.min(requestedLimit, 100));
         Cursor cursor = parseCursor(cursorValue);
-        String sql = "select l.id,l.actor_user_id,u.email,l.action,l.resource,l.resource_id,l.created_at "
+        String sql = "select l.id,l.actor_user_id,u.email,l.action,l.resource,l.resource_id,l.created_at,"
+                + "l.actor_api_token_id,t.name "
                 + "from site_audit_log l left join app_user u on u.id=l.actor_user_id "
+                + "left join api_token t on t.id=l.actor_api_token_id "
                 + "where l.site_id=? and l.created_at>=? and l.created_at<? "
                 + (cursor == null ? "" : "and (l.created_at<? or (l.created_at=? and l.id<?)) ")
                 + "order by l.created_at desc,l.id desc limit ?";
@@ -60,7 +62,9 @@ public class SiteAuditLogService {
                             rows.getString(4),
                             rows.getString(5),
                             rows.getObject(6, UUID.class),
-                            rows.getTimestamp(7).toInstant()));
+                            rows.getTimestamp(7).toInstant(),
+                            rows.getObject(8, UUID.class),
+                            rows.getString(9)));
                 }
             }
         } catch (SQLException error) {
@@ -104,7 +108,9 @@ public class SiteAuditLogService {
             String action,
             String resource,
             UUID resourceId,
-            Instant createdAt) {}
+            Instant createdAt,
+            UUID actorApiTokenId,
+            String actorApiTokenName) {}
 
     public record Page(LocalDate from, LocalDate to, List<Entry> entries, String nextCursor) {}
 }

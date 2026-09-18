@@ -1,6 +1,7 @@
 package io.seeray.lens.api;
 
 import io.quarkus.security.identity.SecurityIdentity;
+import io.seeray.lens.application.ApiTokenAuthenticator;
 import io.seeray.lens.domain.common.UuidV7;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -50,13 +51,14 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
         if (mutation == null) return;
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(
-                        "insert into site_audit_log(id,site_id,actor_user_id,action,resource,resource_id) values(?,?,?,?,?,?)")) {
+                        "insert into site_audit_log(id,site_id,actor_user_id,actor_api_token_id,action,resource,resource_id) values(?,?,?,?,?,?,?)")) {
             statement.setObject(1, UuidV7.next());
             statement.setObject(2, mutation.siteId());
             statement.setObject(3, UUID.fromString(identity.getPrincipal().getName()));
-            statement.setString(4, mutation.action());
-            statement.setString(5, mutation.resource());
-            statement.setObject(6, mutation.resourceId());
+            statement.setObject(4, identity.getAttribute(ApiTokenAuthenticator.ATTRIBUTE_ID));
+            statement.setString(5, mutation.action());
+            statement.setString(6, mutation.resource());
+            statement.setObject(7, mutation.resourceId());
             statement.executeUpdate();
         } catch (SQLException | IllegalArgumentException error) {
             // Audit persistence must not turn an otherwise successful configuration request into a failure.

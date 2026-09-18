@@ -391,3 +391,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0056-workspace-activity-log.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0057-api-token-authentication
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0057-api-token-authentication.sql
+            relativeToChangelogFile: false
