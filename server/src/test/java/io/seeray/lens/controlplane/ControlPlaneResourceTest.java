@@ -948,6 +948,8 @@ class ControlPlaneResourceTest {
         Instant base = reportDay.atTime(10, 0).toInstant(java.time.ZoneOffset.UTC);
         String visitorOne = UUID.randomUUID().toString();
         String sessionOne = UUID.randomUUID().toString();
+        insertRaw(site, visitorOne, sessionOne, "page_view", base.minusSeconds(2), "/signup", "{}");
+        insertRaw(site, visitorOne, sessionOne, "page_view", base.minusSeconds(1), "/pricing", "{}");
         insertRaw(
                 site,
                 visitorOne,
@@ -991,6 +993,7 @@ class ControlPlaneResourceTest {
 
         String visitorTwo = UUID.randomUUID().toString();
         String sessionTwo = UUID.randomUUID().toString();
+        insertRaw(site, visitorTwo, sessionTwo, "page_view", base.plusSeconds(9), "/signup", "{}");
         insertRaw(
                 site,
                 visitorTwo,
@@ -1038,6 +1041,7 @@ class ControlPlaneResourceTest {
             statement.setString(2, sessionTwo);
             statement.executeUpdate();
         }
+        factBuilder.rebuild(site, base.minusSeconds(5), base.plusSeconds(3600));
 
         var response = given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + siteId + "/analytics/forms?from=" + reportDay + "&to=" + reportDay)
@@ -1059,6 +1063,24 @@ class ControlPlaneResourceTest {
         assertEquals(0.5, ((Number) response.path("rows[0].conversionRate")).doubleValue(), 0.001);
         assertFalse(response.asString().contains("secret@example.test"));
         assertFalse(response.asString().contains("email"));
+
+        String segmentId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Multi-page form visitors\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"page_views\",\"operator\":\"at_least\",\"value\":\"2\"}]}")
+                .post("/api/v1/sites/" + siteId + "/segments")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/forms?from=" + reportDay + "&to=" + reportDay
+                        + "&segmentId=" + segmentId)
+                .then()
+                .statusCode(200)
+                .body("rows.size()", is(1))
+                .body("rows[0].starts", is(1))
+                .body("rows[0].successes", is(1));
     }
 
     @Test
@@ -1078,6 +1100,8 @@ class ControlPlaneResourceTest {
         Instant base = reportDay.atTime(10, 0).toInstant(java.time.ZoneOffset.UTC);
         String visitorOne = UUID.randomUUID().toString();
         String sessionOne = UUID.randomUUID().toString();
+        insertRaw(site, visitorOne, sessionOne, "page_view", base.minusSeconds(2), "/watch", "{}");
+        insertRaw(site, visitorOne, sessionOne, "page_view", base.minusSeconds(1), "/pricing", "{}");
         insertRaw(
                 site,
                 visitorOne,
@@ -1107,6 +1131,7 @@ class ControlPlaneResourceTest {
                 "{\"name\":\"launch-video\",\"data\":{\"mediaId\":\"launch-video\",\"mediaType\":\"video\",\"mediaDurationSeconds\":120}}");
         String visitorTwo = UUID.randomUUID().toString();
         String sessionTwo = UUID.randomUUID().toString();
+        insertRaw(site, visitorTwo, sessionTwo, "page_view", base.plusSeconds(199), "/watch", "{}");
         insertRaw(
                 site,
                 visitorTwo,
@@ -1115,6 +1140,7 @@ class ControlPlaneResourceTest {
                 base.plusSeconds(200),
                 "/watch",
                 "{\"name\":\"launch-video\",\"data\":{\"mediaId\":\"launch-video\",\"mediaType\":\"video\"}}");
+        factBuilder.rebuild(site, base.minusSeconds(5), base.plusSeconds(3600));
 
         var response = given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + siteId + "/analytics/media?from=" + reportDay + "&to=" + reportDay)
@@ -1137,6 +1163,24 @@ class ControlPlaneResourceTest {
         assertFalse(response.asString().contains("private.mp4"));
         assertFalse(response.asString().contains("secret"));
         assertFalse(response.asString().contains("Internal launch"));
+
+        String segmentId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Multi-page media visitors\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"page_views\",\"operator\":\"at_least\",\"value\":\"2\"}]}")
+                .post("/api/v1/sites/" + siteId + "/segments")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/media?from=" + reportDay + "&to=" + reportDay
+                        + "&segmentId=" + segmentId)
+                .then()
+                .statusCode(200)
+                .body("rows.size()", is(1))
+                .body("rows[0].starts", is(1))
+                .body("rows[0].completions", is(1));
     }
 
     @Test

@@ -94,6 +94,8 @@ class SiteTabShell extends ConsumerWidget {
           SiteTopTab.behaviour,
           SiteTopTab.dimensions,
           SiteTopTab.goals,
+          SiteTopTab.forms,
+          SiteTopTab.media,
         }.contains(selected) &&
         !path.endsWith('/acquisition/search-console');
     final rangeState = isAnalytics && selected != SiteTopTab.realtime

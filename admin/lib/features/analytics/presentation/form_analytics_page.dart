@@ -6,6 +6,7 @@ import '../../../core/i18n/app_i18n.dart';
 import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
 import '../application/analytics_range.dart';
+import '../application/analytics_segment.dart';
 import '../application/form_analytics.dart';
 
 class FormAnalyticsPage extends ConsumerWidget {
@@ -21,7 +22,11 @@ class FormAnalyticsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final range = ref.watch(analyticsRangeProvider(siteId));
-    final query = FormAnalyticsQuery(siteId: siteId, range: range.range);
+    final query = FormAnalyticsQuery(
+      siteId: siteId,
+      range: range.range,
+      segmentId: ref.watch(analyticsSegmentSelectionProvider(siteId)),
+    );
     final report = ref.watch(formAnalyticsProvider(query));
     return Scaffold(
       backgroundColor: const Color(0xfff3f5f8),

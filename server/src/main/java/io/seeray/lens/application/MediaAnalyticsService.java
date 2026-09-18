@@ -13,15 +13,18 @@ import javax.sql.DataSource;
 public class MediaAnalyticsService {
     private final DataSource dataSource;
     private final SiteService sites;
+    private final SegmentService segments;
 
     @Inject
-    public MediaAnalyticsService(DataSource dataSource, SiteService sites) {
+    public MediaAnalyticsService(DataSource dataSource, SiteService sites, SegmentService segments) {
         this.dataSource = dataSource;
         this.sites = sites;
+        this.segments = segments;
     }
 
-    public Report report(UUID siteId, AnalyticsQueryService.Range range) {
+    public Report report(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
         Site site = sites.site(siteId);
+        SegmentService.SessionFilter filter = segments.sessionFilter(siteId, segmentId);
         String sql =
                 """
                 with media_events as (
@@ -47,6 +50,7 @@ public class MediaAnalyticsService {
                     and coalesce(nullif(e.event_data->'data'->>'mediaId',''), nullif(e.event_data->>'name',''))
                       ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
                     and coalesce(nullif(e.event_data->'data'->>'mediaType',''),'video') in ('audio','video')
+                    and (%s)
                 ), session_media as (
                   select media_id,media_type,page_path,identity_key,session_id,
                     bool_or(event_type='media_start') started,
@@ -78,7 +82,8 @@ public class MediaAnalyticsService {
                 from rollups r left join media_lengths l on l.media_id=r.media_id and l.media_type=r.media_type
                   and l.page_path=r.page_path
                 order by r.starts desc,r.completions desc,r.media_id,r.page_path limit 100
-                """;
+                """
+                        .formatted(filter.expression());
         List<Row> rows = new ArrayList<>();
         int total = 0;
         try (Connection connection = dataSource.getConnection();
@@ -87,6 +92,8 @@ public class MediaAnalyticsService {
             statement.setString(2, site.timezone);
             statement.setObject(3, range.from());
             statement.setObject(4, range.to());
+            for (int index = 0; index < filter.values().size(); index++)
+                statement.setObject(5 + index, filter.values().get(index));
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     total = result.getInt(13);

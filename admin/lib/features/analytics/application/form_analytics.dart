@@ -4,20 +4,27 @@ import '../../auth/application/auth_controller.dart';
 import 'analytics_controller.dart';
 
 class FormAnalyticsQuery {
-  const FormAnalyticsQuery({required this.siteId, required this.range});
+  const FormAnalyticsQuery({
+    required this.siteId,
+    required this.range,
+    this.segmentId,
+  });
 
   final String siteId;
   final AnalyticsDateRange range;
+  final String? segmentId;
 
   @override
   bool operator ==(Object other) =>
       other is FormAnalyticsQuery &&
       other.siteId == siteId &&
+      other.segmentId == segmentId &&
       other.range.fromQuery == range.fromQuery &&
       other.range.toQuery == range.toQuery;
 
   @override
-  int get hashCode => Object.hash(siteId, range.fromQuery, range.toQuery);
+  int get hashCode =>
+      Object.hash(siteId, segmentId, range.fromQuery, range.toQuery);
 }
 
 class FormAnalyticsRow {
@@ -107,6 +114,7 @@ final formAnalyticsProvider =
         queryParameters: {
           'from': query.range.fromQuery,
           'to': query.range.toQuery,
+          if (query.segmentId != null) 'segmentId': query.segmentId!,
         },
       );
       final response =

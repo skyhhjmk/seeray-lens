@@ -13,15 +13,18 @@ import javax.sql.DataSource;
 public class FormAnalyticsService {
     private final DataSource dataSource;
     private final SiteService sites;
+    private final SegmentService segments;
 
     @Inject
-    public FormAnalyticsService(DataSource dataSource, SiteService sites) {
+    public FormAnalyticsService(DataSource dataSource, SiteService sites, SegmentService segments) {
         this.dataSource = dataSource;
         this.sites = sites;
+        this.segments = segments;
     }
 
-    public Report report(UUID siteId, AnalyticsQueryService.Range range) {
+    public Report report(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
         Site site = sites.site(siteId);
+        SegmentService.SessionFilter filter = segments.sessionFilter(siteId, segmentId);
         String sql =
                 """
                 with form_events as (
@@ -42,6 +45,7 @@ public class FormAnalyticsService {
                     and (e.occurred_at at time zone ?)::date between ? and ?
                     and coalesce(nullif(e.event_data->'data'->>'formId',''), nullif(e.event_data->>'name',''))
                       ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+                    and (%s)
                 ), session_forms as (
                   select form_id,page_path,identity_key,session_id,
                     bool_or(event_type='form_view') viewed,bool_or(event_type='form_start') started,
@@ -70,7 +74,8 @@ public class FormAnalyticsService {
                   r.successes,r.failures,r.abandonments,r.unique_visitors,coalesce(t.avg_field_time_ms,0),count(*) over() total_rows
                 from rollups r left join field_times t on t.form_id=r.form_id and t.page_path=r.page_path
                 order by r.starts desc,r.views desc,r.form_id,r.page_path limit 100
-                """;
+                """
+                        .formatted(filter.expression());
         List<Row> rows = new ArrayList<>();
         int total = 0;
         try (Connection connection = dataSource.getConnection();
@@ -79,6 +84,8 @@ public class FormAnalyticsService {
             statement.setString(2, site.timezone);
             statement.setObject(3, range.from());
             statement.setObject(4, range.to());
+            for (int index = 0; index < filter.values().size(); index++)
+                statement.setObject(5 + index, filter.values().get(index));
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     total = result.getInt(13);

@@ -344,15 +344,21 @@ public class AnalyticsResource {
     @GET
     @Path("/forms")
     public FormAnalyticsService.Report forms(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
-        return forms.report(site, analytics.range(site, from, to));
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return forms.report(site, analytics.range(site, from, to), segmentId);
     }
 
     @GET
     @Path("/media")
     public MediaAnalyticsService.Report media(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
-        return media.report(site, analytics.range(site, from, to));
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return media.report(site, analytics.range(site, from, to), segmentId);
     }
 
     @GET

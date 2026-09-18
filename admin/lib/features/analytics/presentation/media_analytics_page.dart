@@ -6,6 +6,7 @@ import '../../../core/i18n/app_i18n.dart';
 import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
 import '../application/analytics_range.dart';
+import '../application/analytics_segment.dart';
 import '../application/media_analytics.dart';
 
 class MediaAnalyticsPage extends ConsumerWidget {
@@ -21,7 +22,11 @@ class MediaAnalyticsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final range = ref.watch(analyticsRangeProvider(siteId));
-    final query = MediaAnalyticsQuery(siteId: siteId, range: range.range);
+    final query = MediaAnalyticsQuery(
+      siteId: siteId,
+      range: range.range,
+      segmentId: ref.watch(analyticsSegmentSelectionProvider(siteId)),
+    );
     final report = ref.watch(mediaAnalyticsProvider(query));
     return Scaffold(
       backgroundColor: const Color(0xfff3f5f8),
