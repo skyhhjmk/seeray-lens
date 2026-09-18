@@ -368,6 +368,10 @@ class _CohortReport extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
+        if (cells.isNotEmpty) ...[
+          _CohortTrendCard(cells: cells, metric: metric, periods: periods),
+          const SizedBox(height: 16),
+        ],
         if ((basis == 'goal_conversion' && selectedGoalId == null) ||
             (metric == 'goal_conversions' && selectedMetricGoalId == null))
           Card(
@@ -957,6 +961,257 @@ class _CohortPeriodLengthControlState
       ),
     ),
   );
+}
+
+class _CohortTrendCard extends StatelessWidget {
+  const _CohortTrendCard({
+    required this.cells,
+    required this.metric,
+    required this.periods,
+  });
+
+  final List<AnalyticsCohortCell> cells;
+  final String metric;
+  final int periods;
+
+  @override
+  Widget build(BuildContext context) {
+    final points = <_CohortTrendPoint>[];
+    for (var index = 0; index < periods; index++) {
+      final mature = cells
+          .where(
+            (cell) =>
+                cell.periodIndex == index &&
+                cell.complete &&
+                cell.cohortSize > 0,
+          )
+          .toList(growable: false);
+      if (mature.isEmpty) continue;
+      final visitors = mature.fold<int>(
+        0,
+        (sum, cell) => sum + cell.cohortSize,
+      );
+      final numerator = mature.fold<double>(0, (sum, cell) {
+        return sum +
+            switch (metric) {
+              'goal_conversions' => cell.goalConvertedVisitors.toDouble(),
+              'goal_value' => cell.goalValue,
+              'visits' => cell.visits.toDouble(),
+              _ => cell.retainedVisitors.toDouble(),
+            };
+      });
+      points.add(
+        _CohortTrendPoint(
+          periodIndex: index,
+          value: numerator / visitors,
+          cohorts: mature.length,
+          visitors: visitors,
+        ),
+      );
+    }
+    if (points.isEmpty) return const SizedBox.shrink();
+    final usesRate =
+        metric == 'returning_visitors' || metric == 'goal_conversions';
+    final title = switch (metric) {
+      'goal_conversions' => context.tr(
+        'Goal conversions per cohort visitor',
+        '队列访客目标转化率',
+      ),
+      'goal_value' => context.tr('Goal value per cohort visitor', '队列访客平均目标价值'),
+      'visits' => context.tr('Visits per cohort visitor', '队列访客平均访问量'),
+      _ => context.tr('Returning visitors', '回访访客率'),
+    };
+    final chartLabel = points
+        .map(
+          (point) =>
+              'P${point.periodIndex}: ${_trendValue(point.value, usesRate)}',
+        )
+        .join(', ');
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text(
+              context.tr(
+                'Weighted by cohort size; incomplete periods are excluded.',
+                '按队列人数加权；尚未完整结束的周期不参与汇总。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Semantics(
+              label: chartLabel,
+              child: SizedBox(
+                key: const ValueKey('cohort-trend-chart'),
+                height: 190,
+                width: double.infinity,
+                child: CustomPaint(
+                  painter: _CohortTrendPainter(
+                    points: points,
+                    maximum: usesRate
+                        ? 1
+                        : points.fold<double>(
+                                1,
+                                (maximum, point) => point.value > maximum
+                                    ? point.value
+                                    : maximum,
+                              ) *
+                              1.1,
+                    primary: scheme.primary,
+                    grid: scheme.outlineVariant,
+                    labelColor: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final point in points)
+                  Tooltip(
+                    message: context.tr(
+                      '${point.visitors} visitors across ${point.cohorts} cohorts',
+                      '${point.cohorts} 个队列，共 ${point.visitors} 位访客',
+                    ),
+                    child: Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        'P${point.periodIndex} · ${_trendValue(point.value, usesRate)}',
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CohortTrendPoint {
+  const _CohortTrendPoint({
+    required this.periodIndex,
+    required this.value,
+    required this.cohorts,
+    required this.visitors,
+  });
+
+  final int periodIndex;
+  final double value;
+  final int cohorts;
+  final int visitors;
+}
+
+String _trendValue(double value, bool percentage) => percentage
+    ? '${(value * 100).toStringAsFixed(1)}%'
+    : value.toStringAsFixed(2);
+
+class _CohortTrendPainter extends CustomPainter {
+  const _CohortTrendPainter({
+    required this.points,
+    required this.maximum,
+    required this.primary,
+    required this.grid,
+    required this.labelColor,
+  });
+
+  final List<_CohortTrendPoint> points;
+  final double maximum;
+  final Color primary;
+  final Color grid;
+  final Color labelColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const left = 12.0;
+    const right = 12.0;
+    const top = 12.0;
+    const bottom = 28.0;
+    final chart = Rect.fromLTRB(
+      left,
+      top,
+      size.width - right,
+      size.height - bottom,
+    );
+    final gridPaint = Paint()
+      ..color = grid
+      ..strokeWidth = 1;
+    for (var index = 0; index <= 4; index++) {
+      final y = chart.top + chart.height * index / 4;
+      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
+    }
+    if (points.isEmpty || chart.width <= 0 || chart.height <= 0) return;
+    final safeMaximum = maximum <= 0 ? 1.0 : maximum;
+    final linePaint = Paint()
+      ..color = primary
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final fillPaint = Paint()
+      ..color = primary.withValues(alpha: 0.12)
+      ..style = PaintingStyle.fill;
+    final path = Path();
+    final area = Path()..moveTo(chart.left, chart.bottom);
+    final offsets = <Offset>[];
+    for (var index = 0; index < points.length; index++) {
+      final x = points.length == 1
+          ? chart.center.dx
+          : chart.left + chart.width * index / (points.length - 1);
+      final ratio = (points[index].value / safeMaximum).clamp(0.0, 1.0);
+      final point = Offset(x, chart.bottom - chart.height * ratio);
+      offsets.add(point);
+      if (index == 0) {
+        path.moveTo(point.dx, point.dy);
+        area.lineTo(point.dx, point.dy);
+      } else {
+        path.lineTo(point.dx, point.dy);
+        area.lineTo(point.dx, point.dy);
+      }
+    }
+    area
+      ..lineTo(offsets.last.dx, chart.bottom)
+      ..close();
+    canvas.drawPath(area, fillPaint);
+    canvas.drawPath(path, linePaint);
+    for (final point in offsets) {
+      canvas.drawCircle(point, 4, Paint()..color = primary);
+    }
+    final labelIndices = <int>{0, points.length ~/ 2, points.length - 1};
+    for (final index in labelIndices) {
+      final point = points[index];
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: 'P${point.periodIndex}',
+          style: TextStyle(color: labelColor, fontSize: 11),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final x = offsets[index].dx - textPainter.width / 2;
+      textPainter.paint(
+        canvas,
+        Offset(
+          x.clamp(0.0, size.width - textPainter.width),
+          size.height - textPainter.height,
+        ),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CohortTrendPainter oldDelegate) =>
+      oldDelegate.points != points ||
+      oldDelegate.maximum != maximum ||
+      oldDelegate.primary != primary ||
+      oldDelegate.grid != grid ||
+      oldDelegate.labelColor != labelColor;
 }
 
 String _formatGoalValue(double value) =>

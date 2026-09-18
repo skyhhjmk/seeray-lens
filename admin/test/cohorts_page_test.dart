@@ -27,6 +27,14 @@ void main() {
 
     expect(find.text('Cohort analysis'), findsOneWidget);
     expect(find.text('Measure'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Weighted by cohort size; incomplete periods are excluded.'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const ValueKey('cohort-trend-chart')), findsOneWidget);
+    expect(find.text('P0 · 100.0%'), findsOneWidget);
+    expect(find.text('P1 · 60.0%'), findsOneWidget);
     expect(api.paths.last, contains('period=week'));
     expect(api.paths.last, contains('periods=8'));
 
