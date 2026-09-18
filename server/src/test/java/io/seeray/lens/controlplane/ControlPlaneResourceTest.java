@@ -2653,6 +2653,43 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void hostedPrivacyPreferencesArePublicButRequireAnActiveTrackingSite() {
+        Tokens owner = register("privacy-page" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String trackingId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Privacy page\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("trackingId");
+
+        given().get("/privacy/preferences?siteId=" + trackingId)
+                .then()
+                .statusCode(200)
+                .contentType(containsString("text/html"))
+                .header("Cache-Control", is("no-store"))
+                .header("Referrer-Policy", is("no-referrer"))
+                .header("X-Content-Type-Options", is("nosniff"))
+                .header("Content-Security-Policy", containsString("frame-ancestors *"))
+                .body(containsString("data-site-id=\"" + trackingId + "\""))
+                .body(containsString("/privacy/preferences.css"))
+                .body(containsString("/privacy/preferences.js"));
+
+        given().get("/privacy/preferences.js")
+                .then()
+                .statusCode(200)
+                .contentType(containsString("javascript"))
+                .body(containsString("privacy-consent-choice"));
+        given().get("/privacy/preferences.css").then().statusCode(200);
+        given().get("/privacy/preferences?siteId=srl_invalid").then().statusCode(400);
+        given().get("/privacy/preferences?siteId=srl_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+                .then()
+                .statusCode(404);
+    }
+
+    @Test
     void analyticsInsightsCompareEqualPeriodsAndSuppressLowVolumeNoise() throws Exception {
         Tokens owner = register("insights" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");
