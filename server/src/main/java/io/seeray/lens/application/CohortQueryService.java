@@ -43,8 +43,19 @@ public class CohortQueryService {
 
     public List<RetentionCell> report(
             UUID siteId, AnalyticsQueryService.Range range, UUID segmentId, int weeks, String basis, UUID goalId) {
-        if (weeks != 4 && weeks != 8 && weeks != 12) {
-            throw new ControlPlaneException(400, "INVALID_COHORT_WINDOW", "Cohort window must be 4, 8, or 12 weeks");
+        return report(siteId, range, segmentId, "week", weeks, basis, goalId);
+    }
+
+    public List<RetentionCell> report(
+            UUID siteId,
+            AnalyticsQueryService.Range range,
+            UUID segmentId,
+            String period,
+            int periods,
+            String basis,
+            UUID goalId) {
+        if (!validPeriodWindow(period, periods)) {
+            throw new ControlPlaneException(400, "INVALID_COHORT_WINDOW", "Cohort period or window is invalid");
         }
         if (!"first_visit".equals(basis) && !"goal_conversion".equals(basis)) {
             throw new ControlPlaneException(400, "INVALID_COHORT_BASIS", "Cohort basis is invalid");
@@ -54,6 +65,23 @@ public class CohortQueryService {
         }
         Site site = sites.site(siteId);
         SegmentService.SessionFilter filter = segments.sessionFilter(siteId, segmentId);
+        String cohortBucket = periodBucket("s.cohort_at", period);
+        String activityBucket = periodBucket("s.started_at", period);
+        String retentionIndex =
+                switch (period) {
+                    case "day" -> "(a.activity_period-c.cohort_period)::int";
+                    case "week" -> "((a.activity_period-c.cohort_period)/7)::int";
+                    case "month" -> "((extract(year from a.activity_period)-extract(year from c.cohort_period))*12+"
+                            + "extract(month from a.activity_period)-extract(month from c.cohort_period))::int";
+                    default -> throw new IllegalStateException("Validated cohort period was not supported");
+                };
+        String completionDate =
+                switch (period) {
+                    case "day" -> "s.cohort_period+a.period_index<=?::date";
+                    case "week" -> "s.cohort_period+((a.period_index+1)*7-1)<=?::date";
+                    case "month" -> "(s.cohort_period+(a.period_index+1)*interval '1 month'-interval '1 day')::date<=?::date";
+                    default -> throw new IllegalStateException("Validated cohort period was not supported");
+                };
         String cohortCandidates;
         if ("goal_conversion".equals(basis)) {
             cohortCandidates = "cohort_candidates as (select distinct s.*,v.client_visitor_id,"
@@ -77,26 +105,26 @@ public class CohortQueryService {
                 + cohortCandidates
                 + " ranked_sessions as (select e.*,row_number() over(partition by visitor_id order by cohort_at,id) first_rank "
                 + "from cohort_candidates e),"
-                + " cohort_members as (select s.visitor_id,date_trunc('week',(s.cohort_at at time zone ?)::date)::date cohort_week "
+                + " cohort_members as (select s.visitor_id," + cohortBucket + " cohort_period "
                 + "from ranked_sessions s where s.first_rank=1 and "
                 + "(s.cohort_at at time zone ?)::date between ? and ? and (" + filter.expression() + ")),"
-                + " cohort_sizes as (select cohort_week,count(distinct visitor_id)::bigint cohort_size "
-                + "from cohort_members group by cohort_week),"
-                + " activity_weeks as (select distinct s.visitor_id,date_trunc('week',(s.started_at at time zone ?)::date)::date activity_week "
+                + " cohort_sizes as (select cohort_period,count(distinct visitor_id)::bigint cohort_size "
+                + "from cohort_members group by cohort_period),"
+                + " activity_periods as (select distinct s.visitor_id," + activityBucket + " activity_period "
                 + "from eligible_sessions s where (s.started_at at time zone ?)::date<=?),"
-                + " retained as (select c.cohort_week,((a.activity_week-c.cohort_week)/7)::int week_index,"
+                + " retained as (select c.cohort_period," + retentionIndex + " period_index,"
                 + "count(distinct c.visitor_id)::bigint retained_visitors from cohort_members c "
-                + "join activity_weeks a on a.visitor_id=c.visitor_id and a.activity_week>=c.cohort_week "
-                + "group by c.cohort_week,week_index),"
-                + " ages as (select generate_series(0,?-1)::int week_index),"
-                + " cells as (select s.cohort_week,a.week_index,s.cohort_size,"
-                + "case when a.week_index=0 then s.cohort_size else coalesce(r.retained_visitors,0) end retained_visitors,"
-                + "(a.week_index=0 or s.cohort_week+((a.week_index+1)*7-1)<=?::date) complete "
+                + "join activity_periods a on a.visitor_id=c.visitor_id and a.activity_period>=c.cohort_period "
+                + "group by c.cohort_period,period_index),"
+                + " ages as (select generate_series(0,?-1)::int period_index),"
+                + " cells as (select s.cohort_period,a.period_index,s.cohort_size,"
+                + "case when a.period_index=0 then s.cohort_size else coalesce(r.retained_visitors,0) end retained_visitors,"
+                + "(a.period_index=0 or " + completionDate + ") complete "
                 + "from cohort_sizes s cross join ages a left join retained r "
-                + "on r.cohort_week=s.cohort_week and r.week_index=a.week_index) "
-                + "select cohort_week,week_index,cohort_size,retained_visitors,"
+                + "on r.cohort_period=s.cohort_period and r.period_index=a.period_index) "
+                + "select cohort_period,period_index,cohort_size,retained_visitors,"
                 + "case when cohort_size=0 then 0 else retained_visitors::double precision/cohort_size end,complete "
-                + "from cells order by cohort_week desc,week_index";
+                + "from cells order by cohort_period desc,period_index";
 
         List<RetentionCell> result = new ArrayList<>();
         try (Connection connection = dataSource.getConnection();
@@ -115,7 +143,7 @@ public class CohortQueryService {
             statement.setString(next++, site.timezone);
             statement.setString(next++, site.timezone);
             statement.setObject(next++, range.to());
-            statement.setInt(next++, weeks);
+            statement.setInt(next++, periods);
             statement.setObject(next, range.to());
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
@@ -134,9 +162,28 @@ public class CohortQueryService {
         }
     }
 
+    private static boolean validPeriodWindow(String period, int periods) {
+        if (period == null) return false;
+        return switch (period) {
+            case "day" -> periods == 7 || periods == 14 || periods == 30;
+            case "week" -> periods == 4 || periods == 8 || periods == 12;
+            case "month" -> periods == 3 || periods == 6 || periods == 12;
+            default -> false;
+        };
+    }
+
+    private static String periodBucket(String value, String period) {
+        return switch (period) {
+            case "day" -> "(" + value + " at time zone ?)::date";
+            case "week" -> "date_trunc('week',(" + value + " at time zone ?)::date)::date";
+            case "month" -> "date_trunc('month',(" + value + " at time zone ?)::date)::date";
+            default -> throw new IllegalStateException("Validated cohort period was not supported");
+        };
+    }
+
     public record RetentionCell(
-            LocalDate cohortWeek,
-            int weekIndex,
+            LocalDate cohortPeriod,
+            int periodIndex,
             long cohortSize,
             long retainedVisitors,
             double retentionRate,

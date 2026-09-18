@@ -1589,24 +1589,24 @@ class ControlPlaneResourceTest {
                 .getList(".");
 
         var weekZero = cells.stream()
-                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortWeek")))
-                .filter(cell -> Integer.valueOf(0).equals(cell.get("weekIndex")))
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
                 .findFirst()
                 .orElseThrow();
         assertEquals(2, weekZero.get("cohortSize"));
         assertEquals(2, weekZero.get("retainedVisitors"));
         assertTrue(Boolean.TRUE.equals(weekZero.get("complete")));
         var returningWeek = cells.stream()
-                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortWeek")))
-                .filter(cell -> Integer.valueOf(1).equals(cell.get("weekIndex")))
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
                 .findFirst()
                 .orElseThrow();
         assertEquals(1, returningWeek.get("retainedVisitors"));
         assertEquals(0.5d, ((Number) returningWeek.get("retentionRate")).doubleValue());
         assertTrue(Boolean.TRUE.equals(returningWeek.get("complete")));
         var immatureWeek = cells.stream()
-                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortWeek")))
-                .filter(cell -> Integer.valueOf(2).equals(cell.get("weekIndex")))
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(2).equals(cell.get("periodIndex")))
                 .findFirst()
                 .orElseThrow();
         assertEquals(0, immatureWeek.get("retainedVisitors"));
@@ -1629,7 +1629,7 @@ class ControlPlaneResourceTest {
                 .jsonPath()
                 .getList(".");
         assertEquals(4, segmented.size());
-        assertTrue(segmented.stream().allMatch(cell -> cohortWeek.toString().equals(cell.get("cohortWeek"))));
+        assertTrue(segmented.stream().allMatch(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod"))));
         assertTrue(segmented.stream().allMatch(cell -> Integer.valueOf(1).equals(cell.get("cohortSize"))));
 
         String goalId = given().header("Authorization", "Bearer " + owner.access())
@@ -1651,15 +1651,15 @@ class ControlPlaneResourceTest {
                 .getList(".");
         assertEquals(4, goalCohorts.size());
         var goalWeekZero = goalCohorts.stream()
-                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortWeek")))
-                .filter(cell -> Integer.valueOf(0).equals(cell.get("weekIndex")))
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
                 .findFirst()
                 .orElseThrow();
         assertEquals(1, goalWeekZero.get("cohortSize"));
         assertEquals(1, goalWeekZero.get("retainedVisitors"));
         var goalWeekOne = goalCohorts.stream()
-                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortWeek")))
-                .filter(cell -> Integer.valueOf(1).equals(cell.get("weekIndex")))
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
                 .findFirst()
                 .orElseThrow();
         assertEquals(0, goalWeekOne.get("retainedVisitors"));
@@ -1671,6 +1671,35 @@ class ControlPlaneResourceTest {
                 .body("size()", is(0));
         given().header("Authorization", "Bearer " + owner.access())
                 .get(reportPath + "&basis=goal_conversion")
+                .then()
+                .statusCode(400);
+
+        List<java.util.Map<String, Object>> daily = given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=day&periods=14")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var dailyReturn = daily.stream()
+                .filter(cell -> cohortWeek.plusDays(1).toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(7).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(1, dailyReturn.get("retainedVisitors"));
+        assertTrue(Boolean.TRUE.equals(dailyReturn.get("complete")));
+
+        List<java.util.Map<String, Object>> monthly = given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=month&periods=3")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        LocalDate cohortMonth = cohortWeek.plusDays(1).withDayOfMonth(1);
+        assertTrue(monthly.stream().anyMatch(cell -> cohortMonth.toString().equals(cell.get("cohortPeriod"))));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=year&periods=1")
                 .then()
                 .statusCode(400);
     }

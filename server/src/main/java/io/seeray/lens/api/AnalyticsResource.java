@@ -67,11 +67,14 @@ public class AnalyticsResource {
             @PathParam("siteId") UUID site,
             @QueryParam("from") String from,
             @QueryParam("to") String to,
-            @QueryParam("weeks") @DefaultValue("8") int weeks,
+            @QueryParam("weeks") Integer legacyWeeks,
             @QueryParam("segmentId") UUID segmentId,
             @QueryParam("basis") @DefaultValue("first_visit") String basis,
-            @QueryParam("goalId") UUID goalId) {
-        return cohorts.report(site, analytics.range(site, from, to), segmentId, weeks, basis, goalId);
+            @QueryParam("goalId") UUID goalId,
+            @QueryParam("period") @DefaultValue("week") String period,
+            @QueryParam("periods") Integer periods) {
+        int window = periods != null ? periods : legacyWeeks != null ? legacyWeeks : 8;
+        return cohorts.report(site, analytics.range(site, from, to), segmentId, period, window, basis, goalId);
     }
 
     @GET
