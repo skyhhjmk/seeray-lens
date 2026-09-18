@@ -17,11 +17,13 @@ import java.util.*;
 public class WorkspaceMemberService {
     private final WorkspaceAccess access;
     private final EntityManager entityManager;
+    private final WorkspaceAuditRecorder audit;
 
     @Inject
-    public WorkspaceMemberService(WorkspaceAccess access, EntityManager entityManager) {
+    public WorkspaceMemberService(WorkspaceAccess access, EntityManager entityManager, WorkspaceAuditRecorder audit) {
         this.access = access;
         this.entityManager = entityManager;
+        this.audit = audit;
     }
 
     public List<MemberDto> list(UUID workspaceId) {
@@ -55,6 +57,7 @@ public class WorkspaceMemberService {
         member.role = role;
         member.createdAt = Instant.now();
         member.persist();
+        audit.record(workspaceId, access.userId(), "ADD_MEMBER", "member", user.id);
         return dto(member, access.userId());
     }
 
@@ -66,6 +69,7 @@ public class WorkspaceMemberService {
             throw new ControlPlaneException(
                     409, "OWNER_TRANSFER_REQUIRED", "Transfer ownership before changing the owner role");
         target.role = assignableRole(roleValue);
+        audit.record(workspaceId, access.userId(), "CHANGE_ROLE", "member", target.user.id);
         return dto(target, access.userId());
     }
 
@@ -76,7 +80,9 @@ public class WorkspaceMemberService {
         if (target.role == WorkspaceRole.OWNER)
             throw new ControlPlaneException(
                     409, "OWNER_TRANSFER_REQUIRED", "Transfer ownership before removing the owner");
+        UUID targetId = target.user.id;
         target.delete();
+        audit.record(workspaceId, access.userId(), "REMOVE_MEMBER", "member", targetId);
     }
 
     @Transactional
@@ -89,6 +95,7 @@ public class WorkspaceMemberService {
             throw new ControlPlaneException(409, "ALREADY_OWNER", "This member already owns the workspace");
         target.role = WorkspaceRole.OWNER;
         owner.role = WorkspaceRole.ADMIN;
+        audit.record(workspaceId, access.userId(), "TRANSFER_OWNERSHIP", "member", target.user.id);
         return dto(target, access.userId());
     }
 

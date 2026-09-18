@@ -40,6 +40,7 @@ public class WorkspaceInvitationService {
 
     private final WorkspaceAccess access;
     private final EntityManager entityManager;
+    private final WorkspaceAuditRecorder audit;
 
     @Inject
     Mailer mailer;
@@ -48,9 +49,11 @@ public class WorkspaceInvitationService {
     String adminUrl;
 
     @Inject
-    public WorkspaceInvitationService(WorkspaceAccess access, EntityManager entityManager) {
+    public WorkspaceInvitationService(
+            WorkspaceAccess access, EntityManager entityManager, WorkspaceAuditRecorder audit) {
         this.access = access;
         this.entityManager = entityManager;
+        this.audit = audit;
     }
 
     public ListResponse list(UUID workspaceId) {
@@ -126,6 +129,7 @@ public class WorkspaceInvitationService {
                     "INVITATION_EMAIL_FAILED",
                     "The invitation was not saved because email delivery failed. Check server SMTP settings and retry.");
         }
+        audit.record(workspaceId, access.userId(), "CREATE_INVITATION", "invitation", invitation.id);
         return view(invitation);
     }
 
@@ -140,7 +144,10 @@ public class WorkspaceInvitationService {
             throw new ControlPlaneException(
                     409, "INVITATION_ALREADY_ACCEPTED", "Accepted invitations cannot be revoked.");
         }
-        if (invitation.revokedAt == null) invitation.revokedAt = Instant.now();
+        if (invitation.revokedAt == null) {
+            invitation.revokedAt = Instant.now();
+            audit.record(workspaceId, access.userId(), "REVOKE_INVITATION", "invitation", invitation.id);
+        }
     }
 
     public InvitationSummary preview(String rawToken) {
@@ -201,6 +208,7 @@ public class WorkspaceInvitationService {
         member.createdAt = Instant.now();
         member.persist();
         invitation.acceptedAt = Instant.now();
+        audit.record(organization.id, user.id, "ACCEPT_INVITATION", "invitation", invitation.id);
         return new AcceptResult(
                 organization.id, organization.name, member.role.name().toLowerCase(Locale.ROOT));
     }

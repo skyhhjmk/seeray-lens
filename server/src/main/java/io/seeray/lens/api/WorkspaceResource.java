@@ -2,6 +2,7 @@ package io.seeray.lens.api;
 
 import io.quarkus.security.Authenticated;
 import io.seeray.lens.application.WorkspaceAccess;
+import io.seeray.lens.application.WorkspaceAuditRecorder;
 import io.seeray.lens.domain.common.*;
 import io.seeray.lens.domain.workspace.*;
 import jakarta.transaction.Transactional;
@@ -17,9 +18,11 @@ import java.util.*;
 @Produces(MediaType.APPLICATION_JSON)
 public class WorkspaceResource {
     private final WorkspaceAccess access;
+    private final WorkspaceAuditRecorder audit;
 
-    public WorkspaceResource(WorkspaceAccess a) {
+    public WorkspaceResource(WorkspaceAccess a, WorkspaceAuditRecorder audit) {
         access = a;
+        this.audit = audit;
     }
 
     @GET
@@ -46,6 +49,7 @@ public class WorkspaceResource {
         member.role = WorkspaceRole.OWNER;
         member.createdAt = now;
         member.persist();
+        audit.record(organization.id, member.user.id, "CREATE_WORKSPACE", "workspace", organization.id);
         return Response.status(Response.Status.CREATED)
                 .entity(dto(organization, member.role))
                 .build();
@@ -67,6 +71,7 @@ public class WorkspaceResource {
             throw new ControlPlaneException(400, "INVALID_WORKSPACE", "Name is required");
         m.organization.name = r.name.trim();
         m.organization.updatedAt = Instant.now();
+        audit.record(id, access.userId(), "UPDATE_WORKSPACE", "workspace", id);
         return dto(m.organization, m.role);
     }
 

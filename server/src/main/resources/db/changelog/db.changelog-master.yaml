@@ -384,3 +384,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0055-workspace-invitations.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0056-workspace-activity-log
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0056-workspace-activity-log.sql
+            relativeToChangelogFile: false

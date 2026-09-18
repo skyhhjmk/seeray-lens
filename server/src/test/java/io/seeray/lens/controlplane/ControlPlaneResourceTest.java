@@ -518,6 +518,11 @@ class ControlPlaneResourceTest {
                 .post(publicPreview)
                 .then()
                 .statusCode(410);
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/workspaces/" + workspaceId + "/audit-log")
+                .then()
+                .statusCode(200)
+                .body("entries.action", hasItems("CREATE_INVITATION", "REVOKE_INVITATION", "ACCEPT_INVITATION"));
     }
 
     @Test
@@ -4932,6 +4937,177 @@ class ControlPlaneResourceTest {
                 .get("/api/v1/sites/" + site + "/audit-log")
                 .then()
                 .statusCode(404);
+    }
+
+    @Test
+    void workspaceActivityLogCoversAdministrativeActionsAndRespectsRoles() {
+        mailbox.clear();
+        String ownerEmail = "workspace-audit-owner" + System.nanoTime() + "@example.test";
+        String adminEmail = "workspace-audit-admin" + System.nanoTime() + "@example.test";
+        String viewerEmail = "workspace-audit-viewer" + System.nanoTime() + "@example.test";
+        String promotedEmail = "workspace-audit-promoted" + System.nanoTime() + "@example.test";
+        String removedEmail = "workspace-audit-removed" + System.nanoTime() + "@example.test";
+        Tokens owner = register(ownerEmail);
+        Tokens admin = register(adminEmail);
+        Tokens viewer = register(viewerEmail);
+        Tokens promoted = register(promotedEmail);
+        register(removedEmail);
+        Tokens outsider = register("workspace-audit-outsider" + System.nanoTime() + "@example.test");
+
+        String workspaceId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Audit workspace\"}")
+                .post("/api/v1/workspaces")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Audit workspace renamed\"}")
+                .patch("/api/v1/workspaces/" + workspaceId)
+                .then()
+                .statusCode(200);
+        String members = "/api/v1/workspaces/" + workspaceId + "/members";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + adminEmail + "\",\"role\":\"admin\"}")
+                .post(members)
+                .then()
+                .statusCode(201);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + viewerEmail + "\",\"role\":\"viewer\"}")
+                .post(members)
+                .then()
+                .statusCode(201);
+        String promotedId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + promotedEmail + "\",\"role\":\"viewer\"}")
+                .post(members)
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("userId");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"role\":\"admin\"}")
+                .patch(members + "/" + promotedId)
+                .then()
+                .statusCode(200);
+        String removedId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + removedEmail + "\",\"role\":\"viewer\"}")
+                .post(members)
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("userId");
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(members + "/" + removedId)
+                .then()
+                .statusCode(204);
+        String siteId = createSite(owner.access(), workspaceId, "Activity site");
+        String tokenId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Automation\",\"scopes\":[\"sites:read\"]}")
+                .post("/api/v1/workspaces/" + workspaceId + "/api-tokens")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("token.id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{}")
+                .post("/api/v1/workspaces/" + workspaceId + "/api-tokens/" + tokenId + "/revoke")
+                .then()
+                .statusCode(204);
+
+        String inviteEmail = "workspace-audit-invite" + System.nanoTime() + "@example.test";
+        String invitationId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + inviteEmail + "\",\"role\":\"viewer\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/invitations")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete("/api/v1/workspaces/" + workspaceId + "/invitations/" + invitationId)
+                .then()
+                .statusCode(204);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{}")
+                .post(members + "/" + promotedId + "/transfer-ownership")
+                .then()
+                .statusCode(200);
+
+        String endpoint = "/api/v1/workspaces/" + workspaceId + "/audit-log";
+        String day = LocalDate.now(ZoneId.of("UTC")).toString();
+        var firstPage = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 2)
+                .get(endpoint)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", is(2))
+                .extract();
+        String cursor = firstPage.path("nextCursor");
+        assertNotNull(cursor);
+        var allActivity = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 100)
+                .get(endpoint)
+                .then()
+                .statusCode(200)
+                .body("entries.find { it.resource == 'api-token' }.plainToken", nullValue())
+                .extract();
+        List<String> actions = allActivity.path("entries.action");
+        assertTrue(actions.containsAll(List.of(
+                "CREATE_WORKSPACE",
+                "UPDATE_WORKSPACE",
+                "CREATE_SITE",
+                "ADD_MEMBER",
+                "CHANGE_ROLE",
+                "REMOVE_MEMBER",
+                "TRANSFER_OWNERSHIP",
+                "CREATE_API_TOKEN",
+                "REVOKE_API_TOKEN",
+                "CREATE_INVITATION",
+                "REVOKE_INVITATION")));
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 2)
+                .queryParam("cursor", cursor)
+                .get(endpoint)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", greaterThan(0));
+
+        given().header("Authorization", "Bearer " + admin.access())
+                .get(endpoint)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get(endpoint)
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + promoted.access())
+                .get(endpoint)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(endpoint)
+                .then()
+                .statusCode(404);
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/audit-log")
+                .then()
+                .statusCode(200);
     }
 
     @Test

@@ -14,9 +14,11 @@ import java.util.*;
 public class ApiTokenService {
     private static final Set<String> VALID_SCOPES = Set.of("sites:read", "sites:write");
     private final WorkspaceAccess access;
+    private final WorkspaceAuditRecorder audit;
 
-    public ApiTokenService(WorkspaceAccess access) {
+    public ApiTokenService(WorkspaceAccess access, WorkspaceAuditRecorder audit) {
         this.access = access;
+        this.audit = audit;
     }
 
     @Transactional
@@ -37,6 +39,7 @@ public class ApiTokenService {
         token.createdAt = Instant.now();
         token.expiresAt = expiresAt;
         token.persist();
+        audit.record(workspaceId, access.userId(), "CREATE_API_TOKEN", "api-token", token.id);
         return new Created(token, plain);
     }
 
@@ -51,7 +54,10 @@ public class ApiTokenService {
         ApiToken t =
                 ApiToken.find("id=?1 and organization.id=?2", id, workspaceId).firstResult();
         if (t == null) throw new ControlPlaneException(404, "API_TOKEN_NOT_FOUND", "API token not found");
-        t.revokedAt = Instant.now();
+        if (t.revokedAt == null) {
+            t.revokedAt = Instant.now();
+            audit.record(workspaceId, access.userId(), "REVOKE_API_TOKEN", "api-token", t.id);
+        }
     }
 
     private static String random() {
