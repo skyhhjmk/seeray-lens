@@ -379,6 +379,8 @@ public class SegmentService {
                     case "city" -> "s.city";
                     case "bounce" -> "s.is_bounce";
                     case "page_views" -> "s.page_view_count";
+                    case "event_count" -> "s.event_count";
+                    case "visit_duration" -> "s.duration_ms";
                     default -> throw invalid();
                 };
         if (operator.equals("is_set")) return column + " is not null and " + column + " <> ''";
@@ -387,8 +389,9 @@ public class SegmentService {
             values.add(Boolean.parseBoolean(value));
             return column + (operator.equals("does_not_equal") ? " <> ?" : " = ?");
         }
-        if (field.equals("page_views")) {
-            values.add(Integer.parseInt(value));
+        if (field.equals("page_views") || field.equals("event_count") || field.equals("visit_duration")) {
+            int count = Integer.parseInt(value);
+            values.add(field.equals("visit_duration") ? count * 1000L : count);
             return column
                     + switch (operator) {
                         case "equals" -> " = ?";
@@ -451,11 +454,12 @@ public class SegmentService {
             } else if (field.equals("bounce")) {
                 requireOperator(operator, Set.of("equals", "does_not_equal"));
                 if (!Set.of("true", "false").contains(rule.value())) throw invalid();
-            } else if (field.equals("page_views")) {
+            } else if (field.equals("page_views") || field.equals("event_count") || field.equals("visit_duration")) {
                 requireOperator(operator, Set.of("equals", "greater_than", "at_least", "less_than", "at_most"));
                 try {
                     int count = Integer.parseInt(rule.value());
-                    if (count < 0 || count > 1_000_000) throw invalid();
+                    int maximum = field.equals("visit_duration") ? 86_400 : 1_000_000;
+                    if (count < 0 || count > maximum) throw invalid();
                 } catch (Exception error) {
                     throw invalid();
                 }

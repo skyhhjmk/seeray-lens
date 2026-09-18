@@ -2230,6 +2230,13 @@ class ControlPlaneResourceTest {
         assertEquals(6, count);
         Instant occurredAt = Instant.parse(now);
         factBuilder.rebuild(UUID.fromString(site), occurredAt.minusSeconds(1), occurredAt.plusSeconds(1));
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update analytics_session set duration_ms=45000 where site_id=? and client_session_id=?")) {
+            statement.setObject(1, UUID.fromString(site));
+            statement.setString(2, session);
+            assertEquals(1, statement.executeUpdate());
+        }
 
         String today = LocalDate.now(java.time.ZoneOffset.UTC).toString();
         String customDimension = "custom:" + dimensionId;
@@ -2536,7 +2543,9 @@ class ControlPlaneResourceTest {
         String segmentDraft = "{\"name\":\"Pro plan visitors\",\"description\":\"Visitors who used the pro plan\","
                 + "\"matchMode\":\"all\",\"enabled\":true,\"rules\":[{\"field\":\"custom_property\","
                 + "\"operator\":\"equals\",\"value\":\"pro\",\"dimensionKey\":\"subscription_plan\"},"
-                + "{\"field\":\"page_views\",\"operator\":\"at_least\",\"value\":\"1\"}]}";
+                + "{\"field\":\"page_views\",\"operator\":\"at_least\",\"value\":\"1\"},"
+                + "{\"field\":\"event_count\",\"operator\":\"at_least\",\"value\":\"4\"},"
+                + "{\"field\":\"visit_duration\",\"operator\":\"at_least\",\"value\":\"30\"}]}";
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body(segmentDraft)
@@ -2545,6 +2554,29 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("sessions", is(1))
                 .body("visitors", is(1));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Five events\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"event_count\",\"operator\":\"at_least\",\"value\":\"5\"}]}")
+                .post(segmentsPath + "/preview?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("sessions", is(0));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Long visits\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"visit_duration\",\"operator\":\"at_least\",\"value\":\"46\"}]}")
+                .post(segmentsPath + "/preview?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("sessions", is(0));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Too long\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"visit_duration\",\"operator\":\"at_least\",\"value\":\"86401\"}]}")
+                .post(segmentsPath + "/preview?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(400);
         String segmentId = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body(segmentDraft)
