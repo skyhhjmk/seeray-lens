@@ -286,6 +286,7 @@ public class DashboardService {
             String dimension = widget.dimension();
             String secondaryDimension = widget.secondaryDimension();
             String tertiaryDimension = widget.tertiaryDimension();
+            String quaternaryDimension = widget.quaternaryDimension();
             String locationLevel = widget.locationLevel();
             String matchMode = widget.matchMode();
             List<SegmentService.Rule> filters = widget.filters();
@@ -299,6 +300,7 @@ public class DashboardService {
                             dimension,
                             secondaryDimension,
                             tertiaryDimension,
+                            quaternaryDimension,
                             locationLevel,
                             matchMode,
                             filters,
@@ -312,6 +314,7 @@ public class DashboardService {
                             dimension,
                             secondaryDimension,
                             tertiaryDimension,
+                            quaternaryDimension,
                             locationLevel,
                             matchMode,
                             filters,
@@ -326,6 +329,7 @@ public class DashboardService {
                             chartType,
                             secondaryDimension,
                             tertiaryDimension,
+                            quaternaryDimension,
                             locationLevel,
                             matchMode,
                             filters,
@@ -341,6 +345,7 @@ public class DashboardService {
                             dimension,
                             secondaryDimension,
                             tertiaryDimension,
+                            quaternaryDimension,
                             matchMode,
                             filters,
                             formula);
@@ -365,7 +370,14 @@ public class DashboardService {
                                     || secondaryDimension == null
                                     || dimension.equalsIgnoreCase(tertiaryDimension)
                                     || secondaryDimension.equalsIgnoreCase(tertiaryDimension)))
-                        throw invalid("Choose up to three different supported dimensions for a cross-breakdown");
+                        throw invalid("Choose up to four different supported dimensions for a cross-breakdown");
+                    if (quaternaryDimension != null
+                            && (!supportedReportDimension(quaternaryDimension)
+                                    || tertiaryDimension == null
+                                    || dimension.equalsIgnoreCase(quaternaryDimension)
+                                    || secondaryDimension.equalsIgnoreCase(quaternaryDimension)
+                                    || tertiaryDimension.equalsIgnoreCase(quaternaryDimension)))
+                        throw invalid("Choose up to four different supported dimensions for a cross-breakdown");
                     if (locationLevel != null || filters != null && filters.size() > 5)
                         throw invalid("Custom report options are invalid");
                     if (filters != null && !filters.isEmpty()) {
@@ -383,6 +395,7 @@ public class DashboardService {
                         dimension,
                         secondaryDimension,
                         tertiaryDimension,
+                        quaternaryDimension,
                         locationLevel,
                         matchMode,
                         filters,
@@ -398,6 +411,7 @@ public class DashboardService {
                     dimension,
                     secondaryDimension,
                     tertiaryDimension,
+                    quaternaryDimension,
                     formula,
                     locationLevel,
                     matchMode,
@@ -527,6 +541,7 @@ public class DashboardService {
             String dimension,
             String secondaryDimension,
             String tertiaryDimension,
+            String quaternaryDimension,
             CustomReportService.Formula formula,
             String locationLevel,
             String matchMode,

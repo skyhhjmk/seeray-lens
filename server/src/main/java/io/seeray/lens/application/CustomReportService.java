@@ -65,6 +65,16 @@ public class CustomReportService {
         SegmentService.SessionFilter filter =
                 segments.sessionFilter(siteId, segmentId, request.matchMode(), request.filters());
         String metric = metricExpression(request, false);
+        if (request.quaternaryDimension() != null) {
+            List<String> dimensions = List.of(
+                    request.dimension(),
+                    request.secondaryDimension(),
+                    request.tertiaryDimension(),
+                    request.quaternaryDimension());
+            if (dimensions.stream().allMatch(DIMENSIONS::containsKey))
+                return querySessionDimensionQuadruple(siteId, site, range, filter, request, metric);
+            return queryEventDimensionQuadruple(siteId, site, range, filter, request, metric);
+        }
         if (request.tertiaryDimension() != null) {
             List<String> dimensions =
                     List.of(request.dimension(), request.secondaryDimension(), request.tertiaryDimension());
@@ -233,6 +243,155 @@ public class CustomReportService {
                             : customDimensions.get(2).name());
         } catch (SQLException error) {
             throw new IllegalStateException("Could not query three event dimensions", error);
+        }
+    }
+
+    private Result querySessionDimensionQuadruple(
+            UUID siteId,
+            Site site,
+            AnalyticsQueryService.Range range,
+            SegmentService.SessionFilter filter,
+            Query request,
+            String metric) {
+        List<String> names = List.of(
+                request.dimension(),
+                request.secondaryDimension(),
+                request.tertiaryDimension(),
+                request.quaternaryDimension());
+        List<String> expressions = names.stream()
+                .map(name -> "coalesce(nullif(btrim(" + DIMENSIONS.get(name) + "),''),'Unknown')")
+                .toList();
+        String projection = String.join(",", expressions);
+        String sql = "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.client_session_id,s.started_at,"
+                + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
+                + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
+                + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
+                + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
+                + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+                + filter.expression() + ")) select " + projection
+                + "," + metric + " metric_value from matching_sessions s group by 1,2,3,4 "
+                + "order by 5 desc,1 asc,2 asc,3 asc,4 asc limit ?";
+        List<Row> rows = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = bindSessionBase(statement, siteId, site, range, filter);
+            statement.setInt(index, request.limit() == null ? 10 : request.limit());
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next())
+                    rows.add(new Row(
+                            result.getString(1),
+                            result.getDouble(5),
+                            result.getString(2),
+                            result.getString(3),
+                            result.getString(4)));
+            }
+            return new Result(
+                    request.dimension(),
+                    request.secondaryDimension(),
+                    request.metric(),
+                    null,
+                    rows,
+                    formulaName(request),
+                    null,
+                    request.tertiaryDimension(),
+                    null,
+                    request.quaternaryDimension(),
+                    null);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not query four session dimensions", error);
+        }
+    }
+
+    private Result queryEventDimensionQuadruple(
+            UUID siteId,
+            Site site,
+            AnalyticsQueryService.Range range,
+            SegmentService.SessionFilter filter,
+            Query request,
+            String metric) {
+        List<String> names = List.of(
+                request.dimension(),
+                request.secondaryDimension(),
+                request.tertiaryDimension(),
+                request.quaternaryDimension());
+        List<DimensionDefinition> customDimensions = names.stream()
+                .map(CustomReportService::customDimensionId)
+                .map(id -> id == null ? null : enabledDimension(siteId, id))
+                .toList();
+        List<String> expressions = new ArrayList<>(names.size());
+        StringBuilder propertyJoins = new StringBuilder();
+        for (int index = 0; index < names.size(); index++) {
+            DimensionDefinition custom = customDimensions.get(index);
+            expressions.add(pairDimensionExpression(names.get(index), custom, index));
+            if (custom != null) propertyJoins.append(pairPropertyJoin(index));
+        }
+        boolean containsEventType = names.stream().anyMatch(EVENT_DIMENSIONS::contains);
+        List<String> aliases = List.of(
+                "dimension_value",
+                "secondary_dimension_value",
+                "tertiary_dimension_value",
+                "quaternary_dimension_value");
+        String eventProjection = java.util.stream.IntStream.range(0, expressions.size())
+                .mapToObj(index -> expressions.get(index) + " " + aliases.get(index))
+                .collect(java.util.stream.Collectors.joining(","));
+        String groupExpressions = String.join(",", expressions);
+        String outerProjection = "s.dimension_value,s.secondary_dimension_value,s.tertiary_dimension_value,"
+                + "s.quaternary_dimension_value";
+        String sql = customDimensionSessionsCte(filter)
+                + ", event_dimension_quadruples as (select s.id session_id,s.visitor_id,s.page_view_count,s.duration_ms,"
+                + "s.is_bounce," + eventProjection + ",count(*)::integer event_count from matching_sessions s "
+                + "join raw_event e on " + eventScope("e", "s") + propertyJoins + " where "
+                + eventBusinessDate("e") + " between ? and ?"
+                + (containsEventType ? " and e.event_type<>'web_vital'" : "")
+                + " group by s.id,s.visitor_id,s.page_view_count,s.duration_ms,s.is_bounce," + groupExpressions
+                + ") select " + outerProjection + "," + metric
+                + " metric_value from event_dimension_quadruples s group by 1,2,3,4 "
+                + "order by 5 desc,1 asc,2 asc,3 asc,4 asc limit ?";
+        List<Row> rows = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = bindSessionBase(statement, siteId, site, range, filter);
+            for (DimensionDefinition custom : customDimensions) {
+                if (custom != null) {
+                    statement.setString(index++, custom.key());
+                    statement.setString(index++, custom.key());
+                }
+            }
+            statement.setString(index++, site.timezone);
+            statement.setObject(index++, range.from());
+            statement.setObject(index++, range.to());
+            statement.setInt(index, request.limit() == null ? 10 : request.limit());
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next())
+                    rows.add(new Row(
+                            result.getString(1),
+                            result.getDouble(5),
+                            result.getString(2),
+                            result.getString(3),
+                            result.getString(4)));
+            }
+            return new Result(
+                    request.dimension(),
+                    request.secondaryDimension(),
+                    request.metric(),
+                    customDimensions.get(0) == null
+                            ? null
+                            : customDimensions.get(0).name(),
+                    rows,
+                    formulaName(request),
+                    customDimensions.get(1) == null
+                            ? null
+                            : customDimensions.get(1).name(),
+                    request.tertiaryDimension(),
+                    customDimensions.get(2) == null
+                            ? null
+                            : customDimensions.get(2).name(),
+                    request.quaternaryDimension(),
+                    customDimensions.get(3) == null
+                            ? null
+                            : customDimensions.get(3).name());
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not query four event dimensions", error);
         }
     }
 
@@ -564,7 +723,15 @@ public class CustomReportService {
                         || dimension.equalsIgnoreCase(tertiaryDimension)
                         || secondaryDimension == null
                         || secondaryDimension.equalsIgnoreCase(tertiaryDimension)))
-            throw invalid("Choose up to three different supported dimensions for a cross-breakdown");
+            throw invalid("Choose up to four different supported dimensions for a cross-breakdown");
+        String quaternaryDimension = query.quaternaryDimension();
+        if (quaternaryDimension != null
+                && (!supportedDimension(quaternaryDimension)
+                        || tertiaryDimension == null
+                        || dimension.equalsIgnoreCase(quaternaryDimension)
+                        || secondaryDimension.equalsIgnoreCase(quaternaryDimension)
+                        || tertiaryDimension.equalsIgnoreCase(quaternaryDimension)))
+            throw invalid("Choose up to four different supported dimensions for a cross-breakdown");
         if (query.limit() != null && query.limit() != 5 && query.limit() != 10 && query.limit() != 20)
             throw invalid("Choose 5, 10, or 20 report rows");
         if (query.filters() != null && query.filters().size() > 5)
@@ -637,6 +804,7 @@ public class CustomReportService {
             String dimension,
             String secondaryDimension,
             String tertiaryDimension,
+            String quaternaryDimension,
             String metric,
             Integer limit,
             String matchMode,
@@ -645,25 +813,49 @@ public class CustomReportService {
         public Query(
                 String dimension,
                 String secondaryDimension,
+                String tertiaryDimension,
                 String metric,
                 Integer limit,
                 String matchMode,
                 List<SegmentService.Rule> filters,
                 Formula formula) {
-            this(dimension, secondaryDimension, null, metric, limit, matchMode, filters, formula);
+            this(dimension, secondaryDimension, tertiaryDimension, null, metric, limit, matchMode, filters, formula);
+        }
+
+        public Query(
+                String dimension,
+                String secondaryDimension,
+                String metric,
+                Integer limit,
+                String matchMode,
+                List<SegmentService.Rule> filters,
+                Formula formula) {
+            this(dimension, secondaryDimension, null, null, metric, limit, matchMode, filters, formula);
         }
     }
 
     public record Formula(String name, String leftMetric, String operator, String rightMetric, String format) {}
 
     public record Row(
-            String dimensionValue, double metricValue, String secondaryDimensionValue, String tertiaryDimensionValue) {
+            String dimensionValue,
+            double metricValue,
+            String secondaryDimensionValue,
+            String tertiaryDimensionValue,
+            String quaternaryDimensionValue) {
+        public Row(
+                String dimensionValue,
+                double metricValue,
+                String secondaryDimensionValue,
+                String tertiaryDimensionValue) {
+            this(dimensionValue, metricValue, secondaryDimensionValue, tertiaryDimensionValue, null);
+        }
+
         public Row(String dimensionValue, double metricValue) {
-            this(dimensionValue, metricValue, null, null);
+            this(dimensionValue, metricValue, null, null, null);
         }
 
         public Row(String dimensionValue, double metricValue, String secondaryDimensionValue) {
-            this(dimensionValue, metricValue, secondaryDimensionValue, null);
+            this(dimensionValue, metricValue, secondaryDimensionValue, null, null);
         }
     }
 
@@ -676,7 +868,33 @@ public class CustomReportService {
             String formulaName,
             String secondaryCustomDimensionName,
             String tertiaryDimension,
-            String tertiaryCustomDimensionName) {
+            String tertiaryCustomDimensionName,
+            String quaternaryDimension,
+            String quaternaryCustomDimensionName) {
+        public Result(
+                String dimension,
+                String secondaryDimension,
+                String metric,
+                String customDimensionName,
+                List<Row> rows,
+                String formulaName,
+                String secondaryCustomDimensionName,
+                String tertiaryDimension,
+                String tertiaryCustomDimensionName) {
+            this(
+                    dimension,
+                    secondaryDimension,
+                    metric,
+                    customDimensionName,
+                    rows,
+                    formulaName,
+                    secondaryCustomDimensionName,
+                    tertiaryDimension,
+                    tertiaryCustomDimensionName,
+                    null,
+                    null);
+        }
+
         public Result(
                 String dimension,
                 String secondaryDimension,
@@ -694,6 +912,8 @@ public class CustomReportService {
                     formulaName,
                     secondaryCustomDimensionName,
                     null,
+                    null,
+                    null,
                     null);
         }
 
@@ -704,7 +924,18 @@ public class CustomReportService {
                 String customDimensionName,
                 List<Row> rows,
                 String formulaName) {
-            this(dimension, secondaryDimension, metric, customDimensionName, rows, formulaName, null, null, null);
+            this(
+                    dimension,
+                    secondaryDimension,
+                    metric,
+                    customDimensionName,
+                    rows,
+                    formulaName,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
         }
 
         public Result(
@@ -713,7 +944,7 @@ public class CustomReportService {
                 String metric,
                 String customDimensionName,
                 List<Row> rows) {
-            this(dimension, secondaryDimension, metric, customDimensionName, rows, null, null, null, null);
+            this(dimension, secondaryDimension, metric, customDimensionName, rows, null, null, null, null, null, null);
         }
     }
 

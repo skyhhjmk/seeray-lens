@@ -1609,6 +1609,30 @@ class ControlPlaneResourceTest {
                 .body("rows.tertiaryDimensionValue", everyItem(is("new")));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
+                .body("{\"dimension\":\"entry_page\",\"secondaryDimension\":\"exit_page\","
+                        + "\"tertiaryDimension\":\"visitor_type\",\"quaternaryDimension\":\"browser\","
+                        + "\"metric\":\"sessions\",\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("quaternaryDimension", is("browser"))
+                .body("rows.size()", is(2))
+                .body("rows.quaternaryDimensionValue", everyItem(is("Unknown")));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"dimension\":\"event_type\",\"secondaryDimension\":\"" + customDimension
+                        + "\",\"tertiaryDimension\":\"entry_page\",\"quaternaryDimension\":\"browser\","
+                        + "\"metric\":\"events\",\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("quaternaryDimension", is("browser"))
+                .body("secondaryCustomDimensionName", is("Subscription plan"))
+                .body(
+                        "rows.find { it.dimensionValue == 'product_interaction' && it.secondaryDimensionValue == 'pro' && it.tertiaryDimensionValue == '/pricing' && it.quaternaryDimensionValue == 'Unknown' }.metricValue",
+                        is(2.0f));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
                 .body("{\"dimension\":\"event_type\",\"secondaryDimension\":\"browser\","
                         + "\"tertiaryDimension\":\"event_type\",\"metric\":\"sessions\","
                         + "\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
@@ -1643,7 +1667,12 @@ class ControlPlaneResourceTest {
                         + "{\"id\":\"three\",\"type\":\"custom_report\","
                         + "\"title\":\"Three dimensions\",\"dimension\":\"event_type\","
                         + "\"secondaryDimension\":\"browser\",\"tertiaryDimension\":\"country\","
-                        + "\"metric\":\"sessions\",\"limit\":10,\"chartType\":\"table\"}]}")
+                        + "\"metric\":\"sessions\",\"limit\":10,\"chartType\":\"table\"},"
+                        + "{\"id\":\"four\",\"type\":\"custom_report\","
+                        + "\"title\":\"Four dimensions\",\"dimension\":\"event_type\","
+                        + "\"secondaryDimension\":\"browser\",\"tertiaryDimension\":\"country\","
+                        + "\"quaternaryDimension\":\"device_type\",\"metric\":\"sessions\","
+                        + "\"limit\":10,\"chartType\":\"table\"}]}")
                 .post(dashboardPath)
                 .then()
                 .statusCode(200)
@@ -1652,7 +1681,8 @@ class ControlPlaneResourceTest {
                 .body("widgets[2].dimension", is("event_type"))
                 .body("widgets[3].secondaryDimension", is("exit_page"))
                 .body("widgets[4].secondaryDimension", is(customDimension))
-                .body("widgets[5].tertiaryDimension", is("country"));
+                .body("widgets[5].tertiaryDimension", is("country"))
+                .body("widgets[6].quaternaryDimension", is("device_type"));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Duplicate pivot\",\"widgets\":[{\"id\":\"bad\","
