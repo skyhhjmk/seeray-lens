@@ -12,6 +12,7 @@ import '../application/form_analytics.dart';
 import '../application/media_analytics.dart';
 import '../application/crash_analytics.dart';
 import '../application/realtime_controller.dart';
+import '../application/search_console.dart';
 import 'segment_filter_selector.dart';
 
 class SiteTabShell extends ConsumerWidget {
@@ -76,19 +77,21 @@ class SiteTabShell extends ConsumerWidget {
         selected != SiteTopTab.auditLog &&
         selected != SiteTopTab.scheduledReports &&
         selected != SiteTopTab.alerts;
-    final supportsSegmentFilter = {
-      SiteTopTab.dashboard,
-      SiteTopTab.visitors,
-      SiteTopTab.visitorInterest,
-      SiteTopTab.visitTime,
-      SiteTopTab.cohorts,
-      SiteTopTab.technology,
-      SiteTopTab.locations,
-      SiteTopTab.acquisition,
-      SiteTopTab.behaviour,
-      SiteTopTab.dimensions,
-      SiteTopTab.goals,
-    }.contains(selected);
+    final supportsSegmentFilter =
+        {
+          SiteTopTab.dashboard,
+          SiteTopTab.visitors,
+          SiteTopTab.visitorInterest,
+          SiteTopTab.visitTime,
+          SiteTopTab.cohorts,
+          SiteTopTab.technology,
+          SiteTopTab.locations,
+          SiteTopTab.acquisition,
+          SiteTopTab.behaviour,
+          SiteTopTab.dimensions,
+          SiteTopTab.goals,
+        }.contains(selected) &&
+        !path.endsWith('/acquisition/search-console');
     final rangeState = isAnalytics && selected != SiteTopTab.realtime
         ? ref.watch(analyticsRangeProvider(siteId))
         : null;
@@ -113,6 +116,11 @@ class SiteTabShell extends ConsumerWidget {
             : null,
         onRefresh: isAnalytics && selected != SiteTopTab.dimensions
             ? () {
+                if (path.endsWith('/acquisition/search-console')) {
+                  ref.invalidate(searchConsolePropertyProvider(siteId));
+                  ref.invalidate(searchConsoleReportProvider);
+                  return;
+                }
                 ref.invalidate(analyticsDashboardRangeProvider);
                 ref.invalidate(analyticsDashboardProvider);
                 ref.invalidate(analyticsTechnologyProvider);
@@ -141,7 +149,13 @@ class SiteTabShell extends ConsumerWidget {
     String siteId,
     AnalyticsRangeState current,
   ) async {
-    final selected = await showAnalyticsRangePicker(context, current);
+    final selected = await showAnalyticsRangePicker(
+      context,
+      current,
+      maximumRangeDays: state.uri.path.endsWith('/acquisition/search-console')
+          ? 367
+          : null,
+    );
     if (selected == null) return;
     ref.read(analyticsRangeProvider(siteId).notifier).setRange(selected);
   }

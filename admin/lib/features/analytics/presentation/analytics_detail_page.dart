@@ -1790,6 +1790,12 @@ class _Body extends StatelessWidget {
                     icon: const Icon(Icons.offline_bolt_outlined),
                     label: Text(context.tr('Offline conversions', '线下转化')),
                   ),
+                  FilledButton.tonalIcon(
+                    onPressed: () =>
+                        context.go('/sites/$siteId/acquisition/search-console'),
+                    icon: const Icon(Icons.travel_explore),
+                    label: Text(context.tr('Search Console', '搜索表现')),
+                  ),
                 ],
               ),
             ],
