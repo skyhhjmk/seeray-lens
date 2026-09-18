@@ -164,7 +164,34 @@ export class Tracker {
     // Install collection listeners only after the policy permits measurement.
     globalThis.addEventListener?.('pagehide', () => { void this.flush(true); void this.flushHeatmap(true); this.stopRecorder(); }); globalThis.addEventListener?.('visibilitychange', () => { if (globalThis.document?.visibilityState === 'hidden') { void this.flush(true); void this.flushHeatmap(true); } else this.refreshHeatmapLayout(); });
     this.activateCollectionListeners();
+    this.installPrivacyPreferencesBridge();
     this.readyPromise = this.loadConfigured();
+  }
+  private installPrivacyPreferencesBridge(): void {
+    globalThis.addEventListener?.('message', (event: MessageEvent) => {
+      const apiOrigin = resolveApiOrigin(this.endpoint);
+      if (!apiOrigin || event.origin !== apiOrigin || !isProperties(event.data)) return;
+      const message = event.data;
+      if (message.source !== 'seeray-privacy' || message.siteId !== this.options.siteId) return;
+      const frame = [...(globalThis.document?.querySelectorAll<HTMLIFrameElement>('iframe[data-seeray-privacy]') ?? [])]
+        .find(candidate => candidate.contentWindow === event.source);
+      if (!frame) return;
+      let frameUrl: URL;
+      try { frameUrl = new URL(frame.src, globalThis.document?.baseURI ?? globalThis.location?.href); } catch { return; }
+      if (frameUrl.origin !== apiOrigin || frameUrl.pathname !== '/privacy/preferences' || frameUrl.searchParams.get('siteId') !== this.options.siteId) return;
+      const reply = (): void => frame.contentWindow?.postMessage({
+        source: 'seeray-tracker',
+        type: 'privacy-state',
+        siteId: this.options.siteId,
+        state: this.getConsentState(),
+      }, apiOrigin);
+      if (message.type === 'privacy-state-request') {
+        reply();
+      } else if (message.type === 'privacy-consent-choice' && typeof message.granted === 'boolean') {
+        this.setConsent(message.granted);
+        reply();
+      }
+    });
   }
   getConsentState(): 'granted' | 'denied' | 'unknown' {
     if (this.consentOverride) return this.consentOverride;

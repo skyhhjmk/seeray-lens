@@ -157,6 +157,63 @@ describe('tracker package', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts privacy choices only from the matching hosted preferences frame', () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', storageStub(storage));
+    vi.stubGlobal('sessionStorage', storageStub(new Map<string, string>()));
+    const frameWindow = { postMessage: vi.fn() };
+    const frame = {
+      src: 'https://lens.example.test/privacy/preferences?siteId=srl_privacy_bridge',
+      contentWindow: frameWindow,
+    };
+    const listeners = new Map<string, EventListener>();
+    vi.stubGlobal('document', {
+      baseURI: 'https://shop.example.test/',
+      querySelectorAll: vi.fn(() => [frame]),
+    });
+    vi.stubGlobal('location', { href: 'https://shop.example.test/pricing' });
+    vi.stubGlobal('addEventListener', (type: string, listener: EventListener) => {
+      listeners.set(type, listener);
+    });
+    const tracker = new Tracker({
+      siteId: 'srl_privacy_bridge',
+      apiOrigin: 'https://lens.example.test',
+      requireConsent: true,
+    });
+    const dispatch = (origin: string, data: Record<string, unknown>, source = frameWindow) => {
+      listeners.get('message')?.({ origin, data, source } as MessageEvent);
+    };
+
+    dispatch('https://attacker.example.test', {
+      source: 'seeray-privacy',
+      type: 'privacy-consent-choice',
+      siteId: 'srl_privacy_bridge',
+      granted: true,
+    });
+    expect(tracker.getConsentState()).toBe('unknown');
+
+    dispatch('https://lens.example.test', {
+      source: 'seeray-privacy',
+      type: 'privacy-state-request',
+      siteId: 'srl_privacy_bridge',
+    });
+    expect(frameWindow.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'seeray-tracker', state: 'unknown' }),
+      'https://lens.example.test',
+    );
+
+    dispatch('https://lens.example.test', {
+      source: 'seeray-privacy',
+      type: 'privacy-consent-choice',
+      siteId: 'srl_privacy_bridge',
+      granted: false,
+    });
+    expect(tracker.getConsentState()).toBe('denied');
+    expect(storage.get('seeray:srl_privacy_bridge:consent')).toBe('denied');
+    expect(storage.has('seeray:srl_privacy_bridge:visitor_id')).toBe(false);
+  });
+
   it('exposes per-site consent state and updates one tracker through the facade', () => {
     vi.stubGlobal('navigator', { doNotTrack: '0' });
     vi.stubGlobal('localStorage', storageStub(new Map<string, string>()));
