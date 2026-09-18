@@ -8,6 +8,10 @@ void main() {
   testWidgets('workspace owners and admins can discover the member directory', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -25,6 +29,7 @@ void main() {
     expect(find.text('Viewer'), findsOneWidget);
     expect(find.byTooltip('Manage members'), findsOneWidget);
     expect(find.byTooltip('View members'), findsOneWidget);
+    expect(find.byTooltip('Workspace activity'), findsNWidgets(2));
   });
 }
 

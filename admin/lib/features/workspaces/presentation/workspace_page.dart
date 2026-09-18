@@ -64,6 +64,15 @@ class WorkspacePage extends ConsumerWidget {
                       if (workspace.role == 'owner' ||
                           workspace.role == 'admin')
                         IconButton(
+                          tooltip: context.tr('Workspace activity', '工作区活动记录'),
+                          onPressed: () => context.go(
+                            '/workspaces/${workspace.id}/activity',
+                          ),
+                          icon: const Icon(Icons.history),
+                        ),
+                      if (workspace.role == 'owner' ||
+                          workspace.role == 'admin')
+                        IconButton(
                           tooltip: context.tr(
                             workspace.role == 'owner'
                                 ? 'Manage members'
