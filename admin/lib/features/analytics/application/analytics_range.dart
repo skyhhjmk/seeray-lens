@@ -101,8 +101,8 @@ Future<AnalyticsRangeState?> showAnalyticsRangePicker(
         SnackBar(
           content: Text(
             context.tr(
-              'Cohort reports support ranges up to $maximumRangeDays days.',
-              '队列报告最多支持 $maximumRangeDays 天的日期范围。',
+              'This report supports ranges up to $maximumRangeDays days.',
+              '此报表最多支持 $maximumRangeDays 天的日期范围。',
             ),
           ),
         ),

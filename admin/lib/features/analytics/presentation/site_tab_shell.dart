@@ -14,6 +14,7 @@ import '../application/media_analytics.dart';
 import '../application/crash_analytics.dart';
 import '../application/realtime_controller.dart';
 import '../application/search_console.dart';
+import '../application/bing_webmaster.dart';
 import 'segment_filter_selector.dart';
 
 class SiteTabShell extends ConsumerWidget {
@@ -97,7 +98,8 @@ class SiteTabShell extends ConsumerWidget {
           SiteTopTab.forms,
           SiteTopTab.media,
         }.contains(selected) &&
-        !path.endsWith('/acquisition/search-console');
+        !path.endsWith('/acquisition/search-console') &&
+        !path.endsWith('/acquisition/bing-webmaster');
     final rangeState = isAnalytics && selected != SiteTopTab.realtime
         ? ref.watch(analyticsRangeProvider(siteId))
         : null;
@@ -125,6 +127,11 @@ class SiteTabShell extends ConsumerWidget {
                 if (path.endsWith('/acquisition/search-console')) {
                   ref.invalidate(searchConsolePropertyProvider(siteId));
                   ref.invalidate(searchConsoleReportProvider);
+                  return;
+                }
+                if (path.endsWith('/acquisition/bing-webmaster')) {
+                  ref.invalidate(bingWebmasterPropertyProvider(siteId));
+                  ref.invalidate(bingWebmasterReportProvider);
                   return;
                 }
                 ref.invalidate(analyticsDashboardRangeProvider);
@@ -161,6 +168,8 @@ class SiteTabShell extends ConsumerWidget {
       current,
       maximumRangeDays: state.uri.path.endsWith('/acquisition/search-console')
           ? 367
+          : state.uri.path.endsWith('/acquisition/bing-webmaster')
+          ? 184
           : null,
     );
     if (selected == null) return;

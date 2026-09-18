@@ -1796,6 +1796,12 @@ class _Body extends StatelessWidget {
                     icon: const Icon(Icons.travel_explore),
                     label: Text(context.tr('Search Console', '搜索表现')),
                   ),
+                  FilledButton.tonalIcon(
+                    onPressed: () =>
+                        context.go('/sites/$siteId/acquisition/bing-webmaster'),
+                    icon: const Icon(Icons.search),
+                    label: Text(context.tr('Bing Webmaster', 'Bing 站长工具')),
+                  ),
                 ],
               ),
             ],
