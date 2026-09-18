@@ -55,7 +55,14 @@ public class ExperimentResource {
     }
 
     public static class Request {
-        public boolean enabled = true;
+        public Boolean enabled;
+
+        @Pattern(regexp = "draft|running|paused|completed|archived")
+        public String status;
+
+        @Size(max = 64)
+        @Pattern(regexp = "[A-Za-z0-9][A-Za-z0-9_-]*")
+        public String allocationGroup;
 
         @NotBlank
         @Size(max = 256)
@@ -69,7 +76,13 @@ public class ExperimentResource {
         public TargetingRequest targeting;
 
         ExperimentService.Update update() {
-            return new ExperimentService.Update(enabled, name, variants, targeting == null ? null : targeting.update());
+            return new ExperimentService.Update(
+                    enabled,
+                    status,
+                    allocationGroup,
+                    name,
+                    variants,
+                    targeting == null ? null : targeting.update());
         }
     }
 

@@ -237,3 +237,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0034-experiment-targeting.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0035-experiment-lifecycle-allocation-groups
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0035-experiment-lifecycle-allocation-groups.sql
+            relativeToChangelogFile: false

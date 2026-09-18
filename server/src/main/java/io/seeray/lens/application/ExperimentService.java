@@ -12,6 +12,7 @@ import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.sql.*;
 import java.time.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import javax.sql.DataSource;
 
@@ -20,6 +21,7 @@ public class ExperimentService {
     private static final TypeReference<List<String>> VARIANTS = new TypeReference<>() {};
     private static final Set<String> DEVICE_TYPES = Set.of("desktop", "mobile", "tablet", "other");
     private static final Set<Integer> SEGMENT_LOOKBACK_DAYS = Set.of(7, 30, 90);
+    private static final Set<String> LIFECYCLE_STATUSES = Set.of("draft", "running", "paused", "completed", "archived");
     private static final Targeting DEFAULT_TARGETING = new Targeting(List.of(), List.of(), null, 30);
     private final SiteService sites;
     private final WorkspaceAccess access;
@@ -51,8 +53,9 @@ public class ExperimentService {
     public List<PublicView> publicDefinitions(String trackingId, String clientVisitorId) {
         Map<UUID, Boolean> segmentEligibility = new HashMap<>();
         List<PublicView> result = new ArrayList<>();
+        Map<String, List<PublicView>> exclusiveGroups = new TreeMap<>();
         for (ExperimentDefinition experiment : ExperimentDefinition.<ExperimentDefinition>list(
-                "site.trackingId = ?1 and enabled order by name", trackingId)) {
+                "site.trackingId = ?1 and lifecycleStatus = 'running' order by name", trackingId)) {
             Targeting targeting = readTargeting(experiment.targetingJson);
             if (targeting.segmentId() != null) {
                 if (clientVisitorId == null) continue;
@@ -62,11 +65,26 @@ public class ExperimentService {
                                 experiment.site.id, segmentId, clientVisitorId, targeting.segmentLookbackDays()));
                 if (!matches) continue;
             }
-            result.add(new PublicView(
+            PublicView view = new PublicView(
                     experiment.name,
                     read(experiment.variantsJson),
-                    new PublicTargeting(targeting.pathPrefixes(), targeting.deviceTypes())));
+                    new PublicTargeting(targeting.pathPrefixes(), targeting.deviceTypes()));
+            if (experiment.allocationGroup == null) {
+                result.add(view);
+            } else {
+                // Build eligible candidates first, then choose a stable single member of each layer.
+                // The visitor identifier is already site-scoped and is never persisted by this endpoint.
+                exclusiveGroups.computeIfAbsent(experiment.allocationGroup, ignored -> new ArrayList<>())
+                        .add(view);
+            }
         }
+        for (Map.Entry<String, List<PublicView>> entry : exclusiveGroups.entrySet()) {
+            List<PublicView> candidates = entry.getValue();
+            int bucket = stableBucket(trackingId + "\u0000" + Objects.toString(clientVisitorId, "")
+                    + "\u0000" + entry.getKey(), candidates.size());
+            result.add(candidates.get(bucket));
+        }
+        result.sort(Comparator.comparing(PublicView::name));
         return List.copyOf(result);
     }
 
@@ -76,6 +94,8 @@ public class ExperimentService {
         validate(u);
         Targeting targeting = normalizeTargeting(u.targeting());
         validateSegmentTarget(siteId, targeting);
+        String status = normalizeStatus(u.status(), u.enabled(), "running");
+        String allocationGroup = normalizeAllocationGroup(u.allocationGroup());
         if (ExperimentDefinition.count(
                         "site.id = ?1 and name = ?2", siteId, u.name().trim())
                 > 0) throw new ControlPlaneException(409, "EXPERIMENT_NAME_EXISTS", "Experiment already exists");
@@ -83,7 +103,9 @@ public class ExperimentService {
         e.id = UuidV7.next();
         e.site = s;
         e.name = u.name().trim();
-        e.enabled = u.enabled();
+        e.lifecycleStatus = status;
+        e.enabled = "running".equals(status);
+        e.allocationGroup = allocationGroup;
         e.variantsJson = write(u.variants());
         e.targetingJson = writeTargeting(targeting);
         e.createdAt = e.updatedAt = Instant.now();
@@ -99,10 +121,37 @@ public class ExperimentService {
         Targeting targeting =
                 u.targeting() == null ? readTargeting(e.targetingJson) : normalizeTargeting(u.targeting());
         if (u.targeting() != null) validateSegmentTarget(siteId, targeting);
-        e.name = u.name().trim();
-        e.enabled = u.enabled();
-        e.variantsJson = write(u.variants());
-        e.targetingJson = writeTargeting(targeting);
+        String status = normalizeStatus(u.status(), u.enabled(), e.lifecycleStatus);
+        if (!canTransition(e.lifecycleStatus, status)) {
+            throw new ControlPlaneException(
+                    409,
+                    "INVALID_EXPERIMENT_TRANSITION",
+                    "Allowed experiment transitions are draft to running/archive, running to pause/complete, paused to running/complete/archive, and completed to archive");
+        }
+        String name = u.name().trim();
+        String allocationGroup = normalizeAllocationGroup(u.allocationGroup());
+        boolean configurationChanged = !e.name.equals(name)
+                || !read(e.variantsJson).equals(u.variants())
+                || !readTargeting(e.targetingJson).equals(targeting)
+                || !Objects.equals(e.allocationGroup, allocationGroup);
+        if (configurationChanged && hasExposureEvents(siteId, e.name)) {
+            throw new ControlPlaneException(
+                    409,
+                    "EXPERIMENT_CONFIGURATION_LOCKED",
+                    "Experiment setup is locked after the first exposure so historical reports remain comparable; create a new experiment for changed variants or targeting");
+        }
+        if (!e.name.equals(name)
+                && ExperimentDefinition.count("site.id = ?1 and name = ?2 and id <> ?3", siteId, name, id) > 0) {
+            throw new ControlPlaneException(409, "EXPERIMENT_NAME_EXISTS", "Experiment already exists");
+        }
+        e.name = name;
+        e.lifecycleStatus = status;
+        e.enabled = "running".equals(status);
+        e.allocationGroup = allocationGroup;
+        if (configurationChanged) {
+            e.variantsJson = write(u.variants());
+            e.targetingJson = writeTargeting(targeting);
+        }
         e.updatedAt = Instant.now();
         return view(e);
     }
@@ -110,7 +159,12 @@ public class ExperimentService {
     @Transactional
     public void delete(UUID siteId, UUID id) {
         writable(siteId);
-        experiment(siteId, id).delete();
+        ExperimentDefinition experiment = experiment(siteId, id);
+        if (!"archived".equals(experiment.lifecycleStatus)) {
+            throw new ControlPlaneException(
+                    409, "ARCHIVE_EXPERIMENT_BEFORE_DELETE", "Archive the experiment before deleting its definition");
+        }
+        experiment.delete();
     }
 
     public Report report(UUID siteId, UUID id, AnalyticsQueryService.Range range) {
@@ -225,7 +279,73 @@ public class ExperimentService {
     }
 
     private View view(ExperimentDefinition e) {
-        return new View(e.id, e.name, e.enabled, read(e.variantsJson), readTargeting(e.targetingJson));
+        return new View(
+                e.id,
+                e.name,
+                e.enabled,
+                e.lifecycleStatus,
+                e.allocationGroup,
+                hasExposureEvents(e.site.id, e.name),
+                read(e.variantsJson),
+                readTargeting(e.targetingJson));
+    }
+
+    private boolean hasExposureEvents(UUID siteId, String name) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select exists(select 1 from raw_event where site_id=? and event_type='experiment_exposure' and event_data->>'action'=?)")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, name);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() && result.getBoolean(1);
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not check experiment exposure history", error);
+        }
+    }
+
+    private static boolean canTransition(String current, String next) {
+        if (Objects.equals(current, next)) return true;
+        return switch (current) {
+            case "draft" -> Set.of("running", "archived").contains(next);
+            case "running" -> Set.of("paused", "completed").contains(next);
+            case "paused" -> Set.of("running", "completed", "archived").contains(next);
+            case "completed" -> "archived".equals(next);
+            case "archived" -> false;
+            default -> false;
+        };
+    }
+
+    private static String normalizeStatus(String status, Boolean enabled, String fallback) {
+        String normalized = status == null
+                ? enabled == null ? fallback : enabled ? "running" : "paused"
+                : status.trim().toLowerCase(Locale.ROOT);
+        if (!LIFECYCLE_STATUSES.contains(normalized)) {
+            throw new ControlPlaneException(
+                    400, "INVALID_EXPERIMENT_STATUS", "Experiment status must be draft, running, paused, completed, or archived");
+        }
+        return normalized;
+    }
+
+    private static String normalizeAllocationGroup(String allocationGroup) {
+        if (allocationGroup == null || allocationGroup.isBlank()) return null;
+        String normalized = allocationGroup.trim().toLowerCase(Locale.ROOT);
+        if (normalized.length() > 64 || !normalized.matches("[a-z0-9][a-z0-9_-]*")) {
+            throw new ControlPlaneException(
+                    400,
+                    "INVALID_EXPERIMENT_ALLOCATION_GROUP",
+                    "Mutual-exclusion layer names must start with a letter or digit and contain only letters, digits, hyphens, or underscores");
+        }
+        return normalized;
+    }
+
+    private static int stableBucket(String input, int size) {
+        long hash = 0xcbf29ce484222325L;
+        for (byte value : input.getBytes(StandardCharsets.UTF_8)) {
+            hash ^= value & 0xff;
+            hash *= 0x100000001b3L;
+        }
+        return (int) Math.floorMod(hash, size);
     }
 
     private Site readable(UUID id) {
@@ -379,14 +499,28 @@ public class ExperimentService {
         return probability;
     }
 
-    public record Update(boolean enabled, String name, List<String> variants, Targeting targeting) {}
+    public record Update(
+            Boolean enabled,
+            String status,
+            String allocationGroup,
+            String name,
+            List<String> variants,
+            Targeting targeting) {}
 
     public record Targeting(
             List<String> pathPrefixes, List<String> deviceTypes, UUID segmentId, int segmentLookbackDays) {}
 
     public record PublicTargeting(List<String> pathPrefixes, List<String> deviceTypes) {}
 
-    public record View(UUID id, String name, boolean enabled, List<String> variants, Targeting targeting) {}
+    public record View(
+            UUID id,
+            String name,
+            boolean enabled,
+            String status,
+            String allocationGroup,
+            boolean configurationLocked,
+            List<String> variants,
+            Targeting targeting) {}
 
     public record PublicView(String name, List<String> variants, PublicTargeting targeting) {}
 

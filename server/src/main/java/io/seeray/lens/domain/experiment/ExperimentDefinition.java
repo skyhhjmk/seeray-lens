@@ -24,6 +24,12 @@ public class ExperimentDefinition extends PanacheEntityBase {
     @Column(nullable = false)
     public boolean enabled;
 
+    @Column(name = "lifecycle_status", nullable = false, length = 16)
+    public String lifecycleStatus;
+
+    @Column(name = "allocation_group", length = 64)
+    public String allocationGroup;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "variants_json", nullable = false, columnDefinition = "jsonb")
     public String variantsJson;
