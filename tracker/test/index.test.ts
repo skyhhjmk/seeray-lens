@@ -523,6 +523,72 @@ describe('tracker package', () => {
     expect(JSON.stringify(events)).not.toContain('secret');
   });
 
+  it('captures only opt-in consent-gated script errors with privacy-scrubbed details', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    vi.stubGlobal('localStorage', storageStub(new Map<string, string>()));
+    vi.stubGlobal('sessionStorage', storageStub(new Map<string, string>()));
+    vi.stubGlobal('location', {
+      origin: 'https://app.example.test',
+      href: 'https://app.example.test/accounts/12345?token=page-secret',
+      pathname: '/accounts/12345/private@example.test',
+    });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const listeners = new Map<string, EventListener>();
+    vi.stubGlobal('addEventListener', (type: string, listener: EventListener) => listeners.set(type, listener));
+
+    new Tracker({ siteId: 'srl_errors_default_off' });
+    expect(listeners.has('error')).toBe(false);
+    expect(listeners.has('unhandledrejection')).toBe(false);
+
+    const tracker = new Tracker({ siteId: 'srl_errors', trackErrors: true, requireConsent: true, trackDownloads: false, trackOutlinks: false });
+    expect(listeners.has('error')).toBe(false);
+    tracker.setConsent(true);
+    const errorListener = listeners.get('error');
+    const rejectionListener = listeners.get('unhandledrejection');
+    expect(errorListener).toBeDefined();
+    expect(rejectionListener).toBeDefined();
+    errorListener?.({
+      target: globalThis,
+      error: new TypeError('Request https://api.example.test/users?token=secret failed for alice@example.test, account 12345'),
+      message: 'ignored fallback',
+      filename: 'https://app.example.test/assets/app.js?token=source-secret',
+      lineno: 18,
+      colno: 7,
+    } as unknown as Event);
+    errorListener?.({ target: {}, message: 'image resource failure' } as unknown as Event);
+    rejectionListener?.({ reason: new Error('Promise rejected for bob@example.test with secret-value-012345678901234567890123456789') } as PromiseRejectionEvent);
+    await tracker.flush();
+
+    const events = JSON.parse(fetch.mock.calls[0][1].body as string).events;
+    expect(events).toHaveLength(2);
+    expect(events.map((event: { type: string }) => event.type)).toEqual(['client_error', 'client_error']);
+    expect(events[0]).toMatchObject({
+      category: 'error',
+      action: 'javascript',
+      name: 'TypeError',
+      title: '',
+      referrer: '',
+      url: 'https://app.example.test/accounts/<id>/<email>',
+      properties: {
+        errorName: 'TypeError',
+        sourcePath: '/assets/app.js',
+        line: 18,
+        column: 7,
+      },
+    });
+    expect(events[0].properties.message).toContain('<url>');
+    expect(events[0].properties.message).toContain('<email>');
+    expect(events[0].visitorId).toBeUndefined();
+    expect(events[0].sessionId).toBeUndefined();
+    expect(JSON.stringify(events)).not.toContain('page-secret');
+    expect(JSON.stringify(events)).not.toContain('source-secret');
+    expect(JSON.stringify(events)).not.toContain('alice@example.test');
+    expect(JSON.stringify(events)).not.toContain('bob@example.test');
+    expect(JSON.stringify(events)).not.toContain('secret-value-012345678901234567890123456789');
+    expect(JSON.stringify(events)).not.toContain('stack');
+  });
+
   it('collects normalized technology context without transmitting the raw user agent', async () => {
     vi.stubGlobal('navigator', {
       doNotTrack: '0',

@@ -6,12 +6,12 @@ export interface HeatmapOptions { enabled?: boolean; sampleRate?: number; naviga
 export interface PageReadyOptions { url?: string; layoutVersion?: string; }
 export interface ScrollContainerOptions { id: string; element: HTMLElement; }
 export interface TagManagerPreviewOptions { sessionId: string; token: string; }
-export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
-export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; }
+export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; trackErrors?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
+export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; anonymous?: boolean; }
 export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
 export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
 interface ClientContext { browser: string; browserVersion?: string; operatingSystem: string; operatingSystemVersion?: string; deviceType: string; language?: string; screenWidth?: number; screenHeight?: number; viewportWidth?: number; viewportHeight?: number; pixelRatio?: number; }
-interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId: string; sessionId: string; context: ClientContext; }
+interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId?: string; sessionId?: string; context: ClientContext; }
 interface HeatmapConfig { enabled: boolean; sampleRate: number; version?: number; autoSnapshotEnabled: boolean; recordingEnabled: boolean; recordingSampleRate: number; }
 interface TagDefinition { type?: unknown; trigger?: unknown; triggers?: unknown; eventType?: unknown; category?: unknown; action?: unknown; name?: unknown; code?: unknown; properties?: unknown; }
 interface TagPreviewEvent { tagIndex: number; triggerEvent: string; outcome: 'fired' | 'no_match' | 'blocked'; pagePath: string; }
@@ -41,6 +41,30 @@ const boundedText = (value: unknown, max: number): string | undefined => typeof 
 const contentTarget = (value: unknown): string | undefined => {
   const target = boundedText(value, 2048);
   return target?.split(/[?#]/, 1)[0].trim() || undefined;
+};
+const crashText = (value: unknown, max: number): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const safe = stripControls(value)
+    .replace(/https?:\/\/\S+/gi, '<url>')
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '<email>')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '<id>')
+    .replace(/\b(?:[A-Za-z0-9_-]{32,}|\d{4,})\b/g, '<value>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+  return safe || undefined;
+};
+const crashPath = (value: string | undefined): string => {
+  let path = (value?.split(/[?#]/, 1)[0] || '/').replace(/\\/g, '/');
+  try {
+    if (/^https?:\/\//i.test(path)) path = new URL(path).pathname;
+  } catch { path = '/'; }
+  return path
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '<email>')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '<id>')
+    .replace(/(^|\/)\d{4,}(?=\/|$)/g, '$1<id>')
+    .replace(/(^|\/)[A-Za-z0-9_-]{32,}(?=\/|$)/g, '$1<id>')
+    .slice(0, 1024) || '/';
 };
 const isProperties = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const absoluteApiUrl = (path: string, base?: string): string => {
@@ -110,7 +134,7 @@ export class Tracker {
   private readonly tagManagerPreviewToken?: string;
   private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false;
   private heatmapConfig: HeatmapConfig | undefined; private heatmapQueue: HeatmapEvent[] = []; private heatmapTimer: ReturnType<typeof setTimeout> | undefined; private heatmapInstance: string | undefined; private heatmapUrl = ''; private heatmapLayoutVersion = 'unversioned'; private heatmapSelected = false; private heatmapNavigating = false;
-  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private formListenerInstalled = false; private mediaListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private formViewObserver: IntersectionObserver | undefined; private formMutationObserver: MutationObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private formSeen = new WeakSet<Element>(); private formStarted = new WeakSet<Element>(); private interactedFormFields = new WeakSet<Element>(); private activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>(); private mediaStarted = new WeakSet<Element>(); private mediaCompleted = new WeakSet<Element>(); private mediaMilestones = new WeakMap<Element, Set<number>>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
+  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private formListenerInstalled = false; private mediaListenerInstalled = false; private errorListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private formViewObserver: IntersectionObserver | undefined; private formMutationObserver: MutationObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private formSeen = new WeakSet<Element>(); private formStarted = new WeakSet<Element>(); private interactedFormFields = new WeakSet<Element>(); private activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>(); private mediaStarted = new WeakSet<Element>(); private mediaCompleted = new WeakSet<Element>(); private mediaMilestones = new WeakMap<Element, Set<number>>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
   private readonly containers = new Map<string, ContainerRegistration>(); private readonly scrollBins = new Map<string, Set<number>>(); private readonly lastScroll = new Map<string, number>();
   private readonly layoutSegments = new Map<string, string>();
   private tagDefinitions: TagDefinition[] = [];
@@ -419,6 +443,77 @@ export class Tracker {
       this.recordMediaEvent('media_complete', element);
     }, true);
   }
+  private installErrorTracking(): void {
+    if (this.errorListenerInstalled || !this.options.trackErrors) return;
+    this.errorListenerInstalled = true;
+    globalThis.addEventListener?.('error', event => {
+      if (event.target && event.target !== globalThis) return; // Ignore resource failures; capture script exceptions only.
+      const error = event as ErrorEvent;
+      const detail = error.error as { name?: unknown; message?: unknown } | null;
+      this.recordClientError(
+        'javascript',
+        detail?.name,
+        detail?.message ?? error.message,
+        error.filename,
+        error.lineno,
+        error.colno,
+      );
+    });
+    globalThis.addEventListener?.('unhandledrejection', event => {
+      const reason = (event as PromiseRejectionEvent).reason;
+      let errorName: unknown;
+      let message: unknown;
+      try {
+        if (reason instanceof Error) {
+          errorName = reason.name;
+          message = reason.message;
+        } else if (typeof reason === 'string') {
+          errorName = 'UnhandledRejection';
+          message = reason;
+        } else {
+          errorName = 'UnhandledRejection';
+          message = 'Unhandled promise rejection';
+        }
+      } catch {
+        errorName = 'UnhandledRejection';
+        message = 'Unhandled promise rejection';
+      }
+      this.recordClientError('unhandled_rejection', errorName, message);
+    });
+  }
+  private recordClientError(
+    kind: 'javascript' | 'unhandled_rejection',
+    rawName: unknown,
+    rawMessage: unknown,
+    rawSource?: string,
+    line?: number,
+    column?: number,
+  ): void {
+    if (!this.collectionAllowed()) return;
+    const errorName = crashText(rawName, 80)?.replace(/[^A-Za-z0-9_.$-]/g, '') || (kind === 'javascript' ? 'Error' : 'UnhandledRejection');
+    const message = crashText(rawMessage, 240) ?? 'No error message';
+    const sourcePath = crashPath(rawSource);
+    const validPosition = (value: number | undefined): number | undefined =>
+      Number.isSafeInteger(value) && value! > 0 && value! <= 10_000_000 ? value : undefined;
+    const pagePath = crashPath(globalThis.location?.pathname);
+    const origin = globalThis.location?.origin;
+    this.track('client_error', {
+      url: origin ? `${origin}${pagePath}` : undefined,
+      title: '',
+      referrer: '',
+      category: 'error',
+      action: kind,
+      name: errorName,
+      anonymous: true,
+      properties: {
+        errorName,
+        message,
+        sourcePath,
+        line: validPosition(line),
+        column: validPosition(column),
+      },
+    });
+  }
   private refreshMediaTracking(reset = false): void {
     if (!this.options.trackMedia) return;
     if (reset) {
@@ -440,7 +535,7 @@ export class Tracker {
     });
   }
   push(data: DataLayerEvent): void { if (!data?.event) return; this.track(data.event, { url: data.url, title: data.title, referrer: data.referrer, category: data.eventCategory, action: data.eventAction, name: data.eventName, properties: data.properties }); this.fireTagTriggers(data); }
-  track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title ?? globalThis.document?.title, referrer: options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: this.visitorId, sessionId: this.sessionId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
+  track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title === null ? undefined : options.title ?? globalThis.document?.title, referrer: options.referrer === null ? undefined : options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: options.anonymous ? undefined : this.visitorId, sessionId: options.anonymous ? undefined : this.sessionId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
   async flush(unload = false): Promise<void> { if (this.timer) clearTimeout(this.timer); this.timer = undefined; if (!this.queue.length || !this.collectionAllowed()) return; const events = this.queue.splice(0, this.maxBatchSize); const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events }); if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return; try { const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok) throw new Error(`collector returned ${response.status}`); } catch { this.queue.unshift(...events); this.schedule(); } }
 
   beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); this.formViewObserver?.disconnect(); } this.pageViewRecorded = false; }
@@ -461,6 +556,7 @@ export class Tracker {
     this.refreshFormTracking(true);
     this.installMediaTracking();
     this.refreshMediaTracking(true);
+    this.installErrorTracking();
     if (this.options.trackDownloads !== false || this.options.trackOutlinks !== false)
       this.installBehaviourListener();
   }
