@@ -35,6 +35,7 @@ import 'features/sites/presentation/site_detail_page.dart';
 import 'features/sites/presentation/sites_page.dart';
 import 'features/tokens/presentation/token_settings_page.dart';
 import 'features/workspaces/presentation/workspace_page.dart';
+import 'features/workspaces/presentation/workspace_rollup_page.dart';
 
 class SeeRayLensAdminApp extends ConsumerStatefulWidget {
   const SeeRayLensAdminApp({super.key});
@@ -54,6 +55,14 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
       GoRoute(
         path: '/sites',
         builder: (context, state) => const _Authenticated(child: SitesPage()),
+      ),
+      GoRoute(
+        path: '/workspaces/:workspaceId/rollup',
+        builder: (context, state) => _Authenticated(
+          child: WorkspaceRollupPage(
+            workspaceId: state.pathParameters['workspaceId']!,
+          ),
+        ),
       ),
       ShellRoute(
         builder: (context, state, child) =>

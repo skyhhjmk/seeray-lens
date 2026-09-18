@@ -178,6 +178,90 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void workspaceRollupAggregatesAllowedSitesAndRejectsCrossWorkspaceSelections() throws Exception {
+        Tokens owner = register("rollup" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String firstSite = createSite(owner.access(), workspaceId, "Rollup one");
+        String secondSite = createSite(owner.access(), workspaceId, "Rollup two");
+        LocalDate day = LocalDate.of(2026, 9, 4);
+        try (var connection = dataSource.getConnection();
+                var siteStatement = connection.prepareStatement(
+                        "insert into analytics_site_daily(site_id,business_date,page_view_count,session_count,bounced_session_count) values(?,?,?,?,?)");
+                var channelStatement = connection.prepareStatement(
+                        "insert into analytics_traffic_daily(site_id,business_date,channel,source,medium,campaign,session_count) values(?,?,?,?,?,?,?)")) {
+            for (var row : List.of(new Object[] {firstSite, 10L, 2L, 1L}, new Object[] {secondSite, 20L, 4L, 1L})) {
+                UUID siteId = UUID.fromString((String) row[0]);
+                siteStatement.setObject(1, siteId);
+                siteStatement.setObject(2, day);
+                siteStatement.setLong(3, (Long) row[1]);
+                siteStatement.setLong(4, (Long) row[2]);
+                siteStatement.setLong(5, (Long) row[3]);
+                siteStatement.executeUpdate();
+                channelStatement.setObject(1, siteId);
+                channelStatement.setObject(2, day);
+                channelStatement.setString(3, "campaign");
+                channelStatement.setString(4, "google");
+                channelStatement.setString(5, "cpc");
+                channelStatement.setString(6, "spring");
+                channelStatement.setLong(7, (Long) row[2]);
+                channelStatement.executeUpdate();
+            }
+        }
+
+        String path = "/api/v1/workspaces/" + workspaceId + "/analytics/rollup";
+        String rangeBody = "{\"from\":\"" + day + "\",\"to\":\"" + day + "\"}";
+        var full = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(rangeBody)
+                .post(path)
+                .then()
+                .statusCode(200)
+                .body("siteCount", is(2))
+                .body("pageViews", is(30))
+                .body("sessions", is(6))
+                .body("siteVisitors", is(0))
+                .body("daily[0].pageViews", is(30))
+                .body("channels[0].channel", is("campaign"))
+                .body("channels[0].sessions", is(6))
+                .extract();
+        assertEquals(1.0 / 3.0, ((Number) full.path("bounceRate")).doubleValue(), 0.0000001);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"siteIds\":[\"" + firstSite + "\"],\"from\":\"" + day + "\",\"to\":\"" + day + "\"}")
+                .post(path)
+                .then()
+                .statusCode(200)
+                .body("siteCount", is(1))
+                .body("pageViews", is(10));
+
+        Tokens outsider = register("rollup-outsider" + System.nanoTime() + "@example.test");
+        given().header("Authorization", "Bearer " + outsider.access())
+                .contentType("application/json")
+                .body(rangeBody)
+                .post(path)
+                .then()
+                .statusCode(404);
+        given().header("Authorization", "Bearer " + outsider.access())
+                .contentType("application/json")
+                .body("{\"siteIds\":[\"" + firstSite + "\"],\"from\":\"" + day + "\",\"to\":\"" + day + "\"}")
+                .post(path)
+                .then()
+                .statusCode(404);
+    }
+
+    private String createSite(String access, String workspaceId, String name) {
+        return given().header("Authorization", "Bearer " + access)
+                .contentType("application/json")
+                .body("{\"name\":\"" + name + "\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+    }
+
+    @Test
     void createsWorkspaceAndMakesCreatorOwner() {
         Tokens tokens = register("workspace" + System.nanoTime() + "@example.test");
         given().header("Authorization", "Bearer " + tokens.access())
@@ -699,13 +783,17 @@ class ControlPlaneResourceTest {
                 + "\"sourcePath\":\"/assets/123456789/app.js?api_key=source-secret\",\"line\":28,\"column\":9,"
                 + "\"stack\":\"private stack with stack-secret\"}}";
         String firstEvent = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"client_error\","
-                + "\"occurredAt\":\"" + occurred + "\",\"url\":\"https://example.com/accounts/12345678?token=page-secret\","
+                + "\"occurredAt\":\"" + occurred
+                + "\",\"url\":\"https://example.com/accounts/12345678?token=page-secret\","
                 + eventData;
         String secondEvent = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"client_error\","
                 + "\"occurredAt\":\"" + occurred.plusSeconds(1) + "\",\"url\":\"https://example.com/checkout\","
-                + eventData.replace("\"visitorId\":\"" + visitor + "\",\"sessionId\":\"" + session + "\"", "\"visitorId\":\"" + UUID.randomUUID() + "\",\"sessionId\":\"" + UUID.randomUUID() + "\"");
+                + eventData.replace(
+                        "\"visitorId\":\"" + visitor + "\",\"sessionId\":\"" + session + "\"",
+                        "\"visitorId\":\"" + UUID.randomUUID() + "\",\"sessionId\":\"" + UUID.randomUUID() + "\"");
         given().contentType("application/json")
-                .body("{\"schemaVersion\":1,\"siteId\":\"" + trackingId + "\",\"events\":[" + firstEvent + "," + secondEvent + "]}")
+                .body("{\"schemaVersion\":1,\"siteId\":\"" + trackingId + "\",\"events\":[" + firstEvent + ","
+                        + secondEvent + "]}")
                 .post("/api/v1/collect")
                 .then()
                 .statusCode(202);
@@ -715,7 +803,8 @@ class ControlPlaneResourceTest {
         do {
             Thread.sleep(250);
             try (var connection = dataSource.getConnection();
-                    var statement = connection.prepareStatement("select count(*) from raw_event where site_id=? and event_type='client_error'")) {
+                    var statement = connection.prepareStatement(
+                            "select count(*) from raw_event where site_id=? and event_type='client_error'")) {
                 statement.setObject(1, UUID.fromString(site));
                 try (var result = statement.executeQuery()) {
                     result.next();
@@ -736,7 +825,16 @@ class ControlPlaneResourceTest {
                 assertNull(result.getString(4));
                 assertNull(result.getString(5));
                 String stored = result.getString(6);
-                for (String privateValue : List.of("url-secret", "source-secret", "referrer-secret", "alice@example.test", "bearer-secret", "stack-secret", "Private customer title", visitor, session))
+                for (String privateValue : List.of(
+                        "url-secret",
+                        "source-secret",
+                        "referrer-secret",
+                        "alice@example.test",
+                        "bearer-secret",
+                        "stack-secret",
+                        "Private customer title",
+                        visitor,
+                        session))
                     assertFalse(stored.contains(privateValue), "sensitive crash field was stored: " + privateValue);
                 assertTrue(stored.contains("<email>"));
                 assertTrue(stored.contains("<url>"));

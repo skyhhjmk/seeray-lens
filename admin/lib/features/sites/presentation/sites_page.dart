@@ -36,6 +36,11 @@ class SitesPage extends ConsumerWidget {
                 'A site represents one tracked website. Open a site to see its analytics, then use settings to manage its time zone, tracker ID and allowed domains.',
             chineseBody: '一个站点对应一个被追踪的网站。打开站点可查看分析数据；在设置中管理时区、追踪 ID 和允许的域名。',
           ),
+          IconButton(
+            tooltip: context.tr('Workspace roll-up', '工作区汇总'),
+            onPressed: () => context.go('/workspaces/${workspace.id}/rollup'),
+            icon: const Icon(Icons.public),
+          ),
           const LanguageMenu(),
           IconButton(
             tooltip: context.tr('Workspace API tokens', '工作区 API 令牌'),
