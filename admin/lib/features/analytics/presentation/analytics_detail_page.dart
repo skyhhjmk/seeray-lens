@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -8,6 +9,7 @@ import '../../../shared/presentation/app_back_button.dart';
 import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../domains/application/domain_controller.dart';
 import '../application/analytics_controller.dart';
 import '../application/analytics_range.dart';
 import '../application/analytics_segment.dart';
@@ -150,6 +152,8 @@ class _BehaviourBody extends StatelessWidget {
           rows: pages,
         ),
         const SizedBox(height: 16),
+        _PageOverlayLauncher(siteId: siteId, pages: data.pages, query: query),
+        const SizedBox(height: 16),
         _SiteSearchPanel(siteId: siteId, report: data.siteSearch),
         const SizedBox(height: 16),
         _ContentAnalyticsPanel(siteId: siteId, report: data.content),
@@ -207,6 +211,260 @@ class _BehaviourBody extends StatelessWidget {
     item.title?.isNotEmpty == true ? item.path : null,
     item.sessions,
   );
+}
+
+class _PageOverlayLauncher extends ConsumerStatefulWidget {
+  const _PageOverlayLauncher({
+    required this.siteId,
+    required this.pages,
+    required this.query,
+  });
+
+  final String siteId;
+  final List<AnalyticsPageTitle> pages;
+  final AnalyticsDashboardQuery query;
+
+  @override
+  ConsumerState<_PageOverlayLauncher> createState() =>
+      _PageOverlayLauncherState();
+}
+
+class _PageOverlayLauncherState extends ConsumerState<_PageOverlayLauncher> {
+  String? _path;
+  String? _domainId;
+  String? _launchUrl;
+  bool _creating = false;
+  String? _error;
+
+  @override
+  Widget build(BuildContext context) {
+    final domains = ref.watch(domainsProvider(widget.siteId));
+    final domainValues = domains.maybeWhen(
+      data: (values) => values,
+      orElse: () => const <AllowedDomain>[],
+    );
+    final paths = widget.pages.map((page) => page.path).toSet().toList();
+    final selectedPath = paths.contains(_path)
+        ? _path!
+        : paths.isEmpty
+        ? null
+        : paths.first;
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              context.tr('Page overlay', '页面覆盖层'),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              context.tr(
+                'Open a tracked page with session-based next-page counts beside matching links. This is navigation attribution, not a click heatmap.',
+                '在已安装 tracker 的页面上查看匹配链接旁的会话级下一页转移数。这是页面导航归因，不是点击热图。',
+              ),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 12,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SizedBox(
+                  width: 320,
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey(selectedPath),
+                    initialValue: selectedPath,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: context.tr('Source page', '来源页面'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final path in paths)
+                        DropdownMenuItem(
+                          value: path,
+                          child: Text(
+                            widget.pages
+                                    .where((page) => page.path == path)
+                                    .map((page) => page.title)
+                                    .whereType<String>()
+                                    .where((title) => title.isNotEmpty)
+                                    .firstOrNull ??
+                                path,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: _creating
+                        ? null
+                        : (value) => setState(() {
+                            _path = value;
+                            _launchUrl = null;
+                            _error = null;
+                          }),
+                  ),
+                ),
+                domains.when(
+                  loading: () => const SizedBox(
+                    width: 220,
+                    child: LinearProgressIndicator(),
+                  ),
+                  error: (error, _) => Text(
+                    context.tr('Could not load allowed domains', '无法加载允许域名'),
+                  ),
+                  data: (values) {
+                    final enabled = values
+                        .where((domain) => domain.enabled)
+                        .toList();
+                    final selectedDomainId =
+                        enabled.any((domain) => domain.id == _domainId)
+                        ? _domainId
+                        : enabled.isEmpty
+                        ? null
+                        : enabled.first.id;
+                    return SizedBox(
+                      width: 240,
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(selectedDomainId),
+                        initialValue: selectedDomainId,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: context.tr(
+                            'Allowed site domain',
+                            '站点允许域名',
+                          ),
+                          border: const OutlineInputBorder(),
+                        ),
+                        items: [
+                          for (final domain in enabled)
+                            DropdownMenuItem(
+                              value: domain.id,
+                              child: Text(
+                                domain.host,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: _creating
+                            ? null
+                            : (value) => setState(() {
+                                _domainId = value;
+                                _launchUrl = null;
+                                _error = null;
+                              }),
+                      ),
+                    );
+                  },
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: _creating || selectedPath == null
+                      ? null
+                      : () => _create(selectedPath, domainValues),
+                  icon: _creating
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.open_in_new),
+                  label: Text(context.tr('Create overlay link', '生成覆盖层链接')),
+                ),
+              ],
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            if (_launchUrl case final launchUrl?) ...[
+              const SizedBox(height: 12),
+              SelectableText(launchUrl),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: launchUrl));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          context.tr('Overlay link copied', '覆盖层链接已复制'),
+                        ),
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.copy),
+                label: Text(
+                  context.tr(
+                    'Copy link and open it in a tracked browser',
+                    '复制链接并在已安装 tracker 的浏览器中打开',
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _create(String sourcePath, List<AllowedDomain> domains) async {
+    final enabled = domains.where((domain) => domain.enabled).toList();
+    final domain = enabled.where((value) => value.id == _domainId).isNotEmpty
+        ? enabled.firstWhere((value) => value.id == _domainId)
+        : enabled.isEmpty
+        ? null
+        : enabled.first;
+    if (domain == null) {
+      setState(() {
+        _error = context.tr(
+          'Add and enable an allowed site domain first.',
+          '请先添加并启用站点允许域名。',
+        );
+      });
+      return;
+    }
+    setState(() {
+      _creating = true;
+      _error = null;
+      _launchUrl = null;
+    });
+    try {
+      final result =
+          await ref
+                  .read(apiProvider)
+                  .request(
+                    'POST',
+                    '/api/v1/sites/${widget.siteId}/analytics/page-overlay-sessions',
+                    body: {
+                      'sourcePath': sourcePath,
+                      'from': widget.query.range.fromQuery,
+                      'to': widget.query.range.toQuery,
+                      if (widget.query.segmentId != null)
+                        'segmentId': widget.query.segmentId,
+                    },
+                  )
+              as Map<String, dynamic>;
+      final uri = Uri.parse('https://${domain.host}$sourcePath').replace(
+        fragment: Uri(
+          queryParameters: {
+            '__seeray_overlay_session': result['sessionId'] as String,
+            '__seeray_overlay_token': result['token'] as String,
+          },
+        ).query,
+      );
+      if (mounted) setState(() => _launchUrl = uri.toString());
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _creating = false);
+    }
+  }
 }
 
 class _SiteSearchPanel extends StatelessWidget {

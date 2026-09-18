@@ -14,6 +14,42 @@ describe('tracker package', () => {
     expect(TRACKER_VERSION).toBe('0.8.0');
   });
 
+  it('strips the short-lived overlay capability from the page URL before requesting its data', () => {
+    const replaceState = vi.fn();
+    const overlayStorage = new Map<string, string>();
+    const fetch = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('document', { addEventListener: vi.fn() });
+    vi.stubGlobal('location', {
+      href: 'https://shop.example.test/pricing?campaign=spring#__seeray_overlay_session=session-1&__seeray_overlay_token=secret',
+      pathname: '/pricing',
+      origin: 'https://shop.example.test',
+    });
+    vi.stubGlobal('history', { state: { navigation: true }, replaceState });
+    vi.stubGlobal('sessionStorage', storageStub(overlayStorage));
+    vi.stubGlobal('fetch', fetch);
+
+    new Tracker({
+      siteId: 'srl_overlay',
+      apiOrigin: 'https://lens.example.test',
+    });
+
+    expect(replaceState).toHaveBeenCalledWith(
+      { navigation: true },
+      '',
+      '/pricing?campaign=spring',
+    );
+    expect(overlayStorage.get('seeray:srl_overlay:page_overlay')).toBe(
+      JSON.stringify({ sessionId: 'session-1', token: 'secret' }),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      'https://lens.example.test/api/v1/page-overlay/srl_overlay/session-1',
+      {
+        headers: { Authorization: 'Bearer secret' },
+        credentials: 'omit',
+      },
+    );
+  });
+
   afterEach(() => vi.unstubAllGlobals());
 
   it('does not send when Do Not Track is enabled', async () => {

@@ -22,6 +22,7 @@ const EXPERIMENT_DEVICE_TYPES = new Set(['desktop', 'mobile', 'tablet', 'other']
 interface HeatmapEvent { type: 'start' | 'click' | 'move' | 'scroll'; instanceId: string; url: string; layoutVersion: string; targetId: string; viewportWidth: number; viewportHeight: number; contentWidth: number; contentHeight: number; x?: number; y?: number; scrollBins?: number[]; truncated?: boolean; dropped?: number; }
 interface ContainerRegistration { element: HTMLElement; remove: () => void; }
 interface HeatmapBatch { clientBatchId: string; events: HeatmapEvent[]; }
+interface PageOverlayData { storageKey: string; sourcePath: string; from: string; to: string; targets: Array<{ sourcePath: string; path: string; sessions: number }>; }
 interface RecorderModule { startCapture(options: { siteId: string; snapshotEndpoint: string; recordingEndpoint: string; identity: HeatmapEvent; captureSnapshot: boolean; captureRecording: boolean; recordingId: string }): () => void; }
 
 const uuid = (): string => { const c = globalThis.crypto as Crypto & { randomUUID?: () => string } | undefined; if (c?.randomUUID) return c.randomUUID(); const b = new Uint8Array(16); c?.getRandomValues?.(b); b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80; return [...b].map((x, i) => `${[4, 6, 8, 10].includes(i) ? '-' : ''}${x.toString(16).padStart(2, '0')}`).join(''); };
@@ -141,11 +142,14 @@ export class Tracker {
   private previewExecuteCustomCode = false;
   private readonly experimentDefinitions = new Map<string, LoadedExperiment>();
   private readonly experimentLayerAssignments = new Map<string, string>();
+  private pageOverlayData?: PageOverlayData;
+  private pageOverlayNavigationInstalled = false;
   private readyPromise: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: TrackerOptions) {
     const apiBase = options.apiOrigin ?? options.endpoint;
     this.endpoint = options.endpoint ?? absoluteApiUrl('/api/v1/collect', apiBase); this.heatmapEndpoint = absoluteApiUrl('/api/v1/collect/heatmaps', apiBase); this.heatmapConfigEndpoint = absoluteApiUrl(`/api/v1/heatmap-config/${encodeURIComponent(options.siteId)}`, apiBase); const requestedTagEnvironment = options.tagManagerEnvironment ?? 'production'; const tagEnvironment = ['development', 'staging', 'production'].includes(requestedTagEnvironment) ? requestedTagEnvironment : 'production'; this.tagManagerEndpoint = `${absoluteApiUrl(`/api/v1/tag-manager/${encodeURIComponent(options.siteId)}/container`, apiBase)}?environment=${encodeURIComponent(tagEnvironment)}`; this.experimentsEndpoint = absoluteApiUrl(`/api/v1/experiments/${encodeURIComponent(options.siteId)}/definitions`, apiBase); this.snapshotPlanEndpoint = absoluteApiUrl(`/api/v1/collect/dom-snapshots/plan/${encodeURIComponent(options.siteId)}`, apiBase); this.snapshotEndpoint = absoluteApiUrl(`/api/v1/collect/dom-snapshots/${encodeURIComponent(options.siteId)}`, apiBase); this.recordingEndpoint = absoluteApiUrl(`/api/v1/collect/recordings/${encodeURIComponent(options.siteId)}`, apiBase); this.recorderEndpoint = absoluteApiUrl('/recorder.js', apiBase); this.maxBatchSize = Math.max(1, Math.min(options.maxBatchSize ?? 10, 100)); this.flushInterval = Math.max(100, options.flushInterval ?? 2000);
+    this.startPageOverlay(apiBase);
     if (this.getConsentState() === 'granted' && !doNotTrack()) this.persistIdentity();
     else this.useEphemeralIdentity();
     const preview = options.tagManagerPreview;
@@ -971,6 +975,178 @@ export class Tracker {
   private heatmapEnabled(): boolean { return !!this.heatmapConfig?.enabled && this.heatmapConfig.sampleRate > 0 && this.collectionAllowed(); }
   private captureEnabled(): boolean { return (this.heatmapEnabled() || !!this.heatmapConfig?.recordingEnabled && this.heatmapConfig.recordingSampleRate > 0) && this.collectionAllowed(); }
   private async loadHeatmapConfig(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.heatmapConfigEndpoint); if (!response.ok) return; const config = await response.json() as Partial<HeatmapConfig>; const configuredRate = rate(config.sampleRate); const clientRate = this.options.heatmap?.sampleRate; this.heatmapConfig = { enabled: config.enabled === true, sampleRate: clientRate === undefined ? configuredRate : Math.min(configuredRate, rate(clientRate)), version: config.version, autoSnapshotEnabled: config.autoSnapshotEnabled !== false, recordingEnabled: config.recordingEnabled === true, recordingSampleRate: rate(config.recordingSampleRate ?? 1) }; if (this.options.heatmap?.navigationMode !== 'manual') this.installHistory(); this.pageReady(); } catch { /* Capture failure never disables ordinary tracking. */ } }
+  private startPageOverlay(apiBase?: string): void {
+    const location = globalThis.location;
+    if (!location || !globalThis.document) return;
+    let url: URL;
+    try { url = new URL(location.href); } catch { return; }
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    let sessionId = url.searchParams.get('__seeray_overlay_session') ?? fragment.get('__seeray_overlay_session');
+    let token = url.searchParams.get('__seeray_overlay_token') ?? fragment.get('__seeray_overlay_token');
+    const storageKey = `seeray:${this.options.siteId}:page_overlay`;
+    if (sessionId || token) {
+      url.searchParams.delete('__seeray_overlay_session');
+      url.searchParams.delete('__seeray_overlay_token');
+      fragment.delete('__seeray_overlay_session');
+      fragment.delete('__seeray_overlay_token');
+      const remainingFragment = fragment.toString();
+      url.hash = remainingFragment ? `#${remainingFragment}` : '';
+      try { globalThis.history?.replaceState(globalThis.history.state, '', `${url.pathname}${url.search}${url.hash}`); } catch { /* Some embedded browsers deny URL cleanup; the capability expires shortly. */ }
+      if (sessionId && token) {
+        try { globalThis.sessionStorage?.setItem(storageKey, JSON.stringify({ sessionId, token })); } catch { /* The one-page link still works if session storage is unavailable. */ }
+      }
+    } else {
+      try {
+        const saved = globalThis.sessionStorage?.getItem(storageKey);
+        if (saved) ({ sessionId, token } = JSON.parse(saved) as { sessionId: string; token: string });
+      } catch { /* Continue without a saved overlay capability. */ }
+    }
+    if (!sessionId && !token) return;
+    if (!sessionId || !token || sessionId.length > 64 || token.length > 128) return;
+    const endpoint = absoluteApiUrl(`/api/v1/page-overlay/${encodeURIComponent(this.options.siteId)}/${encodeURIComponent(sessionId)}`, apiBase);
+    void fetch(endpoint, { headers: { Authorization: `Bearer ${token}` }, credentials: 'omit' })
+      .then(async response => {
+        if (!response.ok) throw new Error('The page overlay session is unavailable or expired.');
+        const data = await response.json() as { sourcePath?: unknown; from?: unknown; to?: unknown; targets?: unknown };
+        if (typeof data.sourcePath !== 'string' || !Array.isArray(data.targets)) throw new Error('The page overlay response is invalid.');
+        const targets = data.targets.filter((target): target is { sourcePath: string; path: string; sessions: number } =>
+          !!target && typeof target === 'object' && typeof (target as { sourcePath?: unknown }).sourcePath === 'string'
+          && typeof (target as { path?: unknown }).path === 'string'
+          && Number.isFinite((target as { sessions?: unknown }).sessions) && Number((target as { sessions: number }).sessions) > 0);
+        this.pageOverlayData = {
+          storageKey,
+          sourcePath: data.sourcePath,
+          from: typeof data.from === 'string' ? data.from : '',
+          to: typeof data.to === 'string' ? data.to : '',
+          targets,
+        };
+        this.installPageOverlayNavigation();
+        this.refreshPageOverlay();
+      })
+      .catch(error => {
+        try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* Storage may be blocked. */ }
+        this.renderPageOverlayError(error instanceof Error ? error.message : 'Could not load page overlay data.');
+      });
+  }
+  private installPageOverlayNavigation(): void {
+    if (this.pageOverlayNavigationInstalled || !globalThis.history) return;
+    this.pageOverlayNavigationInstalled = true;
+    const history = globalThis.history;
+    const wrap = (name: 'pushState' | 'replaceState'): void => {
+      const original = history[name];
+      history[name] = ((...args: Parameters<History['pushState']>) => {
+        const before = globalThis.location?.href;
+        const result = original.apply(history, args);
+        if (before !== globalThis.location?.href) setTimeout(() => this.refreshPageOverlay(), 0);
+        return result;
+      }) as History[typeof name];
+    };
+    wrap('pushState');
+    wrap('replaceState');
+    globalThis.addEventListener?.('popstate', () => this.refreshPageOverlay());
+  }
+  private refreshPageOverlay(): void {
+    const data = this.pageOverlayData;
+    if (data) this.renderPageOverlay(data.storageKey, data.sourcePath, data.from, data.to, data.targets);
+  }
+  private renderPageOverlay(storageKey: string, sourcePath: string, from: string, to: string, targets: Array<{ sourcePath: string; path: string; sessions: number }>): void {
+    const document = globalThis.document;
+    if (!document?.body) return;
+    const previous = document.getElementById('seeray-page-overlay') as (HTMLElement & { __seerayDispose?: () => void }) | null;
+    previous?.__seerayDispose?.();
+    previous?.remove();
+    const root = document.createElement('div');
+    root.id = 'seeray-page-overlay';
+    root.setAttribute('data-seeray-no-track', '');
+    root.setAttribute('aria-label', 'SeeRay page overlay');
+    root.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;font:14px/1.4 system-ui,-apple-system,sans-serif;color:#172033;';
+    const panel = document.createElement('section');
+    panel.style.cssText = 'position:fixed;right:16px;top:16px;width:min(340px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:16px;border-radius:12px;background:#fff;box-shadow:0 8px 32px #07142940;border:1px solid #d5dfeb;pointer-events:auto;';
+    const heading = document.createElement('div');
+    heading.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;';
+    const title = document.createElement('span');
+    title.textContent = 'SeeRay page overlay';
+    title.style.flex = '1';
+    const close = document.createElement('button');
+    close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', 'Close page overlay');
+    close.style.cssText = 'border:0;background:transparent;font-size:22px;cursor:pointer;color:#42536b;';
+    close.addEventListener('click', () => {
+      root.remove();
+      this.pageOverlayData = undefined;
+      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* Storage may be blocked. */ }
+    });
+    heading.append(title, close);
+    panel.append(heading);
+    const description = document.createElement('p');
+    description.style.cssText = 'margin:8px 0;color:#53647a;font-size:12px;';
+    description.textContent = `Next-page sessions · ${from || 'selected range'} to ${to || 'selected range'}`;
+    panel.append(description);
+    const currentPath = globalThis.location?.pathname ?? '';
+    const pageTargets = targets.filter(target => target.sourcePath === currentPath);
+    const rows = document.createElement('div');
+    if (!pageTargets.length) {
+      const note = document.createElement('p');
+      note.textContent = currentPath === sourcePath
+        ? 'No next-page transitions were recorded for this page in the selected range.'
+        : `No next-page transitions were recorded for ${currentPath || 'this page'} in the selected range.`;
+      note.style.color = '#53647a'; rows.append(note);
+    } else {
+      const summary = document.createElement('p'); summary.style.cssText = 'margin:6px 0 10px;font-weight:600;';
+      summary.textContent = `${currentPath} · ${pageTargets.reduce((sum, target) => sum + target.sessions, 0).toLocaleString()} measured next-page transitions`;
+      rows.append(summary);
+      for (const target of pageTargets.slice(0, 100)) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-top:1px solid #edf1f5;';
+        const path = document.createElement('span'); path.textContent = target.path; path.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        const count = document.createElement('strong'); count.textContent = target.sessions.toLocaleString();
+        row.append(path, count); rows.append(row);
+      }
+    }
+    panel.append(rows); root.append(panel); document.body.append(root);
+    if (!pageTargets.length) return;
+    const counts = new Map(pageTargets.map(target => [target.path, target.sessions]));
+    const bubbles = new Set<HTMLElement>();
+    const refresh = (): void => {
+      for (const bubble of bubbles) bubble.remove();
+      bubbles.clear();
+      for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
+        if (anchor.closest('#seeray-page-overlay,[data-seeray-no-track]')) continue;
+        let link: URL;
+        try { link = new URL((anchor as HTMLAnchorElement).href, globalThis.location?.href); } catch { continue; }
+        if (link.origin !== globalThis.location?.origin) continue;
+        const count = counts.get(link.pathname);
+        if (!count) continue;
+        const rect = anchor.getBoundingClientRect();
+        if (!rect.width || !rect.height) continue;
+        const bubble = document.createElement('span');
+        bubble.textContent = count.toLocaleString();
+        bubble.setAttribute('aria-hidden', 'true');
+        bubble.style.cssText = `position:absolute;left:${Math.round(rect.left + (globalThis.scrollX ?? 0) + rect.width / 2)}px;top:${Math.round(rect.top + (globalThis.scrollY ?? 0) - 12)}px;transform:translate(-50%,-100%);padding:3px 8px;border-radius:999px;background:#f04438;color:white;border:2px solid white;box-shadow:0 2px 8px #0004;font:700 12px/1.2 system-ui,sans-serif;white-space:nowrap;`;
+        root.append(bubble); bubbles.add(bubble);
+      }
+    };
+    refresh();
+    globalThis.addEventListener?.('scroll', refresh, { passive: true });
+    globalThis.addEventListener?.('resize', refresh, { passive: true });
+    const observer = typeof MutationObserver === 'undefined' ? undefined : new MutationObserver(records => {
+      if (records.some(record => !root.contains(record.target))) refresh();
+    });
+    observer?.observe(document.body, { childList: true, subtree: true });
+    const dispose = (): void => {
+      globalThis.removeEventListener?.('scroll', refresh);
+      globalThis.removeEventListener?.('resize', refresh);
+      observer?.disconnect();
+    };
+    (root as HTMLElement & { __seerayDispose?: () => void }).__seerayDispose = dispose;
+    close.addEventListener('click', dispose);
+  }
+  private renderPageOverlayError(message: string): void {
+    const document = globalThis.document;
+    if (!document?.body) return;
+    const root = document.createElement('div'); root.id = 'seeray-page-overlay';
+    root.style.cssText = 'position:fixed;right:16px;top:16px;z-index:2147483646;max-width:360px;padding:14px 18px;border-radius:10px;background:#fff5f2;color:#8a2c0d;box-shadow:0 8px 32px #07142940;font:14px/1.4 system-ui,sans-serif;';
+    root.textContent = `SeeRay page overlay: ${message}`; document.body.append(root);
+  }
   private async startRecorder(forceSnapshot = false): Promise<void> { if (!this.heatmapInstance || this.recorderStop || !this.collectionAllowed()) return; try { const geometry = this.geometry('page'); const identity = { type: 'start' as const, ...this.identity(geometry) }; let captureSnapshot = forceSnapshot || !!this.heatmapConfig?.autoSnapshotEnabled && this.heatmapSelected; if (captureSnapshot && !forceSnapshot) { const plan = await fetch(this.snapshotPlanEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(identity) }); if (plan.ok) captureSnapshot = (await plan.json() as { captureRequired?: boolean }).captureRequired === true; else captureSnapshot = false; } if (!captureSnapshot && !this.recordingSelected) return; const module = await import(/* @vite-ignore */ this.recorderEndpoint) as RecorderModule; if (!this.heatmapInstance || this.recorderStop || this.heatmapNavigating || !this.collectionAllowed()) return; this.recorderStop = module.startCapture({ siteId: this.options.siteId, snapshotEndpoint: this.snapshotEndpoint, recordingEndpoint: this.recordingEndpoint, identity, captureSnapshot, captureRecording: this.recordingSelected, recordingId: this.recordingId }); } catch { /* Optional recorder failure must not affect analytics. */ } }
   private stopRecorder(): void { const stop = this.recorderStop; this.recorderStop = undefined; stop?.(); }
   captureHeatmapSnapshot(): void { if (!this.captureEnabled()) return; this.stopRecorder(); void this.startRecorder(true); }

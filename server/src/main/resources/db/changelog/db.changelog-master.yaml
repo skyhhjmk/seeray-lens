@@ -279,3 +279,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0040-crash-analytics-index.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0041-page-overlay
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0041-page-overlay.sql
+            relativeToChangelogFile: false
