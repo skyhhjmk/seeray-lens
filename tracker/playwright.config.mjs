@@ -13,7 +13,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'node ./e2e/privacy-fixture.mjs',
+    command: 'node ./e2e/browser-fixture.mjs',
     url: 'http://127.0.0.1:4173/fixture',
     reuseExistingServer: false,
     timeout: 10_000,

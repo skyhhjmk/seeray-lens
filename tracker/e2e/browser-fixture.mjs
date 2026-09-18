@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const directory = dirname(fileURLToPath(import.meta.url));
 const repository = resolve(directory, '../..');
 const trackingId = `srl_${'A'.repeat(32)}`;
+const heatmapTrackingId = `srl_${'B'.repeat(32)}`;
 const customerOrigin = 'http://127.0.0.1:4173';
 const analyticsOrigin = 'http://127.0.0.1:4174';
 const asset = async (path) => readFile(resolve(repository, path));
@@ -24,10 +25,35 @@ const customerPage = `<!doctype html>
 </body>
 </html>`;
 
+const heatmapCustomerPage = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Heatmap coordinate fixture</title>
+  <style>
+    html, body { margin: 0; padding: 0; }
+    #heatmap-top { position: absolute; left: 100px; top: 120px; width: 120px; height: 60px; }
+    #heatmap-bottom { position: absolute; left: 240px; top: 900px; width: 120px; height: 60px; }
+    #heatmap-tail { height: 1500px; }
+  </style>
+</head>
+<body>
+  <div id="heatmap-top">Top target</div>
+  <div id="heatmap-bottom">Scrolled target</div>
+  <div id="heatmap-tail"></div>
+  <script src="${analyticsOrigin}/tracker.js" data-site-id="${heatmapTrackingId}" data-require-consent="true"></script>
+</body>
+</html>`;
+
 const customerServer = createServer((request, response) => {
   if (request.method === 'GET' && request.url === '/fixture') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end(customerPage);
+    return;
+  }
+  if (request.method === 'GET' && request.url === '/heatmap-fixture') {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(heatmapCustomerPage);
     return;
   }
   response.writeHead(404).end();
@@ -71,6 +97,22 @@ const analyticsServer = createServer(async (request, response) => {
     return;
   }
   if (request.method === 'POST' && request.url === '/api/v1/collect') {
+    request.resume();
+    request.on('end', () => response.writeHead(202).end());
+    return;
+  }
+  if (request.method === 'GET' && request.url === `/api/v1/heatmap-config/${heatmapTrackingId}`) {
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify({
+      enabled: true,
+      sampleRate: 100,
+      version: 'browser-e2e',
+      autoSnapshotEnabled: false,
+      recordingEnabled: false,
+      recordingSampleRate: 0,
+    }));
+    return;
+  }
+  if (request.method === 'POST' && request.url === '/api/v1/collect/heatmaps') {
     request.resume();
     request.on('end', () => response.writeHead(202).end());
     return;

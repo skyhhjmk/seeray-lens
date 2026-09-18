@@ -8,11 +8,18 @@
 - Compose configuration parses with the supplied RabbitMQ heatmap queue definitions.
 - The Tracker lifecycle regression covers repeated `pageReady`, same-URL explicit navigation, and the global lifecycle facade.
 
+## Verified in Chromium with the published tracker asset
+
+Run `npm run test:e2e` in `tracker/` (or `npm run test:e2e:heatmap` for the coordinate case alone). The Playwright fixture serves the checked-in tracker asset from a separate analytics origin and accepts requests with a test collector; it does not run Quarkus, PostgreSQL, or RabbitMQ.
+
+- Hosted privacy preferences work cross-origin: consent is initially unknown, accepting persists identity and permits a collection request, and withdrawal clears identity and stops further collection after reload.
+- A fixed-layout page records known clicks before and after document scrolling. The uploaded heatmap events keep the expected document coordinates, viewport/content dimensions, clean page URL, and one stable page-instance ID.
+
 ## Not yet browser-accepted
 
-The following require a live application, configured site domain, RabbitMQ, PostgreSQL, and a fixed-layout fixture page. They have not been represented as passed by the checks above:
+The following still require the live application, configured site domain, RabbitMQ, PostgreSQL, and (where relevant) a fixed-layout fixture page. They have not been represented as passed by the isolated Chromium fixture above:
 
-- Clicking known positions before and after document scrolling and comparing the final CSS grid against the uploaded snapshot.
+- Comparing the server-aggregated CSS grid and the Admin heatmap overlay against the uploaded snapshot.
 - Smooth and jump scrolling, short documents, and partially visible registered containers.
 - Repeated PJAX, same-path back navigation, BFCache restoration, and viewport/content-size changes.
 - Touch-only interaction, offline/retry, rate limiting, and duplicate broker delivery.

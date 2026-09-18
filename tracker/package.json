@@ -18,7 +18,9 @@
     "publish:server-assets": "node scripts/publish-server-assets.mjs",
     "lint": "eslint src test e2e playwright.config.mjs",
     "test": "vitest run",
-    "test:e2e:privacy": "playwright test --config=playwright.config.mjs",
+    "test:e2e": "playwright test --config=playwright.config.mjs",
+    "test:e2e:heatmap": "playwright test --config=playwright.config.mjs e2e/heatmap-coordinates.pw.mjs",
+    "test:e2e:privacy": "playwright test --config=playwright.config.mjs e2e/privacy-preferences.pw.mjs",
     "size": "node scripts/report-size.mjs"
   },
   "devDependencies": {
