@@ -64,6 +64,17 @@ class OfflineConversionImportPreview {
 
   int get eligibleRows => rows.length - tooOldRows - futureRows;
 
+  int get linkedinTooOldRows => rows.where((row) {
+    final convertedAt = DateTime.parse(row.convertedAt).toUtc();
+    return DateTime.now().toUtc().difference(convertedAt) >
+        const Duration(days: 90);
+  }).length;
+
+  int get linkedinFutureRows => rows.where((row) {
+    final convertedAt = DateTime.parse(row.convertedAt).toUtc();
+    return convertedAt.isAfter(DateTime.now().toUtc());
+  }).length;
+
   DateTime get firstConversion => rows
       .map((row) => DateTime.parse(row.convertedAt).toUtc())
       .reduce((a, b) => a.isBefore(b) ? a : b);
@@ -579,6 +590,92 @@ final metaAdsConversionConfigProvider =
             '/api/v1/sites/$siteId/offline-conversions/meta-ads/config',
           );
       return MetaAdsConversionConfig.fromJson(
+        Map<String, dynamic>.from(response as Map),
+      );
+    });
+
+class LinkedInAdsGoalMapping {
+  const LinkedInAdsGoalMapping({
+    required this.goalId,
+    required this.goalName,
+    required this.conversionUrn,
+  });
+
+  final String goalId;
+  final String goalName;
+  final String conversionUrn;
+
+  factory LinkedInAdsGoalMapping.fromJson(Map<String, dynamic> json) =>
+      LinkedInAdsGoalMapping(
+        goalId: json['goalId'] as String? ?? '',
+        goalName: json['goalName'] as String? ?? 'Goal',
+        conversionUrn: json['conversionUrn'] as String? ?? '',
+      );
+}
+
+class LinkedInAdsConversionConfig {
+  const LinkedInAdsConversionConfig({
+    required this.canManage,
+    required this.configured,
+    required this.credentialConfigured,
+    required this.goalMappings,
+    this.currencyCode,
+  });
+
+  final bool canManage;
+  final bool configured;
+  final bool credentialConfigured;
+  final String? currencyCode;
+  final List<LinkedInAdsGoalMapping> goalMappings;
+
+  LinkedInAdsGoalMapping? mappingFor(String? goalId) =>
+      goalMappings.where((mapping) => mapping.goalId == goalId).firstOrNull;
+
+  factory LinkedInAdsConversionConfig.fromJson(Map<String, dynamic> json) =>
+      LinkedInAdsConversionConfig(
+        canManage: json['canManage'] as bool? ?? false,
+        configured: json['configured'] as bool? ?? false,
+        credentialConfigured: json['credentialConfigured'] as bool? ?? false,
+        currencyCode: json['currencyCode'] as String?,
+        goalMappings: (json['goalMappings'] as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (mapping) => LinkedInAdsGoalMapping.fromJson(
+                Map<String, dynamic>.from(mapping),
+              ),
+            )
+            .toList(growable: false),
+      );
+}
+
+class LinkedInAdsTransferResult {
+  const LinkedInAdsTransferResult({
+    required this.rowsProcessed,
+    required this.eventsReceived,
+  });
+
+  final int rowsProcessed;
+  final int eventsReceived;
+
+  factory LinkedInAdsTransferResult.fromJson(Map<String, dynamic> json) =>
+      LinkedInAdsTransferResult(
+        rowsProcessed: (json['rowsProcessed'] as num?)?.toInt() ?? 0,
+        eventsReceived: (json['eventsReceived'] as num?)?.toInt() ?? 0,
+      );
+}
+
+final linkedInAdsConversionConfigProvider =
+    FutureProvider.family<LinkedInAdsConversionConfig, String>((
+      ref,
+      siteId,
+    ) async {
+      final response = await ref
+          .read(apiProvider)
+          .request(
+            'GET',
+            '/api/v1/sites/$siteId/offline-conversions/linkedin-ads/config',
+          );
+      return LinkedInAdsConversionConfig.fromJson(
         Map<String, dynamic>.from(response as Map),
       );
     });
