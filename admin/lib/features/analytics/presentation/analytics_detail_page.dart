@@ -1802,6 +1802,13 @@ class _Body extends StatelessWidget {
                     icon: const Icon(Icons.search),
                     label: Text(context.tr('Bing Webmaster', 'Bing 站长工具')),
                   ),
+                  FilledButton.tonalIcon(
+                    onPressed: () => context.go(
+                      '/sites/$siteId/acquisition/yandex-webmaster',
+                    ),
+                    icon: const Icon(Icons.travel_explore_outlined),
+                    label: Text(context.tr('Yandex Webmaster', 'Yandex 站长工具')),
+                  ),
                 ],
               ),
             ],

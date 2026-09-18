@@ -31,6 +31,7 @@ import 'features/analytics/presentation/campaign_costs_page.dart';
 import 'features/analytics/presentation/offline_conversions_page.dart';
 import 'features/analytics/presentation/search_console_page.dart';
 import 'features/analytics/presentation/bing_webmaster_page.dart';
+import 'features/analytics/presentation/yandex_webmaster_page.dart';
 import 'features/analytics/presentation/analytics_annotations_page.dart';
 import 'features/analytics/presentation/visitor_profile_page.dart';
 import 'features/analytics/presentation/form_analytics_page.dart';
@@ -316,6 +317,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
               state,
               _Authenticated(
                 child: BingWebmasterPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/acquisition/yandex-webmaster',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: YandexWebmasterPage(
                   siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),

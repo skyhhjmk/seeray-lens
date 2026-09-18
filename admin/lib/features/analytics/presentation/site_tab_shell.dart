@@ -15,6 +15,7 @@ import '../application/crash_analytics.dart';
 import '../application/realtime_controller.dart';
 import '../application/search_console.dart';
 import '../application/bing_webmaster.dart';
+import '../application/yandex_webmaster.dart';
 import 'segment_filter_selector.dart';
 
 class SiteTabShell extends ConsumerWidget {
@@ -99,7 +100,8 @@ class SiteTabShell extends ConsumerWidget {
           SiteTopTab.media,
         }.contains(selected) &&
         !path.endsWith('/acquisition/search-console') &&
-        !path.endsWith('/acquisition/bing-webmaster');
+        !path.endsWith('/acquisition/bing-webmaster') &&
+        !path.endsWith('/acquisition/yandex-webmaster');
     final rangeState = isAnalytics && selected != SiteTopTab.realtime
         ? ref.watch(analyticsRangeProvider(siteId))
         : null;
@@ -132,6 +134,11 @@ class SiteTabShell extends ConsumerWidget {
                 if (path.endsWith('/acquisition/bing-webmaster')) {
                   ref.invalidate(bingWebmasterPropertyProvider(siteId));
                   ref.invalidate(bingWebmasterReportProvider);
+                  return;
+                }
+                if (path.endsWith('/acquisition/yandex-webmaster')) {
+                  ref.invalidate(yandexWebmasterPropertyProvider(siteId));
+                  ref.invalidate(yandexWebmasterReportProvider);
                   return;
                 }
                 ref.invalidate(analyticsDashboardRangeProvider);
@@ -170,6 +177,8 @@ class SiteTabShell extends ConsumerWidget {
           ? 367
           : state.uri.path.endsWith('/acquisition/bing-webmaster')
           ? 184
+          : state.uri.path.endsWith('/acquisition/yandex-webmaster')
+          ? 366
           : null,
     );
     if (selected == null) return;
