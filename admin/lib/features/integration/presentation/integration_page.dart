@@ -52,7 +52,7 @@ class IntegrationPage extends ConsumerWidget {
         ? 14
         : 0;
     return DefaultTabController(
-      length: 15,
+      length: 16,
       initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
@@ -90,6 +90,7 @@ class IntegrationPage extends ConsumerWidget {
                   Tab(text: context.tr('Form analytics', '表单分析')),
                   Tab(text: context.tr('Media analytics', '媒体分析')),
                   Tab(text: context.tr('Crash analytics', '崩溃分析')),
+                  Tab(text: context.tr('User identity', '用户身份关联')),
                 ],
               ),
             ),
@@ -252,6 +253,18 @@ class IntegrationPage extends ConsumerWidget {
                     trackingId: site.trackingId,
                     trackerUrl: script,
                     requireConsent: site.requireConsent,
+                  ),
+                  _Snippet(
+                    title: context.tr(
+                      'Link authenticated visits across devices',
+                      '跨设备关联已登录访问',
+                    ),
+                    body:
+                        "// After the application confirms the signed-in user and consent:\nSeeRay.setUserId(user.analyticsId, '${site.trackingId}');\n\n// On logout or account switch:\nSeeRay.setUserId(null, '${site.trackingId}');",
+                    note: context.tr(
+                      'Provide a stable opaque account ID, never an email, name or other direct identifier. The tracker sends it only with consent; the collector stores a site-scoped SHA-256 hash, never the original value. Set it before subsequent tracked events and clear it on logout. Sessions carrying different account IDs stay separate instead of being merged.',
+                      '请传入稳定且不透明的账号 ID，切勿使用邮箱、姓名或其他直接身份信息。追踪器只会在取得同意后发送；Collector 仅保存站点范围内的 SHA-256 哈希，不保存原始值。请在后续追踪事件前设置，并在退出登录时清除。携带不同账号 ID 的会话会保持分离，不会混并。',
+                    ),
                   ),
                 ],
               ),

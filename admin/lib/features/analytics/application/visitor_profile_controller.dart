@@ -105,6 +105,8 @@ class AnalyticsVisitorProfile {
     required this.firstSeenAt,
     required this.lastSeenAt,
     required this.lifetimeSessions,
+    required this.identityLinkStatus,
+    required this.linkedBrowserCount,
     required this.rangeSessions,
     required this.rangePageViews,
     required this.rangeEvents,
@@ -122,6 +124,8 @@ class AnalyticsVisitorProfile {
   final DateTime firstSeenAt;
   final DateTime lastSeenAt;
   final int lifetimeSessions;
+  final String identityLinkStatus;
+  final int linkedBrowserCount;
   final int rangeSessions;
   final int rangePageViews;
   final int rangeEvents;
@@ -134,40 +138,42 @@ class AnalyticsVisitorProfile {
   final bool hasMoreActions;
   final String? nextActionsCursor;
 
-  factory AnalyticsVisitorProfile.fromJson(Map<String, dynamic> json) =>
-      AnalyticsVisitorProfile(
-        visitorId: json['visitorId'] as String? ?? '',
-        firstSeenAt: DateTime.parse(json['firstSeenAt'] as String).toLocal(),
-        lastSeenAt: DateTime.parse(json['lastSeenAt'] as String).toLocal(),
-        lifetimeSessions: (json['lifetimeSessions'] as num?)?.toInt() ?? 0,
-        rangeSessions: (json['rangeSessions'] as num?)?.toInt() ?? 0,
-        rangePageViews: (json['rangePageViews'] as num?)?.toInt() ?? 0,
-        rangeEvents: (json['rangeEvents'] as num?)?.toInt() ?? 0,
-        rangeBouncedSessions:
-            (json['rangeBouncedSessions'] as num?)?.toInt() ?? 0,
-        averageSessionDurationMs:
-            (json['averageSessionDurationMs'] as num?)?.toInt() ?? 0,
-        sessions: (json['sessions'] as List? ?? const [])
-            .whereType<Map>()
-            .map(
-              (item) => AnalyticsVisitorProfileSession.fromJson(
-                Map<String, dynamic>.from(item),
-              ),
-            )
-            .toList(growable: false),
-        hasMoreSessions: json['hasMoreSessions'] as bool? ?? false,
-        nextSessionsCursor: json['nextSessionsCursor'] as String?,
-        actions: (json['actions'] as List? ?? const [])
-            .whereType<Map>()
-            .map(
-              (item) => AnalyticsVisitorProfileAction.fromJson(
-                Map<String, dynamic>.from(item),
-              ),
-            )
-            .toList(growable: false),
-        hasMoreActions: json['hasMoreActions'] as bool? ?? false,
-        nextActionsCursor: json['nextActionsCursor'] as String?,
-      );
+  factory AnalyticsVisitorProfile.fromJson(
+    Map<String, dynamic> json,
+  ) => AnalyticsVisitorProfile(
+    visitorId: json['visitorId'] as String? ?? '',
+    firstSeenAt: DateTime.parse(json['firstSeenAt'] as String).toLocal(),
+    lastSeenAt: DateTime.parse(json['lastSeenAt'] as String).toLocal(),
+    lifetimeSessions: (json['lifetimeSessions'] as num?)?.toInt() ?? 0,
+    identityLinkStatus: json['identityLinkStatus'] as String? ?? 'anonymous',
+    linkedBrowserCount: (json['linkedBrowserCount'] as num?)?.toInt() ?? 1,
+    rangeSessions: (json['rangeSessions'] as num?)?.toInt() ?? 0,
+    rangePageViews: (json['rangePageViews'] as num?)?.toInt() ?? 0,
+    rangeEvents: (json['rangeEvents'] as num?)?.toInt() ?? 0,
+    rangeBouncedSessions: (json['rangeBouncedSessions'] as num?)?.toInt() ?? 0,
+    averageSessionDurationMs:
+        (json['averageSessionDurationMs'] as num?)?.toInt() ?? 0,
+    sessions: (json['sessions'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => AnalyticsVisitorProfileSession.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .toList(growable: false),
+    hasMoreSessions: json['hasMoreSessions'] as bool? ?? false,
+    nextSessionsCursor: json['nextSessionsCursor'] as String?,
+    actions: (json['actions'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => AnalyticsVisitorProfileAction.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .toList(growable: false),
+    hasMoreActions: json['hasMoreActions'] as bool? ?? false,
+    nextActionsCursor: json['nextActionsCursor'] as String?,
+  );
 }
 
 class AnalyticsVisitorProfileHistoryQuery {

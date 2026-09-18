@@ -44,9 +44,9 @@ class VisitorProfilePage extends ConsumerWidget {
                 englishTitle: 'Visitor profile',
                 chineseTitle: '访客画像说明',
                 englishBody:
-                    'Profiles use anonymous IDs scoped to this site. Lifetime first/last seen and visit totals are shown separately from details filtered to the selected date range and saved audience. Raw IP addresses and arbitrary event properties are not exposed.',
+                    'Profiles use anonymous IDs scoped to this site. If the site sends a consented opaque User ID, browser profiles can be linked for this timeline. Conflicting IDs on one browser are kept separate. Lifetime first/last seen and visit totals are shown separately from details filtered to the selected date range and saved audience. Raw IP addresses and arbitrary event properties are not exposed.',
                 chineseBody:
-                    '画像只使用当前站点范围内的匿名 ID。首次/最近出现时间和累计访问数与所选日期及分群筛选的明细分开展示；不会暴露原始 IP 或任意事件属性。',
+                    '画像使用当前站点范围内的匿名 ID；站点在取得同意后发送不含个人信息的 User ID 时，可关联多个浏览器档案。同一浏览器出现冲突 ID 时会保持分离。首次/最近出现时间和累计访问数与所选日期及分群筛选的明细分开展示；不会暴露原始 IP 或任意事件属性。',
               ),
               onRefresh: () =>
                   ref.invalidate(analyticsVisitorProfileProvider(query)),
@@ -285,7 +285,7 @@ class _VisitorProfileBodyState extends ConsumerState<_VisitorProfileBody> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        context.tr('Anonymous visitor', '匿名访客'),
+                        context.tr('Visitor profile', '访客画像'),
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 3),
@@ -327,6 +327,26 @@ class _VisitorProfileBodyState extends ConsumerState<_VisitorProfileBody> {
                 '首次 ${_date(profile.firstSeenAt)} · 最近 ${_date(profile.lastSeenAt)}',
               ),
             ),
+            if (profile.identityLinkStatus == 'linked')
+              _MetricCard(
+                icon: Icons.devices_outlined,
+                label: context.tr('Linked browser profiles', '已关联浏览器档案'),
+                value: '${profile.linkedBrowserCount}',
+                detail: context.tr(
+                  'Timeline combined using the site-provided User ID',
+                  '按站点提供的 User ID 合并访问时间线',
+                ),
+              ),
+            if (profile.identityLinkStatus == 'ambiguous')
+              _MetricCard(
+                icon: Icons.warning_amber_outlined,
+                label: context.tr('Identity kept separate', '身份保持分离'),
+                value: context.tr('Ambiguous', '存在冲突'),
+                detail: context.tr(
+                  'Multiple User IDs were seen on this browser profile; visits were not merged.',
+                  '此浏览器档案曾出现多个 User ID，因此没有合并访问记录。',
+                ),
+              ),
             _MetricCard(
               icon: Icons.visibility_outlined,
               label: context.tr('Visits in selected period', '所选周期访问'),

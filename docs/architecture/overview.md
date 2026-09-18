@@ -18,6 +18,8 @@ The tracker is cookie-free, not storage-free. When consent is not required—or 
 
 When Do Not Track is enabled, the tracker sends nothing. Full IP addresses are neither persisted nor used to build stable identity. A future strict no-persistent-identifier mode is possible but is not the 1.0 default.
 
+An application may optionally set an opaque User ID after consent. Collection converts it to a site-scoped hash before persistence. Visitor profile history can link sessions for a uniquely identified browser profile; conflicting accounts are kept separate. Aggregate reports, segments, and cohorts remain browser-scoped. See [cross-device visitor profiles](../analytics/visitor-identities.md) for identifier safety and scope.
+
 URLs are normalized before persistence: origin and path are retained, fragments are discarded, and arbitrary query strings are discarded. Explicitly approved UTM fields are extracted independently. This avoids default retention of tokens, emails, user IDs, orders, searches, and session identifiers.
 
 ## Event identity and raw facts

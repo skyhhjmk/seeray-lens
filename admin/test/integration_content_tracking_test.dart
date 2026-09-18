@@ -100,6 +100,32 @@ void main() {
     expect(pixelSnippet.data, isNot(contains('<img src=')));
   });
 
+  testWidgets('provides a consent-aware opaque User ID setup', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [sitesProvider.overrideWith(_SitesController.new)],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('User identity'));
+    await tester.tap(find.text('User identity'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Link authenticated visits across devices'),
+      findsOneWidget,
+    );
+    final snippet = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(snippet.data, contains('SeeRay.setUserId(user.analyticsId'));
+    expect(snippet.data, contains('srl_demo'));
+    expect(snippet.data, contains('SeeRay.setUserId(null'));
+    expect(find.textContaining('never an email'), findsOneWidget);
+  });
+
   testWidgets('provides an explicit opt-in browser crash setup', (
     tester,
   ) async {

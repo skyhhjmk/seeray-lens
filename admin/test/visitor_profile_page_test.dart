@@ -8,9 +8,7 @@ import 'package:seeray_lens_admin/features/analytics/presentation/visitor_profil
 import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 
 void main() {
-  testWidgets('opens an anonymous visitor profile from recent visits', (
-    tester,
-  ) async {
+  testWidgets('opens a visitor profile from recent visits', (tester) async {
     tester.view.physicalSize = const Size(1280, 1200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -58,7 +56,9 @@ void main() {
     await tester.tap(find.text('Visitor visitor-…3456'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Anonymous visitor'), findsOneWidget);
+    expect(find.text('Visitor profile'), findsOneWidget);
+    expect(find.text('Linked browser profiles'), findsOneWidget);
+    expect(find.text('2'), findsWidgets);
     expect(find.textContaining('/pricing'), findsWidgets);
     expect(find.text('Chrome'), findsOneWidget);
     expect(find.textContaining('product_interaction'), findsOneWidget);
@@ -144,6 +144,8 @@ class _VisitorApi extends SeeRayApi {
         'firstSeenAt': '2026-07-01T10:00:00Z',
         'lastSeenAt': '2026-09-18T10:03:00Z',
         'lifetimeSessions': 8,
+        'identityLinkStatus': 'linked',
+        'linkedBrowserCount': 2,
         'rangeSessions': 1,
         'rangePageViews': 2,
         'rangeEvents': 3,
