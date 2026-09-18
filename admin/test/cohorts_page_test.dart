@@ -56,22 +56,6 @@ void main() {
     expect(api.paths.last, contains('period=year'));
     expect(api.paths.last, contains('periods=5'));
 
-    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Custom length').last);
-    await tester.pumpAndSettle();
-    expect(api.paths.last, contains('period=custom'));
-    expect(api.paths.last, contains('periodDays=14'));
-    expect(find.text('Days per cohort period'), findsOneWidget);
-    expect(find.text('14 days'), findsOneWidget);
-    await tester.ensureVisible(find.byType(Slider));
-    await tester.drag(find.byType(Slider), const Offset(140, 0));
-    await tester.pumpAndSettle();
-    expect(
-      int.parse(api.lastCohortQuery!.queryParameters['periodDays']!),
-      greaterThan(14),
-    );
-
     container
         .read(analyticsSegmentSelectionProvider('site-1').notifier)
         .select('segment-1');
@@ -101,6 +85,49 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('20%'), findsOneWidget);
     expect(find.text('1 次'), findsOneWidget);
+  });
+
+  testWidgets('applies exact custom cohort lengths through 3660 days', (
+    tester,
+  ) async {
+    final api = _CohortApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: CohortsPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom length').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Days per cohort period'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('730 d'));
+    await tester.tap(find.text('730 d'));
+    await tester.pumpAndSettle();
+    expect(api.lastCohortQuery!.queryParameters['periodDays'], '730');
+
+    await tester.enterText(
+      find.byKey(const ValueKey('cohort-period-days-input')),
+      '3660',
+    );
+    await tester.tap(find.byKey(const ValueKey('apply-cohort-period-days')));
+    await tester.pumpAndSettle();
+    expect(api.lastCohortQuery!.queryParameters['periodDays'], '3660');
+
+    await tester.enterText(
+      find.byKey(const ValueKey('cohort-period-days-input')),
+      '3661',
+    );
+    await tester.tap(find.byKey(const ValueKey('apply-cohort-period-days')));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter a whole number from 1 to 3660.'), findsOneWidget);
+    expect(api.lastCohortQuery!.queryParameters['periodDays'], '3660');
   });
 
   testWidgets('builds a cohort around a configured goal conversion', (

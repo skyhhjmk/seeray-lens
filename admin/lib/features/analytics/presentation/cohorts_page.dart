@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/i18n/app_i18n.dart';
@@ -98,9 +99,9 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
                 englishTitle: 'Cohort analysis',
                 chineseTitle: '队列分析',
                 englishBody:
-                    'Choose daily, weekly or monthly cohorts, based on first meaningful visit or first conversion of a configured goal. Compare returning visitors, visits, per-goal conversions, or aggregate goal value; incomplete periods are left blank.',
+                    'Choose daily, weekly, monthly, yearly or custom-length cohorts, based on first meaningful visit or first conversion of a configured goal. Custom calendar periods can be 1–3,660 days. Compare returning visitors, visits, per-goal conversions, or aggregate goal value; incomplete periods are left blank.',
                 chineseBody:
-                    '可按日、周或月建立队列，并按首次有效访问或首次目标转化分组。可比较回访访客、访问量、单目标转化或整体目标价值；尚未完整结束的周期留空。',
+                    '可按日、周、月、年或自定义天数建立队列，并按首次有效访问或首次目标转化分组。自定义自然日周期支持 1–3660 天。可比较回访访客、访问量、单目标转化或整体目标价值；尚未完整结束的周期留空。',
               ),
               rangeState: range,
               segmentFilter: SegmentFilterSelector(siteId: widget.siteId),
@@ -905,25 +906,64 @@ class _CohortPeriodLengthControl extends StatefulWidget {
 
 class _CohortPeriodLengthControlState
     extends State<_CohortPeriodLengthControl> {
+  static const _commonPeriods = [14, 30, 90, 180, 365, 730, 1825, 3660];
+
   late int _days;
+  late final TextEditingController _controller;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
     _days = widget.days;
+    _controller = TextEditingController(text: '$_days');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant _CohortPeriodLengthControl oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.days != widget.days) _days = widget.days;
+    if (oldWidget.days != widget.days) {
+      _days = widget.days;
+      _controller.text = '$_days';
+      _error = null;
+    }
+  }
+
+  void _selectDays(int days) {
+    setState(() {
+      _days = days;
+      _controller.text = '$days';
+      _error = null;
+    });
+    if (days != widget.days) widget.onChanged(days);
+  }
+
+  void _applyInput(BuildContext context) {
+    final parsed = int.tryParse(_controller.text.trim());
+    if (parsed == null || parsed < 1 || parsed > 3660) {
+      setState(() {
+        _error = context.tr(
+          'Enter a whole number from 1 to 3660.',
+          '请输入 1 到 3660 之间的整数。',
+        );
+      });
+      return;
+    }
+    _selectDays(parsed);
+    FocusScope.of(context).unfocus();
   }
 
   @override
   Widget build(BuildContext context) => Card(
     elevation: 0,
     child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -935,27 +975,50 @@ class _CohortPeriodLengthControlState
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
-              Text(
-                context.tr('$_days days', '$_days 天'),
-                style: Theme.of(context).textTheme.titleSmall,
+              SizedBox(
+                width: 190,
+                child: TextField(
+                  key: const ValueKey('cohort-period-days-input'),
+                  controller: _controller,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: InputDecoration(
+                    labelText: context.tr('Exact days', '精确天数'),
+                    suffixIcon: IconButton(
+                      key: const ValueKey('apply-cohort-period-days'),
+                      tooltip: context.tr('Apply period length', '应用周期长度'),
+                      onPressed: () => _applyInput(context),
+                      icon: const Icon(Icons.check),
+                    ),
+                    errorText: _error,
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => _applyInput(context),
+                ),
               ),
             ],
           ),
+          const SizedBox(height: 8),
           Text(
             context.tr(
-              'Set a custom calendar bucket from 1 to 365 days. Buckets align to the selected report start date.',
-              '可设置 1 到 365 天的自定义自然日周期；周期边界以所选报告开始日对齐。',
+              'Choose a common length below or enter any value from 1 to 3660. Calendar buckets align to the selected report start date.',
+              '可选下方常用周期或输入 1 到 3660 之间的天数；自然日周期边界以所选报告开始日对齐。',
             ),
             style: Theme.of(context).textTheme.bodySmall,
           ),
-          Slider(
-            min: 1,
-            max: 365,
-            divisions: 364,
-            value: _days.toDouble(),
-            label: context.tr('$_days days', '$_days 天'),
-            onChanged: (value) => setState(() => _days = value.round()),
-            onChangeEnd: (value) => widget.onChanged(value.round()),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final days in _commonPeriods)
+                ChoiceChip(
+                  label: Text(context.tr('$days d', '$days 天')),
+                  selected: _days == days,
+                  onSelected: (_) => _selectDays(days),
+                ),
+            ],
           ),
         ],
       ),
