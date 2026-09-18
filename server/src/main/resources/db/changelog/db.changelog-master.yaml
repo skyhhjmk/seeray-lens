@@ -265,3 +265,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0038-form-analytics-index.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0039-media-analytics-index
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0039-media-analytics-index.sql
+            relativeToChangelogFile: false

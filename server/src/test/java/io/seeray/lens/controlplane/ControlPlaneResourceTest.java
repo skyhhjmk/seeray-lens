@@ -589,6 +589,84 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void mediaAnalyticsAggregatesPlaybackMilestonesWithoutReturningMediaUrls() throws Exception {
+        Tokens owner = register("media-analytics" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Media site\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        UUID site = UUID.fromString(siteId);
+        LocalDate reportDay = LocalDate.now(ZoneId.of("UTC")).minusDays(1);
+        Instant base = reportDay.atTime(10, 0).toInstant(java.time.ZoneOffset.UTC);
+        String visitorOne = UUID.randomUUID().toString();
+        String sessionOne = UUID.randomUUID().toString();
+        insertRaw(
+                site,
+                visitorOne,
+                sessionOne,
+                "media_start",
+                base,
+                "/watch",
+                "{\"name\":\"launch-video\",\"data\":{\"mediaId\":\"launch-video\",\"mediaType\":\"video\",\"source\":\"https://cdn.example.test/private.mp4?token=secret\",\"title\":\"Internal launch\"}}");
+        for (int milestone : new int[] {25, 50, 75, 90}) {
+            insertRaw(
+                    site,
+                    visitorOne,
+                    sessionOne,
+                    "media_progress",
+                    base.plusSeconds(milestone),
+                    "/watch",
+                    "{\"name\":\"launch-video\",\"data\":{\"mediaId\":\"launch-video\",\"mediaType\":\"video\",\"progressPercent\":"
+                            + milestone + "}}");
+        }
+        insertRaw(
+                site,
+                visitorOne,
+                sessionOne,
+                "media_complete",
+                base.plusSeconds(120),
+                "/watch",
+                "{\"name\":\"launch-video\",\"data\":{\"mediaId\":\"launch-video\",\"mediaType\":\"video\",\"mediaDurationSeconds\":120}}");
+        String visitorTwo = UUID.randomUUID().toString();
+        String sessionTwo = UUID.randomUUID().toString();
+        insertRaw(
+                site,
+                visitorTwo,
+                sessionTwo,
+                "media_start",
+                base.plusSeconds(200),
+                "/watch",
+                "{\"name\":\"launch-video\",\"data\":{\"mediaId\":\"launch-video\",\"mediaType\":\"video\"}}");
+
+        var response = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/media?from=" + reportDay + "&to=" + reportDay)
+                .then()
+                .statusCode(200)
+                .extract()
+                .response();
+        assertEquals("launch-video", response.path("rows[0].mediaId"));
+        assertEquals("/watch", response.path("rows[0].pagePath"));
+        assertEquals(2L, ((Number) response.path("rows[0].starts")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].reached25")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].reached50")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].reached75")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].reached90")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].completions")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].incompleteSessions")).longValue());
+        assertEquals(2L, ((Number) response.path("rows[0].uniqueVisitors")).longValue());
+        assertEquals(120, ((Number) response.path("rows[0].averageDurationSeconds")).intValue());
+        assertEquals(0.5, ((Number) response.path("rows[0].completionRate")).doubleValue(), 0.001);
+        assertFalse(response.asString().contains("private.mp4"));
+        assertFalse(response.asString().contains("secret"));
+        assertFalse(response.asString().contains("Internal launch"));
+    }
+
+    @Test
     void siteSearchReportCountsTermsZeroResultsAndSavedSegment() throws Exception {
         Tokens owner = register("site-search" + System.nanoTime() + "@example.test");
         String workspaceId = workspace(owner.access()).extract().path("[0].id");

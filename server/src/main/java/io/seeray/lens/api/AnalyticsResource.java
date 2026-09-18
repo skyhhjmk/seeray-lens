@@ -7,6 +7,7 @@ import io.seeray.lens.application.CohortQueryService;
 import io.seeray.lens.application.CustomReportService;
 import io.seeray.lens.application.FormAnalyticsService;
 import io.seeray.lens.application.GeoLocationResolver;
+import io.seeray.lens.application.MediaAnalyticsService;
 import io.seeray.lens.application.SegmentedAnalyticsQueryService;
 import io.seeray.lens.domain.common.ControlPlaneException;
 import jakarta.ws.rs.*;
@@ -24,6 +25,7 @@ public class AnalyticsResource {
     private final CohortQueryService cohorts;
     private final AttributionQueryService attribution;
     private final FormAnalyticsService forms;
+    private final MediaAnalyticsService media;
 
     public AnalyticsResource(
             AnalyticsQueryService analytics,
@@ -32,7 +34,8 @@ public class AnalyticsResource {
             CustomReportService customReports,
             CohortQueryService cohorts,
             AttributionQueryService attribution,
-            FormAnalyticsService forms) {
+            FormAnalyticsService forms,
+            MediaAnalyticsService media) {
         this.analytics = analytics;
         this.segmented = segmented;
         this.geoLocationResolver = geoLocationResolver;
@@ -40,6 +43,7 @@ public class AnalyticsResource {
         this.cohorts = cohorts;
         this.attribution = attribution;
         this.forms = forms;
+        this.media = media;
     }
 
     @GET
@@ -289,6 +293,13 @@ public class AnalyticsResource {
     public FormAnalyticsService.Report forms(
             @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
         return forms.report(site, analytics.range(site, from, to));
+    }
+
+    @GET
+    @Path("/media")
+    public MediaAnalyticsService.Report media(
+            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+        return media.report(site, analytics.range(site, from, to));
     }
 
     @GET
