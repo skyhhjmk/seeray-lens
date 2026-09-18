@@ -258,3 +258,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0037-analytics-annotations.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0038-form-analytics-index
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0038-form-analytics-index.sql
+            relativeToChangelogFile: false

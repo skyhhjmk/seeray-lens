@@ -25,6 +25,7 @@ import 'features/analytics/presentation/analytics_alerts_page.dart';
 import 'features/analytics/presentation/attribution_page.dart';
 import 'features/analytics/presentation/analytics_annotations_page.dart';
 import 'features/analytics/presentation/visitor_profile_page.dart';
+import 'features/analytics/presentation/form_analytics_page.dart';
 import 'features/landing/presentation/landing_page.dart';
 import 'features/integration/presentation/integration_page.dart';
 import 'features/domains/presentation/domains_page.dart';
@@ -222,6 +223,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
               state,
               _Authenticated(
                 child: RecordingsPage(siteId: state.pathParameters['siteId']!),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/behaviour/forms',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: FormAnalyticsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
               ),
             ),
           ),

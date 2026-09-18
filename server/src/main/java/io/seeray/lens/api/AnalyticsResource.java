@@ -5,6 +5,7 @@ import io.seeray.lens.application.AnalyticsQueryService;
 import io.seeray.lens.application.AttributionQueryService;
 import io.seeray.lens.application.CohortQueryService;
 import io.seeray.lens.application.CustomReportService;
+import io.seeray.lens.application.FormAnalyticsService;
 import io.seeray.lens.application.GeoLocationResolver;
 import io.seeray.lens.application.SegmentedAnalyticsQueryService;
 import io.seeray.lens.domain.common.ControlPlaneException;
@@ -22,6 +23,7 @@ public class AnalyticsResource {
     private final CustomReportService customReports;
     private final CohortQueryService cohorts;
     private final AttributionQueryService attribution;
+    private final FormAnalyticsService forms;
 
     public AnalyticsResource(
             AnalyticsQueryService analytics,
@@ -29,13 +31,15 @@ public class AnalyticsResource {
             GeoLocationResolver geoLocationResolver,
             CustomReportService customReports,
             CohortQueryService cohorts,
-            AttributionQueryService attribution) {
+            AttributionQueryService attribution,
+            FormAnalyticsService forms) {
         this.analytics = analytics;
         this.segmented = segmented;
         this.geoLocationResolver = geoLocationResolver;
         this.customReports = customReports;
         this.cohorts = cohorts;
         this.attribution = attribution;
+        this.forms = forms;
     }
 
     @GET
@@ -278,6 +282,13 @@ public class AnalyticsResource {
             @DefaultValue("last_touch") @QueryParam("model") String model,
             @DefaultValue("30") @QueryParam("lookbackDays") int lookbackDays) {
         return attribution.report(site, analytics.range(site, from, to), segmentId, goalId, model, lookbackDays);
+    }
+
+    @GET
+    @Path("/forms")
+    public FormAnalyticsService.Report forms(
+            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+        return forms.report(site, analytics.range(site, from, to));
     }
 
     @GET

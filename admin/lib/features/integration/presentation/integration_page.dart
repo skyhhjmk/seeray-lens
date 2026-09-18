@@ -42,9 +42,11 @@ class IntegrationPage extends ConsumerWidget {
         GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
             'web-vitals'
         ? 6
+        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'forms'
+        ? 12
         : 0;
     return DefaultTabController(
-      length: 12,
+      length: 13,
       initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
@@ -79,6 +81,7 @@ class IntegrationPage extends ConsumerWidget {
                   Tab(text: context.tr('A/B tests', 'A/B 测试')),
                   Tab(text: context.tr('Tag Manager', 'Tag Manager')),
                   Tab(text: context.tr('Consent & privacy', '同意与隐私')),
+                  Tab(text: context.tr('Form analytics', '表单分析')),
                 ],
               ),
             ),
@@ -211,6 +214,18 @@ class IntegrationPage extends ConsumerWidget {
                     trackingId: site.trackingId,
                     trackerUrl: script,
                     requiredBySite: site.requireConsent,
+                  ),
+                  _Snippet(
+                    title: context.tr(
+                      'Measure explicit form interactions',
+                      '追踪明确标记的表单互动',
+                    ),
+                    body:
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-track-forms></script>\n\n<form data-seeray-form="signup">\n  <input type="email" autocomplete="email">\n  <button type="submit">Continue</button>\n</form>\n\n<script>\n  // Call inside your async submit handler after the server responds:\n  SeeRay.trackFormResult(\'signup\', success);\n</script>',
+                    note: context.tr(
+                      'This is opt-in twice: enable data-track-forms on the tracker and add a stable, non-personal data-seeray-form ID to each form. The tracker records visible form views, starts, generic field categories, time, native validation errors and submit attempts. It never reads field names, values, labels, error text or DOM content; password, hidden and file inputs are excluded. Native submit is not backend success: call trackFormResult only after your application knows the result. Mark sensitive forms with data-seeray-no-track, and call SeeRay.refreshFormTracking() after dynamically adding forms.',
+                      '此功能需要两处显式启用：追踪代码添加 data-track-forms，每个表单添加稳定且不含个人信息的 data-seeray-form ID。追踪器记录可见表单、开始填写、通用字段类别、耗时、浏览器原生校验错误和提交尝试；不会读取字段名、值、标签、错误文本或 DOM 内容，并排除密码、隐藏和文件字段。原生提交不代表服务端成功：应用确认处理结果后再调用 trackFormResult。敏感表单请加 data-seeray-no-track；动态添加表单后调用 SeeRay.refreshFormTracking()。',
+                    ),
                   ),
                 ],
               ),

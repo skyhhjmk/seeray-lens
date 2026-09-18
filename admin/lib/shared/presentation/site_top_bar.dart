@@ -16,6 +16,7 @@ enum SiteTopTab {
   locations,
   acquisition,
   behaviour,
+  forms,
   heatmaps,
   recordings,
   dimensions,
@@ -132,6 +133,7 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
               '用户行为',
               'behaviour',
             ),
+            _tab(context, SiteTopTab.forms, 'Forms', '表单分析', 'behaviour/forms'),
             _tab(
               context,
               SiteTopTab.heatmaps,

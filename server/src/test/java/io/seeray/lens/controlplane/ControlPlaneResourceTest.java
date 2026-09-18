@@ -459,6 +459,136 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void formAnalyticsAggregatesExplicitFormsWithoutReturningFieldData() throws Exception {
+        Tokens owner = register("form-analytics" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Forms site\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        UUID site = UUID.fromString(siteId);
+        LocalDate reportDay = LocalDate.now(ZoneId.of("UTC")).minusDays(1);
+        Instant base = reportDay.atTime(10, 0).toInstant(java.time.ZoneOffset.UTC);
+        String visitorOne = UUID.randomUUID().toString();
+        String sessionOne = UUID.randomUUID().toString();
+        insertRaw(
+                site,
+                visitorOne,
+                sessionOne,
+                "form_view",
+                base,
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\"}}");
+        insertRaw(
+                site,
+                visitorOne,
+                sessionOne,
+                "form_start",
+                base.plusSeconds(1),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\"}}");
+        insertRaw(
+                site,
+                visitorOne,
+                sessionOne,
+                "form_field",
+                base.plusSeconds(2),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\",\"fieldType\":\"text\",\"name\":\"email\",\"value\":\"secret@example.test\"}}");
+        insertRaw(
+                site,
+                visitorOne,
+                sessionOne,
+                "form_submit",
+                base.plusSeconds(3),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\"}}");
+        insertRaw(
+                site,
+                visitorOne,
+                sessionOne,
+                "form_success",
+                base.plusSeconds(4),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\"}}");
+
+        String visitorTwo = UUID.randomUUID().toString();
+        String sessionTwo = UUID.randomUUID().toString();
+        insertRaw(
+                site,
+                visitorTwo,
+                sessionTwo,
+                "form_view",
+                base.plusSeconds(10),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\"}}");
+        insertRaw(
+                site,
+                visitorTwo,
+                sessionTwo,
+                "form_start",
+                base.plusSeconds(11),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\"}}");
+        insertRaw(
+                site,
+                visitorTwo,
+                sessionTwo,
+                "form_error",
+                base.plusSeconds(12),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\",\"fieldType\":\"text\"}}");
+        insertRaw(
+                site,
+                visitorTwo,
+                sessionTwo,
+                "form_field_time",
+                base.plusSeconds(13),
+                "/signup",
+                "{\"name\":\"signup\",\"data\":{\"formId\":\"signup\",\"fieldType\":\"text\"}}");
+        insertRaw(
+                site,
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                "form_view",
+                base.plusSeconds(20),
+                "/unsafe",
+                "{\"name\":\"unsafe id\",\"data\":{\"formId\":\"unsafe id\"}}");
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update raw_event set duration_ms=1500 where site_id=? and client_session_id=? and event_type='form_field_time'")) {
+            statement.setObject(1, site);
+            statement.setString(2, sessionTwo);
+            statement.executeUpdate();
+        }
+
+        var response = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/forms?from=" + reportDay + "&to=" + reportDay)
+                .then()
+                .statusCode(200)
+                .extract()
+                .response();
+        assertEquals("signup", response.path("rows[0].formId"));
+        assertEquals(1, ((Number) response.path("rows.size()")).intValue());
+        assertEquals("/signup", response.path("rows[0].pagePath"));
+        assertEquals(2L, ((Number) response.path("rows[0].views")).longValue());
+        assertEquals(2L, ((Number) response.path("rows[0].starts")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].fieldInteractions")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].validationErrors")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].submits")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].successes")).longValue());
+        assertEquals(1L, ((Number) response.path("rows[0].abandonments")).longValue());
+        assertEquals(1500L, ((Number) response.path("rows[0].averageFieldTimeMs")).longValue());
+        assertEquals(0.5, ((Number) response.path("rows[0].conversionRate")).doubleValue(), 0.001);
+        assertFalse(response.asString().contains("secret@example.test"));
+        assertFalse(response.asString().contains("email"));
+    }
+
+    @Test
     void siteSearchReportCountsTermsZeroResultsAndSavedSegment() throws Exception {
         Tokens owner = register("site-search" + System.nanoTime() + "@example.test");
         String workspaceId = workspace(owner.access()).extract().path("[0].id");
