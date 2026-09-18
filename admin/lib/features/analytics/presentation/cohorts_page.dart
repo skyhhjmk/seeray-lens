@@ -26,6 +26,8 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
   int _periods = 8;
   String _basis = 'first_visit';
   String? _goalId;
+  String _metric = 'returning_visitors';
+  String? _metricGoalId;
 
   @override
   void initState() {
@@ -63,6 +65,10 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
         enabledGoals?.any((goal) => goal.id == _goalId) == true
         ? _goalId
         : null;
+    final selectedMetricGoalId =
+        enabledGoals?.any((goal) => goal.id == _metricGoalId) == true
+        ? _metricGoalId
+        : null;
     final query = AnalyticsCohortQuery(
       siteId: widget.siteId,
       range: range.range,
@@ -71,8 +77,12 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
       periods: _periods,
       basis: _basis,
       goalId: selectedGoalId,
+      metric: _metric,
+      metricGoalId: selectedMetricGoalId,
     );
-    final report = _basis == 'first_visit' || selectedGoalId != null
+    final report =
+        (_basis == 'first_visit' || selectedGoalId != null) &&
+            (_metric == 'returning_visitors' || selectedMetricGoalId != null)
         ? ref.watch(analyticsCohortProvider(query))
         : null;
     return Scaffold(
@@ -83,12 +93,12 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
               siteId: widget.siteId,
               selected: SiteTopTab.cohorts,
               help: const PageHelpButton(
-                englishTitle: 'Cohort retention',
-                chineseTitle: '队列留存',
+                englishTitle: 'Cohort analysis',
+                chineseTitle: '队列分析',
                 englishBody:
-                    'Choose daily, weekly or monthly cohorts, based on first meaningful visit or first conversion of a configured goal. Later cells show return activity in each matching calendar period; incomplete periods are left blank.',
+                    'Choose daily, weekly or monthly cohorts, based on first meaningful visit or first conversion of a configured goal. Compare returning visitors or conversions of another configured goal; incomplete periods are left blank.',
                 chineseBody:
-                    '可按日、周或月建立队列，并按首次有效访问或首次目标转化分组。后续单元格显示对应周期的回访情况；尚未完整结束的周期留空。',
+                    '可按日、周或月建立队列，并按首次有效访问或首次目标转化分组。可比较回访访客或另一目标的转化；尚未完整结束的周期留空。',
               ),
               rangeState: range,
               segmentFilter: SegmentFilterSelector(siteId: widget.siteId),
@@ -103,12 +113,19 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
         goals: goals,
         basis: _basis,
         selectedGoalId: selectedGoalId,
+        metric: _metric,
+        selectedMetricGoalId: selectedMetricGoalId,
         report: report,
         onBasisChanged: (basis) => setState(() {
           _basis = basis;
           _goalId = null;
         }),
         onGoalChanged: (goalId) => setState(() => _goalId = goalId),
+        onMetricChanged: (metric) => setState(() {
+          _metric = metric;
+          _metricGoalId = null;
+        }),
+        onMetricGoalChanged: (goalId) => setState(() => _metricGoalId = goalId),
         period: _period,
         periods: _periods,
         onPeriodChanged: (period) => setState(() {
@@ -141,9 +158,13 @@ class _CohortReport extends StatelessWidget {
     required this.goals,
     required this.basis,
     required this.selectedGoalId,
+    required this.metric,
+    required this.selectedMetricGoalId,
     required this.report,
     required this.onBasisChanged,
     required this.onGoalChanged,
+    required this.onMetricChanged,
+    required this.onMetricGoalChanged,
     required this.period,
     required this.periods,
     required this.onPeriodChanged,
@@ -155,9 +176,13 @@ class _CohortReport extends StatelessWidget {
   final AsyncValue<List<AttributionGoal>> goals;
   final String basis;
   final String? selectedGoalId;
+  final String metric;
+  final String? selectedMetricGoalId;
   final AsyncValue<List<AnalyticsCohortCell>>? report;
   final ValueChanged<String> onBasisChanged;
   final ValueChanged<String?> onGoalChanged;
+  final ValueChanged<String> onMetricChanged;
+  final ValueChanged<String?> onMetricGoalChanged;
   final String period;
   final int periods;
   final ValueChanged<String> onPeriodChanged;
@@ -179,11 +204,13 @@ class _CohortReport extends StatelessWidget {
       'month' => context.tr('month', '月'),
       _ => context.tr('week', '周'),
     };
-    final periodTitle = switch (period) {
-      'day' => context.tr('Daily retention', '每日留存'),
-      'month' => context.tr('Monthly retention', '每月留存'),
-      _ => context.tr('Weekly retention', '每周留存'),
-    };
+    final periodTitle = metric == 'goal_conversions'
+        ? context.tr('Goal conversion rate', '目标转化率')
+        : switch (period) {
+            'day' => context.tr('Daily retention', '每日留存'),
+            'month' => context.tr('Monthly retention', '每月留存'),
+            _ => context.tr('Weekly retention', '每周留存'),
+          };
     final periodOptions = switch (period) {
       'day' => const [7, 14, 30],
       'month' => const [3, 6, 12],
@@ -198,16 +225,20 @@ class _CohortReport extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       children: [
         Text(
-          context.tr('Cohort retention', '队列留存'),
+          context.tr('Cohort analysis', '队列分析'),
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 6),
         Text(
           context.tr(
-            basis == 'first_visit'
+            metric == 'goal_conversions'
+                ? 'Measure conversions of the selected goal by cohort period. Each cell shows the share of the original cohort that converted; the tooltip includes conversion count and goal value.'
+                : basis == 'first_visit'
                 ? 'See whether visitors return after their first meaningful visit. A return is a new meaningful session; cohorts use anonymous session facts.'
                 : 'See whether visitors return after their first conversion of the selected goal. Return activity is still measured as a meaningful session.',
-            basis == 'first_visit'
+            metric == 'goal_conversions'
+                ? '按队列周期统计所选目标的转化。单元格显示原始队列中的转化访客占比；悬浮提示包含转化次数和目标值。'
+                : basis == 'first_visit'
                 ? '查看访客首次有效访问后是否回访。回访按新的有效访问计算；队列使用匿名会话事实。'
                 : '查看访客首次达成所选目标后是否回访；后续回访仍按新的有效访问计算。',
           ),
@@ -281,7 +312,8 @@ class _CohortReport extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        if (basis == 'goal_conversion' && selectedGoalId == null)
+        if ((basis == 'goal_conversion' && selectedGoalId == null) ||
+            (metric == 'goal_conversions' && selectedMetricGoalId == null))
           Card(
             child: Padding(
               padding: const EdgeInsets.all(24),
@@ -292,8 +324,12 @@ class _CohortReport extends StatelessWidget {
                         '无法加载已配置目标。请重试或打开目标管理。',
                       )
                     : context.tr(
-                        'Select an enabled goal to build conversion cohorts.',
-                        '选择一个已启用的目标以查看转化队列。',
+                        metric == 'goal_conversions' && basis == 'first_visit'
+                            ? 'Select an enabled goal to measure conversions.'
+                            : 'Select an enabled goal to build conversion cohorts.',
+                        metric == 'goal_conversions' && basis == 'first_visit'
+                            ? '选择一个已启用的目标以衡量转化。'
+                            : '选择一个已启用的目标以查看转化队列。',
                       ),
               ),
             ),
@@ -432,8 +468,9 @@ class _CohortReport extends StatelessWidget {
                             ),
                             for (var index = 0; index < periods; index++)
                               DataCell(
-                                _RetentionCell(
+                                _CohortMetricCell(
                                   cell: grouped[cohortPeriod]?[index],
+                                  metric: metric,
                                 ),
                               ),
                           ],
@@ -534,6 +571,68 @@ class _CohortReport extends StatelessWidget {
                 if (value != null) onPeriodChanged(value);
               },
             ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: metric,
+              decoration: InputDecoration(
+                labelText: context.tr('Measure', '衡量指标'),
+                border: const OutlineInputBorder(),
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: 'returning_visitors',
+                  child: Text(context.tr('Returning visitors', '回访访客')),
+                ),
+                DropdownMenuItem(
+                  value: 'goal_conversions',
+                  child: Text(context.tr('Goal conversions', '目标转化')),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null) onMetricChanged(value);
+              },
+            ),
+            if (metric == 'goal_conversions') ...[
+              const SizedBox(height: 10),
+              if (goals.isLoading)
+                const LinearProgressIndicator()
+              else if (goals.hasError || enabledGoals.isEmpty)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        goals.hasError
+                            ? context.tr('Could not load goals.', '无法加载目标。')
+                            : context.tr(
+                                'Create and enable a goal to measure conversions.',
+                                '请先创建并启用一个目标，再衡量转化。',
+                              ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => context.go('/sites/$siteId/goals'),
+                      icon: const Icon(Icons.tune),
+                      label: Text(context.tr('Manage goals', '管理目标')),
+                    ),
+                  ],
+                )
+              else
+                DropdownButtonFormField<String>(
+                  initialValue: selectedMetricGoalId,
+                  decoration: InputDecoration(
+                    labelText: context.tr('Metric goal', '指标目标'),
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final goal in enabledGoals)
+                      DropdownMenuItem(
+                        value: goal.id,
+                        child: Text(goal.name, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: onMetricGoalChanged,
+                ),
+            ],
             if (basis == 'goal_conversion') ...[
               const SizedBox(height: 10),
               if (goals.isLoading)
@@ -582,10 +681,11 @@ class _CohortReport extends StatelessWidget {
   }
 }
 
-class _RetentionCell extends StatelessWidget {
-  const _RetentionCell({required this.cell});
+class _CohortMetricCell extends StatelessWidget {
+  const _CohortMetricCell({required this.cell, required this.metric});
 
   final AnalyticsCohortCell? cell;
+  final String metric;
 
   @override
   Widget build(BuildContext context) {
@@ -593,8 +693,8 @@ class _RetentionCell extends StatelessWidget {
     if (current == null || !current.complete) {
       return Tooltip(
         message: context.tr(
-          'This seven-day retention period is incomplete.',
-          '此七天留存周期尚未完整。',
+          'This calendar period is incomplete.',
+          '此自然周期尚未完整。',
         ),
         child: Container(
           width: 64,
@@ -608,11 +708,22 @@ class _RetentionCell extends StatelessWidget {
         ),
       );
     }
-    final rate = current.retentionRate.clamp(0.0, 1.0);
+    final converting = metric == 'goal_conversions';
+    final rate =
+        (converting
+                ? current.cohortSize == 0
+                      ? 0.0
+                      : current.goalConvertedVisitors / current.cohortSize
+                : current.retentionRate)
+            .clamp(0.0, 1.0);
     return Tooltip(
       message: context.tr(
-        '${current.retainedVisitors} of ${current.cohortSize} visitors returned',
-        '${current.cohortSize} 位访客中有 ${current.retainedVisitors} 位回访',
+        converting
+            ? '${current.goalConvertedVisitors} visitors made ${current.goalConversions} conversions; goal value ${current.goalValue}'
+            : '${current.retainedVisitors} of ${current.cohortSize} visitors returned',
+        converting
+            ? '${current.cohortSize} 位访客中有 ${current.goalConvertedVisitors} 位转化，共 ${current.goalConversions} 次，目标值 ${current.goalValue}'
+            : '${current.cohortSize} 位访客中有 ${current.retainedVisitors} 位回访',
       ),
       child: Container(
         width: 64,
@@ -629,7 +740,9 @@ class _RetentionCell extends StatelessWidget {
           children: [
             Text('${(rate * 100).round()}%'),
             Text(
-              '${current.retainedVisitors}/${current.cohortSize}',
+              converting
+                  ? '${current.goalConversions} 次'
+                  : '${current.retainedVisitors}/${current.cohortSize}',
               style: Theme.of(context).textTheme.labelSmall,
             ),
           ],

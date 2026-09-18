@@ -125,6 +125,9 @@ class AnalyticsCohortCell {
     required this.cohortSize,
     required this.retainedVisitors,
     required this.retentionRate,
+    required this.goalConversions,
+    required this.goalConvertedVisitors,
+    required this.goalValue,
     required this.complete,
   });
 
@@ -133,6 +136,9 @@ class AnalyticsCohortCell {
   final int cohortSize;
   final int retainedVisitors;
   final double retentionRate;
+  final int goalConversions;
+  final int goalConvertedVisitors;
+  final double goalValue;
   final bool complete;
 
   factory AnalyticsCohortCell.fromJson(Map<String, dynamic> json) =>
@@ -142,6 +148,10 @@ class AnalyticsCohortCell {
         cohortSize: (json['cohortSize'] as num?)?.toInt() ?? 0,
         retainedVisitors: (json['retainedVisitors'] as num?)?.toInt() ?? 0,
         retentionRate: (json['retentionRate'] as num?)?.toDouble() ?? 0,
+        goalConversions: (json['goalConversions'] as num?)?.toInt() ?? 0,
+        goalConvertedVisitors:
+            (json['goalConvertedVisitors'] as num?)?.toInt() ?? 0,
+        goalValue: (json['goalValue'] as num?)?.toDouble() ?? 0,
         complete: json['complete'] as bool? ?? false,
       );
 }
@@ -155,6 +165,8 @@ class AnalyticsCohortQuery {
     this.basis = 'first_visit',
     this.segmentId,
     this.goalId,
+    this.metric = 'returning_visitors',
+    this.metricGoalId,
   });
 
   final String siteId;
@@ -164,6 +176,8 @@ class AnalyticsCohortQuery {
   final int periods;
   final String basis;
   final String? goalId;
+  final String metric;
+  final String? metricGoalId;
 
   @override
   bool operator ==(Object other) =>
@@ -174,6 +188,8 @@ class AnalyticsCohortQuery {
       other.periods == periods &&
       other.basis == basis &&
       other.goalId == goalId &&
+      other.metric == metric &&
+      other.metricGoalId == metricGoalId &&
       other.range.fromQuery == range.fromQuery &&
       other.range.toQuery == range.toQuery;
 
@@ -185,6 +201,8 @@ class AnalyticsCohortQuery {
     periods,
     basis,
     goalId,
+    metric,
+    metricGoalId,
     range.fromQuery,
     range.toQuery,
   );
@@ -442,8 +460,10 @@ final analyticsCohortProvider =
         'period': query.period,
         'periods': '${query.periods}',
         'basis': query.basis,
+        'metric': query.metric,
         if (query.segmentId != null) 'segmentId': query.segmentId!,
         if (query.goalId != null) 'goalId': query.goalId!,
+        if (query.metricGoalId != null) 'metricGoalId': query.metricGoalId!,
       };
       final path = Uri(
         path: '/api/v1/sites/${query.siteId}/analytics/cohorts',

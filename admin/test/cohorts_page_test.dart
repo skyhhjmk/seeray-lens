@@ -25,11 +25,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Cohort retention'), findsOneWidget);
-    expect(find.text('Weekly retention'), findsOneWidget);
-    expect(find.text('Visitors'), findsOneWidget);
-    expect(find.text('60%'), findsOneWidget);
-    expect(find.text('—'), findsWidgets);
+    expect(find.text('Cohort analysis'), findsOneWidget);
+    expect(find.text('Measure'), findsOneWidget);
     expect(api.paths.last, contains('period=week'));
     expect(api.paths.last, contains('periods=8'));
 
@@ -53,6 +50,26 @@ void main() {
       find.text('Filtered by the site segment selected above.'),
       findsOneWidget,
     );
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Goal conversions').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(3));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Signup goal').last);
+    await tester.pumpAndSettle();
+    expect(api.lastCohortQuery?.queryParameters['metric'], 'goal_conversions');
+    expect(api.lastCohortQuery?.queryParameters['metricGoalId'], 'goal-1');
+    expect(api.lastCohortQuery?.queryParameters['basis'], 'first_visit');
+    await tester.scrollUntilVisible(
+      find.byType(DataTable),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('20%'), findsOneWidget);
+    expect(find.text('1 次'), findsOneWidget);
   });
 
   testWidgets('builds a cohort around a configured goal conversion', (
@@ -124,6 +141,9 @@ class _CohortApi extends SeeRayApi {
         'cohortSize': 5,
         'retainedVisitors': 5,
         'retentionRate': 1.0,
+        'goalConversions': 1,
+        'goalConvertedVisitors': 1,
+        'goalValue': 12.5,
         'complete': true,
       },
       {
@@ -132,6 +152,9 @@ class _CohortApi extends SeeRayApi {
         'cohortSize': 5,
         'retainedVisitors': 3,
         'retentionRate': 0.6,
+        'goalConversions': 2,
+        'goalConvertedVisitors': 2,
+        'goalValue': 25.0,
         'complete': true,
       },
       {
@@ -140,6 +163,9 @@ class _CohortApi extends SeeRayApi {
         'cohortSize': 5,
         'retainedVisitors': 0,
         'retentionRate': 0,
+        'goalConversions': 0,
+        'goalConvertedVisitors': 0,
+        'goalValue': 0,
         'complete': false,
       },
     ];
