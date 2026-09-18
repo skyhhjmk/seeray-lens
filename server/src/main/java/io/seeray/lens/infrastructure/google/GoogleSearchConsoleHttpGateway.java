@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 public class GoogleSearchConsoleHttpGateway implements SearchConsoleGateway {
-    private static final String API_ROOT = "https://searchconsole.googleapis.com/webmasters/v3";
+    private static final String API_ROOT = "https://www.googleapis.com/webmasters/v3";
     private static final String SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(8))
