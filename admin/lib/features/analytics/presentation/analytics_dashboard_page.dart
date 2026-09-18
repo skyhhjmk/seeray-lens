@@ -15,6 +15,7 @@ import '../../../shared/presentation/site_top_bar.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/analytics_controller.dart';
 import '../application/analytics_export.dart';
+import '../application/analytics_annotations.dart';
 import '../application/analytics_range.dart';
 import '../application/analytics_segment.dart';
 import '../application/custom_report_formula.dart';
@@ -2810,6 +2811,26 @@ class _DashboardWidgetContent extends ConsumerWidget {
           ),
         );
       case 'trend':
+        final annotationQuery = AnalyticsAnnotationsQuery(
+          siteId: query.siteId,
+          from: query.range.fromQuery,
+          to: query.range.toQuery,
+        );
+        final annotations = ref.watch(
+          analyticsAnnotationsProvider(annotationQuery),
+        );
+        final notesByIndex = <int, List<AnalyticsAnnotation>>{};
+        final dayIndexes = {
+          for (var index = 0; index < data.trend.length; index++)
+            data.trend[index].date: index,
+        };
+        for (final annotation
+            in annotations.asData?.value.annotations ?? const []) {
+          final index = dayIndexes[_formatAnalyticsDate(annotation.date)];
+          if (index != null) {
+            notesByIndex.putIfAbsent(index, () => []).add(annotation);
+          }
+        }
         final values = data.trend
             .map(
               (day) => switch (item.metric) {
@@ -2840,12 +2861,70 @@ class _DashboardWidgetContent extends ConsumerWidget {
           exportMetadata: exportMetadata,
           child: values.isEmpty
               ? const _EmptyChart()
-              : SizedBox(
-                  height: 230,
-                  child: _TrendChart(
-                    values: values,
-                    chartType: item.chartType ?? 'line',
-                  ),
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      height: 210,
+                      child: _TrendChart(
+                        values: values,
+                        chartType: item.chartType ?? 'line',
+                        annotationIndexes: notesByIndex.keys.toSet(),
+                      ),
+                    ),
+                    if (notesByIndex.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: notesByIndex.entries
+                            .map((entry) {
+                              final date = data.trend[entry.key].date;
+                              final notes = entry.value;
+                              return ActionChip(
+                                avatar: const Icon(
+                                  Icons.push_pin_outlined,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  '$date · ${notes.length} ${notes.length == 1 ? context.tr('note', '条注释') : context.tr('notes', '条注释')}',
+                                ),
+                                onPressed: () => showDialog<void>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: Text(date),
+                                    content: SizedBox(
+                                      width: 420,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: notes
+                                            .map(
+                                              (note) => Padding(
+                                                padding: const EdgeInsets.only(
+                                                  bottom: 8,
+                                                ),
+                                                child: Text(note.note),
+                                              ),
+                                            )
+                                            .toList(growable: false),
+                                      ),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: Text(context.tr('Close', '关闭')),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            })
+                            .toList(growable: false),
+                      ),
+                    ],
+                  ],
                 ),
         );
       case 'top_pages':
@@ -3992,20 +4071,26 @@ class _EmptyChart extends StatelessWidget {
 }
 
 class _TrendChart extends StatelessWidget {
-  const _TrendChart({required this.values, required this.chartType});
+  const _TrendChart({
+    required this.values,
+    required this.chartType,
+    this.annotationIndexes = const {},
+  });
   final List<double> values;
   final String chartType;
+  final Set<int> annotationIndexes;
   @override
   Widget build(BuildContext context) => CustomPaint(
-    painter: _TrendPainter(values, chartType),
+    painter: _TrendPainter(values, chartType, annotationIndexes),
     child: const SizedBox.expand(),
   );
 }
 
 class _TrendPainter extends CustomPainter {
-  const _TrendPainter(this.values, this.chartType);
+  const _TrendPainter(this.values, this.chartType, this.annotationIndexes);
   final List<double> values;
   final String chartType;
+  final Set<int> annotationIndexes;
   @override
   void paint(Canvas canvas, Size size) {
     final grid = Paint()
@@ -4037,6 +4122,7 @@ class _TrendPainter extends CustomPainter {
           paint,
         );
       }
+      _paintAnnotationMarkers(canvas, size);
       return;
     }
     final path = Path();
@@ -4063,12 +4149,35 @@ class _TrendPainter extends CustomPainter {
         ..strokeWidth = 3
         ..style = PaintingStyle.stroke,
     );
+    _paintAnnotationMarkers(canvas, size);
+  }
+
+  void _paintAnnotationMarkers(Canvas canvas, Size size) {
+    final markerLine = Paint()
+      ..color = const Color(0xffd38b19)
+      ..strokeWidth = 1.5;
+    final markerDot = Paint()..color = const Color(0xffd38b19);
+    for (final index in annotationIndexes) {
+      if (index < 0 || index >= values.length) continue;
+      final x = chartType == 'bar'
+          ? (index + .5) * size.width / values.length
+          : values.length == 1
+          ? size.width / 2
+          : index * size.width / (values.length - 1);
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height - 12), markerLine);
+      canvas.drawCircle(Offset(x, 5), 4, markerDot);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _TrendPainter old) =>
-      old.values != values || old.chartType != chartType;
+      old.values != values ||
+      old.chartType != chartType ||
+      old.annotationIndexes != annotationIndexes;
 }
+
+String _formatAnalyticsDate(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
 
 class _DashboardSkeleton extends StatelessWidget {
   const _DashboardSkeleton();

@@ -232,6 +232,97 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void analyticsAnnotationsAreSiteScopedDateFilteredAndEditable() {
+        Tokens owner = register("annotations" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Annotations site\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String path = "/api/v1/sites/" + siteId + "/annotations";
+        LocalDate today = LocalDate.now(ZoneId.of("UTC"));
+        String yesterday = today.minusDays(1).toString();
+
+        String annotationId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"date\":\"" + yesterday + "\",\"note\":\"Campaign launch\"}")
+                .post(path)
+                .then()
+                .statusCode(201)
+                .body("date", is(yesterday))
+                .body("note", is("Campaign launch"))
+                .extract()
+                .path("id");
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "?from=" + yesterday + "&to=" + yesterday)
+                .then()
+                .statusCode(200)
+                .body("canManage", is(true))
+                .body("annotations.size()", is(1))
+                .body("annotations[0].id", is(annotationId));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("annotations.size()", is(0));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"date\":\"" + today + "\",\"note\":\"Launch delayed\"}")
+                .put(path + "/" + annotationId)
+                .then()
+                .statusCode(200)
+                .body("date", is(today.toString()))
+                .body("note", is("Launch delayed"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"date\":\"" + today + "\",\"note\":\"   \"}")
+                .post(path)
+                .then()
+                .statusCode(400)
+                .body("code", is("ANNOTATION_INVALID"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{}")
+                .post(path)
+                .then()
+                .statusCode(400)
+                .body("code", is("ANNOTATION_INVALID"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "?from=" + today.minusDays(400) + "&to=" + today)
+                .then()
+                .statusCode(400)
+                .body("code", is("ANNOTATION_RANGE_INVALID"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(path + "/" + annotationId)
+                .then()
+                .statusCode(204);
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "?from=" + today.minusDays(1) + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("annotations.size()", is(0));
+
+        String audit = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/audit-log?from=" + today.minusDays(1) + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .extract()
+                .asString();
+        assertTrue(audit.contains("\"resource\":\"annotations\""));
+        assertTrue(audit.contains("\"action\":\"CREATE\""));
+        assertTrue(audit.contains("\"action\":\"UPDATE\""));
+        assertTrue(audit.contains("\"action\":\"DELETE\""));
+        assertFalse(audit.contains("Campaign launch"));
+        assertFalse(audit.contains("Launch delayed"));
+    }
+
+    @Test
     void collectPublishesAndPersistsSanitizedEventIdempotently() throws Exception {
         Tokens tokens = register("collect" + System.nanoTime() + "@example.test");
         var workspace = workspace(tokens.access()).extract().path("[0].id");

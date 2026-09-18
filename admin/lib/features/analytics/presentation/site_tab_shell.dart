@@ -6,6 +6,7 @@ import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
 import '../application/analytics_controller.dart';
 import '../application/analytics_attribution.dart';
+import '../application/analytics_annotations.dart';
 import '../application/analytics_range.dart';
 import '../application/realtime_controller.dart';
 import 'segment_filter_selector.dart';
@@ -21,6 +22,8 @@ class SiteTabShell extends ConsumerWidget {
     final siteId = state.pathParameters['siteId']!;
     final selected = path.endsWith('/dashboard')
         ? SiteTopTab.dashboard
+        : path.endsWith('/annotations')
+        ? SiteTopTab.annotations
         : path.endsWith('/realtime')
         ? SiteTopTab.realtime
         : path.endsWith('/visitors/cohorts')
@@ -103,6 +106,7 @@ class SiteTabShell extends ConsumerWidget {
                 ref.invalidate(analyticsRealtimeProvider);
                 ref.invalidate(analyticsBehaviourProvider);
                 ref.invalidate(analyticsAttributionProvider);
+                ref.invalidate(analyticsAnnotationsProvider);
               }
             : null,
       ),

@@ -251,3 +251,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0036-site-consent-policy.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0037-analytics-annotations
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0037-analytics-annotations.sql
+            relativeToChangelogFile: false

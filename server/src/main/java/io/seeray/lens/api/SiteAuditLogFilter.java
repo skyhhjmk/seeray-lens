@@ -32,7 +32,8 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
             "tag-manager",
             "heatmaps",
             "scheduled-reports",
-            "analytics-alerts");
+            "analytics-alerts",
+            "annotations");
 
     @Inject
     DataSource dataSource;

@@ -628,6 +628,30 @@ void main() {
     expect(eventWidget['limit'], 5);
     expect(find.text('Dashboard saved.'), findsOneWidget);
   });
+
+  testWidgets('shows dated annotations on dashboard trend charts', (
+    tester,
+  ) async {
+    final api = _DashboardApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: AnalyticsDashboardPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(api.annotationDate, isNotNull);
+    expect(
+      find.textContaining('${api.annotationDate} · 1 note'),
+      findsOneWidget,
+    );
+    await tester.tap(find.textContaining('${api.annotationDate} · 1 note'));
+    await tester.pumpAndSettle();
+    expect(find.text('Campaign launch'), findsOneWidget);
+  });
 }
 
 final _eventPropertyId =
@@ -639,6 +663,7 @@ class _DashboardApi extends SeeRayApi {
   final List<Map<String, dynamic>> _dashboards = [];
   Map<String, dynamic>? savedBody;
   Map<String, dynamic>? customReportBody;
+  String? annotationDate;
 
   @override
   Future<dynamic> request(
@@ -648,6 +673,22 @@ class _DashboardApi extends SeeRayApi {
     bool retried = false,
   }) async {
     final route = Uri.parse(path).path;
+    if (route.endsWith('/annotations')) {
+      final query = Uri.parse(path).queryParameters;
+      annotationDate = query['from'];
+      return {
+        'from': query['from'],
+        'to': query['to'],
+        'canManage': true,
+        'annotations': [
+          {
+            'id': 'annotation-1',
+            'date': annotationDate,
+            'note': 'Campaign launch',
+          },
+        ],
+      };
+    }
     if (route.endsWith('/custom-dimensions')) {
       return [
         {
@@ -693,13 +734,9 @@ class _DashboardApi extends SeeRayApi {
       };
     }
     if (route.endsWith('/analytics/timeseries')) {
+      final date = Uri.parse(path).queryParameters['from'] ?? '2026-09-17';
       return [
-        {
-          'date': '2026-09-17',
-          'pageViews': 31,
-          'uniqueVisitors': 18,
-          'sessions': 24,
-        },
+        {'date': date, 'pageViews': 31, 'uniqueVisitors': 18, 'sessions': 24},
       ];
     }
     if (route.endsWith('/analytics/pages')) {

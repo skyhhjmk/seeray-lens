@@ -163,6 +163,7 @@ class _SiteAuditLogPageState extends ConsumerState<SiteAuditLogPage> {
       'experiments' => context.tr('experiment', '实验'),
       'funnels' => context.tr('funnel', '漏斗'),
       'heatmaps' => context.tr('heatmap settings', '热图设置'),
+      'annotations' => context.tr('analytics annotation', '分析注释'),
       _ => entry.resource,
     };
     return Card(
