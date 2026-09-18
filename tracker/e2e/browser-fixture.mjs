@@ -7,6 +7,8 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const repository = resolve(directory, '../..');
 const trackingId = `srl_${'A'.repeat(32)}`;
 const heatmapTrackingId = `srl_${'B'.repeat(32)}`;
+const crashTrackingId = `srl_${'C'.repeat(32)}`;
+const crashDefaultOffTrackingId = `srl_${'D'.repeat(32)}`;
 const customerOrigin = 'http://127.0.0.1:4173';
 const analyticsOrigin = 'http://127.0.0.1:4174';
 const asset = async (path) => readFile(resolve(repository, path));
@@ -45,15 +47,35 @@ const heatmapCustomerPage = `<!doctype html>
 </body>
 </html>`;
 
+const crashCustomerPage = (siteId, enabled) => `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Crash analytics fixture</title></head>
+<body>
+  <main><h1>Crash analytics fixture</h1></main>
+  <script src="${analyticsOrigin}/tracker.js" data-site-id="${siteId}" data-require-consent="true" ${enabled ? 'data-track-errors data-release="web-e2e.1"' : ''}></script>
+</body>
+</html>`;
+
 const customerServer = createServer((request, response) => {
-  if (request.method === 'GET' && request.url === '/fixture') {
+  const pathname = new URL(request.url ?? '/', customerOrigin).pathname;
+  if (request.method === 'GET' && pathname === '/fixture') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end(customerPage);
     return;
   }
-  if (request.method === 'GET' && request.url === '/heatmap-fixture') {
+  if (request.method === 'GET' && pathname === '/heatmap-fixture') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end(heatmapCustomerPage);
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/crash-fixture') {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(crashCustomerPage(crashTrackingId, true));
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/crash-default-off-fixture') {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(crashCustomerPage(crashDefaultOffTrackingId, false));
     return;
   }
   response.writeHead(404).end();
