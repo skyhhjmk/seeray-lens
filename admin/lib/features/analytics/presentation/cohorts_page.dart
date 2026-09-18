@@ -28,6 +28,7 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
   String? _goalId;
   String _metric = 'returning_visitors';
   String? _metricGoalId;
+  int _periodDays = 14;
 
   @override
   void initState() {
@@ -75,6 +76,7 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
       segmentId: segmentId,
       period: _period,
       periods: _periods,
+      periodDays: _periodDays,
       basis: _basis,
       goalId: selectedGoalId,
       metric: _metric,
@@ -128,6 +130,7 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
         onMetricGoalChanged: (goalId) => setState(() => _metricGoalId = goalId),
         period: _period,
         periods: _periods,
+        periodDays: _periodDays,
         onPeriodChanged: (period) => setState(() {
           _period = period;
           _periods = period == 'day'
@@ -138,6 +141,7 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
               ? 6
               : 8;
         }),
+        onPeriodDaysChanged: (days) => setState(() => _periodDays = days),
         segmentSelected: segmentId != null,
         onPeriodsChanged: (periods) => setState(() => _periods = periods),
       ),
@@ -173,7 +177,9 @@ class _CohortReport extends StatelessWidget {
     required this.onMetricGoalChanged,
     required this.period,
     required this.periods,
+    required this.periodDays,
     required this.onPeriodChanged,
+    required this.onPeriodDaysChanged,
     required this.segmentSelected,
     required this.onPeriodsChanged,
   });
@@ -191,7 +197,9 @@ class _CohortReport extends StatelessWidget {
   final ValueChanged<String?> onMetricGoalChanged;
   final String period;
   final int periods;
+  final int periodDays;
   final ValueChanged<String> onPeriodChanged;
+  final ValueChanged<int> onPeriodDaysChanged;
   final bool segmentSelected;
   final ValueChanged<int> onPeriodsChanged;
 
@@ -220,6 +228,7 @@ class _CohortReport extends StatelessWidget {
       'day' => context.tr('day', '日'),
       'month' => context.tr('month', '月'),
       'year' => context.tr('year', '年'),
+      'custom' => context.tr('cohort period', '队列周期'),
       _ => context.tr('week', '周'),
     };
     final periodTitle = metric == 'goal_conversions'
@@ -232,18 +241,21 @@ class _CohortReport extends StatelessWidget {
             'day' => context.tr('Daily retention', '每日留存'),
             'month' => context.tr('Monthly retention', '每月留存'),
             'year' => context.tr('Yearly retention', '每年留存'),
+            'custom' => context.tr('Custom-period retention', '自定义周期留存'),
             _ => context.tr('Weekly retention', '每周留存'),
           };
     final periodOptions = switch (period) {
       'day' => const [7, 14, 30],
       'month' => const [3, 6, 12],
       'year' => const [2, 3, 5, 10],
+      'custom' => const [2, 4, 8, 12],
       _ => const [4, 8, 12],
     };
     final periodNamePlural = switch (period) {
       'day' => 'days',
       'month' => 'months',
       'year' => 'years',
+      'custom' => 'periods',
       _ => 'weeks',
     };
     return ListView(
@@ -278,6 +290,13 @@ class _CohortReport extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _cohortDefinitionCard(context),
+        if (period == 'custom') ...[
+          const SizedBox(height: 12),
+          _CohortPeriodLengthControl(
+            days: periodDays,
+            onChanged: onPeriodDaysChanged,
+          ),
+        ],
         const SizedBox(height: 12),
         Card(
           elevation: 0,
@@ -298,8 +317,12 @@ class _CohortReport extends StatelessWidget {
                         value: count,
                         label: Text(
                           context.tr(
-                            '$count $periodNamePlural',
-                            '$count $periodName',
+                            period == 'custom'
+                                ? '$count periods'
+                                : '$count $periodNamePlural',
+                            period == 'custom'
+                                ? '$count 个周期'
+                                : '$count $periodName',
                           ),
                         ),
                       ),
@@ -612,6 +635,10 @@ class _CohortReport extends StatelessWidget {
                   value: 'year',
                   child: Text(context.tr('Yearly', '按年')),
                 ),
+                DropdownMenuItem(
+                  value: 'custom',
+                  child: Text(context.tr('Custom length', '自定义天数')),
+                ),
               ],
               onChanged: (value) {
                 if (value != null) onPeriodChanged(value);
@@ -856,6 +883,80 @@ class _CohortMetricCell extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CohortPeriodLengthControl extends StatefulWidget {
+  const _CohortPeriodLengthControl({
+    required this.days,
+    required this.onChanged,
+  });
+
+  final int days;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_CohortPeriodLengthControl> createState() =>
+      _CohortPeriodLengthControlState();
+}
+
+class _CohortPeriodLengthControlState
+    extends State<_CohortPeriodLengthControl> {
+  late int _days;
+
+  @override
+  void initState() {
+    super.initState();
+    _days = widget.days;
+  }
+
+  @override
+  void didUpdateWidget(covariant _CohortPeriodLengthControl oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.days != widget.days) _days = widget.days;
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+    elevation: 0,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  context.tr('Days per cohort period', '每个队列周期的天数'),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              Text(
+                context.tr('$_days days', '$_days 天'),
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ],
+          ),
+          Text(
+            context.tr(
+              'Set a custom calendar bucket from 1 to 365 days. Buckets align to the selected report start date.',
+              '可设置 1 到 365 天的自定义自然日周期；周期边界以所选报告开始日对齐。',
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          Slider(
+            min: 1,
+            max: 365,
+            divisions: 364,
+            value: _days.toDouble(),
+            label: context.tr('$_days days', '$_days 天'),
+            onChanged: (value) => setState(() => _days = value.round()),
+            onChangeEnd: (value) => widget.onChanged(value.round()),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 String _formatGoalValue(double value) =>

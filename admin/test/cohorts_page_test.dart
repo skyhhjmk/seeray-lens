@@ -48,6 +48,22 @@ void main() {
     expect(api.paths.last, contains('period=year'));
     expect(api.paths.last, contains('periods=5'));
 
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom length').last);
+    await tester.pumpAndSettle();
+    expect(api.paths.last, contains('period=custom'));
+    expect(api.paths.last, contains('periodDays=14'));
+    expect(find.text('Days per cohort period'), findsOneWidget);
+    expect(find.text('14 days'), findsOneWidget);
+    await tester.ensureVisible(find.byType(Slider));
+    await tester.drag(find.byType(Slider), const Offset(140, 0));
+    await tester.pumpAndSettle();
+    expect(
+      int.parse(api.lastCohortQuery!.queryParameters['periodDays']!),
+      greaterThan(14),
+    );
+
     container
         .read(analyticsSegmentSelectionProvider('site-1').notifier)
         .select('segment-1');

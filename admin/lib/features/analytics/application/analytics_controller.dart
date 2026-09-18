@@ -165,6 +165,7 @@ class AnalyticsCohortQuery {
     required this.range,
     required this.period,
     required this.periods,
+    this.periodDays = 14,
     this.basis = 'first_visit',
     this.segmentId,
     this.goalId,
@@ -177,6 +178,7 @@ class AnalyticsCohortQuery {
   final String? segmentId;
   final String period;
   final int periods;
+  final int periodDays;
   final String basis;
   final String? goalId;
   final String metric;
@@ -189,6 +191,7 @@ class AnalyticsCohortQuery {
       other.segmentId == segmentId &&
       other.period == period &&
       other.periods == periods &&
+      other.periodDays == periodDays &&
       other.basis == basis &&
       other.goalId == goalId &&
       other.metric == metric &&
@@ -202,6 +205,7 @@ class AnalyticsCohortQuery {
     segmentId,
     period,
     periods,
+    periodDays,
     basis,
     goalId,
     metric,
@@ -462,6 +466,7 @@ final analyticsCohortProvider =
         'to': query.range.toQuery,
         'period': query.period,
         'periods': '${query.periods}',
+        'periodDays': '${query.periodDays}',
         'basis': query.basis,
         'metric': query.metric,
         if (query.segmentId != null) 'segmentId': query.segmentId!,
