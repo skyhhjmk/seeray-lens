@@ -7,6 +7,7 @@ tracker/node_modules/
 tracker/dist/
 tracker/test-results/
 tracker/playwright-report/
+.build/
 .idea/
 .vscode/
 .env
