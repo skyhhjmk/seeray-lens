@@ -22,7 +22,8 @@ class CohortsPage extends ConsumerStatefulWidget {
 }
 
 class _CohortsPageState extends ConsumerState<CohortsPage> {
-  int _weeks = 8;
+  String _period = 'week';
+  int _periods = 8;
   String _basis = 'first_visit';
   String? _goalId;
 
@@ -66,7 +67,8 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
       siteId: widget.siteId,
       range: range.range,
       segmentId: segmentId,
-      weeks: _weeks,
+      period: _period,
+      periods: _periods,
       basis: _basis,
       goalId: selectedGoalId,
     );
@@ -84,9 +86,9 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
                 englishTitle: 'Cohort retention',
                 chineseTitle: '队列留存',
                 englishBody:
-                    'Choose cohorts by first meaningful visit or first conversion of a configured goal. Each later cell shows the share that started another meaningful session in that calendar week. Incomplete weeks are left blank.',
+                    'Choose daily, weekly or monthly cohorts, based on first meaningful visit or first conversion of a configured goal. Later cells show return activity in each matching calendar period; incomplete periods are left blank.',
                 chineseBody:
-                    '可按首次有效访问或首次达成指定目标的时间分组。后续单元格显示该队列在对应自然周再次开始有效访问的比例；尚未完整结束的周留空。',
+                    '可按日、周或月建立队列，并按首次有效访问或首次目标转化分组。后续单元格显示对应周期的回访情况；尚未完整结束的周期留空。',
               ),
               rangeState: range,
               segmentFilter: SegmentFilterSelector(siteId: widget.siteId),
@@ -107,9 +109,18 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
           _goalId = null;
         }),
         onGoalChanged: (goalId) => setState(() => _goalId = goalId),
-        weeks: _weeks,
+        period: _period,
+        periods: _periods,
+        onPeriodChanged: (period) => setState(() {
+          _period = period;
+          _periods = period == 'day'
+              ? 14
+              : period == 'month'
+              ? 6
+              : 8;
+        }),
         segmentSelected: segmentId != null,
-        onWeeksChanged: (weeks) => setState(() => _weeks = weeks),
+        onPeriodsChanged: (periods) => setState(() => _periods = periods),
       ),
     );
   }
@@ -133,9 +144,11 @@ class _CohortReport extends StatelessWidget {
     required this.report,
     required this.onBasisChanged,
     required this.onGoalChanged,
-    required this.weeks,
+    required this.period,
+    required this.periods,
+    required this.onPeriodChanged,
     required this.segmentSelected,
-    required this.onWeeksChanged,
+    required this.onPeriodsChanged,
   });
 
   final String siteId;
@@ -145,20 +158,42 @@ class _CohortReport extends StatelessWidget {
   final AsyncValue<List<AnalyticsCohortCell>>? report;
   final ValueChanged<String> onBasisChanged;
   final ValueChanged<String?> onGoalChanged;
-  final int weeks;
+  final String period;
+  final int periods;
+  final ValueChanged<String> onPeriodChanged;
   final bool segmentSelected;
-  final ValueChanged<int> onWeeksChanged;
+  final ValueChanged<int> onPeriodsChanged;
 
   @override
   Widget build(BuildContext context) {
     final currentReport = report;
     final cells = currentReport?.asData?.value ?? const <AnalyticsCohortCell>[];
-    final cohorts = cells.map((cell) => cell.cohortWeek).toSet().toList()
+    final cohorts = cells.map((cell) => cell.cohortPeriod).toSet().toList()
       ..sort((left, right) => right.compareTo(left));
     final grouped = <String, Map<int, AnalyticsCohortCell>>{};
     for (final cell in cells) {
-      grouped.putIfAbsent(cell.cohortWeek, () => {})[cell.weekIndex] = cell;
+      grouped.putIfAbsent(cell.cohortPeriod, () => {})[cell.periodIndex] = cell;
     }
+    final periodName = switch (period) {
+      'day' => context.tr('day', '日'),
+      'month' => context.tr('month', '月'),
+      _ => context.tr('week', '周'),
+    };
+    final periodTitle = switch (period) {
+      'day' => context.tr('Daily retention', '每日留存'),
+      'month' => context.tr('Monthly retention', '每月留存'),
+      _ => context.tr('Weekly retention', '每周留存'),
+    };
+    final periodOptions = switch (period) {
+      'day' => const [7, 14, 30],
+      'month' => const [3, 6, 12],
+      _ => const [4, 8, 12],
+    };
+    final periodNamePlural = switch (period) {
+      'day' => 'days',
+      'month' => 'months',
+      _ => 'weeks',
+    };
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -188,38 +223,36 @@ class _CohortReport extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  context.tr('Retention window', '留存观察窗口'),
+                  context.tr('Periods to compare', '留存观察窗口'),
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 8),
                 SegmentedButton<int>(
                   segments: [
-                    ButtonSegment(
-                      value: 4,
-                      label: Text(context.tr('4 weeks', '4 周')),
-                    ),
-                    ButtonSegment(
-                      value: 8,
-                      label: Text(context.tr('8 weeks', '8 周')),
-                    ),
-                    ButtonSegment(
-                      value: 12,
-                      label: Text(context.tr('12 weeks', '12 周')),
-                    ),
+                    for (final count in periodOptions)
+                      ButtonSegment(
+                        value: count,
+                        label: Text(
+                          context.tr(
+                            '$count $periodNamePlural',
+                            '$count $periodName',
+                          ),
+                        ),
+                      ),
                   ],
-                  selected: {weeks},
+                  selected: {periods},
                   onSelectionChanged: (selection) =>
-                      onWeeksChanged(selection.single),
+                      onPeriodsChanged(selection.single),
                 ),
                 const SizedBox(height: 10),
                 Text(
                   context.tr(
                     basis == 'first_visit'
-                        ? 'Week 0 is the first meaningful-visit week. A visitor is retained later when another meaningful session starts that week. The selected segment is evaluated on the qualifying first visit.'
-                        : 'Week 0 is the week of the visitor’s first conversion for the selected goal. Later retention means a meaningful session; the selected segment is evaluated on that conversion session.',
+                        ? 'Period 0 is the first meaningful-visit $periodName. A visitor is retained later when another meaningful session starts during that period. The selected segment is evaluated on the qualifying first visit.'
+                        : 'Period 0 is the $periodName of the visitor’s first conversion for the selected goal. Later retention means a meaningful session; the selected segment is evaluated on that conversion session.',
                     basis == 'first_visit'
-                        ? '第 0 周是首次有效访问周。后续自然周中再次开始有效访问，即计为留存。所选分群按首次有效访问判断。'
-                        : '第 0 周是访客首次达成所选目标的周；后续留存仍按有效访问计算。所选分群按首次目标转化会话判断。',
+                        ? '第 0 个周期是首次有效访问所在的$periodName。之后在对应周期再次开始有效访问，即计为留存；分群按首次有效访问判断。'
+                        : '第 0 个周期是首次达成所选目标所在的$periodName；之后的留存仍按有效访问计算，分群按首次目标转化会话判断。',
                   ),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
@@ -326,7 +359,7 @@ class _CohortReport extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          context.tr('Weekly retention', '每周留存'),
+                          periodTitle,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -350,9 +383,11 @@ class _CohortReport extends StatelessWidget {
                         label: Text(
                           context.tr(
                             basis == 'first_visit'
-                                ? 'First visit week'
-                                : 'First conversion week',
-                            basis == 'first_visit' ? '首次访问周' : '首次转化周',
+                                ? 'First visit $periodName'
+                                : 'First conversion $periodName',
+                            basis == 'first_visit'
+                                ? '首次访问$periodName'
+                                : '首次转化$periodName',
                           ),
                         ),
                       ),
@@ -360,45 +395,45 @@ class _CohortReport extends StatelessWidget {
                         numeric: true,
                         label: Text(context.tr('Visitors', '访客数')),
                       ),
-                      for (var index = 0; index < weeks; index++)
+                      for (var index = 0; index < periods; index++)
                         DataColumn(
                           numeric: true,
                           label: Tooltip(
                             message: index == 0
                                 ? context.tr(
                                     basis == 'first_visit'
-                                        ? 'Week 0: first meaningful-visit week'
-                                        : 'Week 0: first goal-conversion week',
+                                        ? 'Period 0: first meaningful-visit $periodName'
+                                        : 'Period 0: first goal-conversion $periodName',
                                     basis == 'first_visit'
-                                        ? '第 0 周：首次有效访问周'
-                                        : '第 0 周：首次目标转化周',
+                                        ? '第 0 个周期：首次有效访问$periodName'
+                                        : '第 0 个周期：首次目标转化$periodName',
                                   )
                                 : context.tr(
                                     basis == 'first_visit'
-                                        ? 'Week $index after the first visit'
-                                        : 'Week $index after the first conversion',
+                                        ? 'Period $index after the first visit'
+                                        : 'Period $index after the first conversion',
                                     basis == 'first_visit'
-                                        ? '首次访问后的第 $index 周'
-                                        : '首次转化后的第 $index 周',
+                                        ? '首次访问后的第 $index 个周期'
+                                        : '首次转化后的第 $index 个周期',
                                   ),
-                            child: Text('W$index'),
+                            child: Text('P$index'),
                           ),
                         ),
                     ],
                     rows: [
-                      for (final cohortWeek in cohorts)
+                      for (final cohortPeriod in cohorts)
                         DataRow(
                           cells: [
-                            DataCell(Text(cohortWeek)),
+                            DataCell(Text(cohortPeriod)),
                             DataCell(
                               Text(
-                                '${grouped[cohortWeek]?[0]?.cohortSize ?? 0}',
+                                '${grouped[cohortPeriod]?[0]?.cohortSize ?? 0}',
                               ),
                             ),
-                            for (var index = 0; index < weeks; index++)
+                            for (var index = 0; index < periods; index++)
                               DataCell(
                                 _RetentionCell(
-                                  cell: grouped[cohortWeek]?[index],
+                                  cell: grouped[cohortPeriod]?[index],
                                 ),
                               ),
                           ],
@@ -420,8 +455,8 @@ class _CohortReport extends StatelessWidget {
                       Expanded(
                         child: Text(
                           context.tr(
-                            'A dash means that seven-day period has not finished yet; partial weeks are not compared.',
-                            '短横线表示该七天观察期尚未结束；未完成的周不会参与对比。',
+                            'A dash means that the full calendar period has not finished yet; partial periods are not compared.',
+                            '短横线表示完整自然周期尚未结束；未完成的周期不会参与对比。',
                           ),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
@@ -472,6 +507,31 @@ class _CohortReport extends StatelessWidget {
               ],
               onChanged: (value) {
                 if (value != null) onBasisChanged(value);
+              },
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: period,
+              decoration: InputDecoration(
+                labelText: context.tr('Cohort period', '队列周期'),
+                border: const OutlineInputBorder(),
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: 'day',
+                  child: Text(context.tr('Daily', '按日')),
+                ),
+                DropdownMenuItem(
+                  value: 'week',
+                  child: Text(context.tr('Weekly', '按周')),
+                ),
+                DropdownMenuItem(
+                  value: 'month',
+                  child: Text(context.tr('Monthly', '按月')),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null) onPeriodChanged(value);
               },
             ),
             if (basis == 'goal_conversion') ...[

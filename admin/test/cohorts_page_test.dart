@@ -30,11 +30,19 @@ void main() {
     expect(find.text('Visitors'), findsOneWidget);
     expect(find.text('60%'), findsOneWidget);
     expect(find.text('—'), findsWidgets);
-    expect(api.paths.last, contains('weeks=8'));
+    expect(api.paths.last, contains('period=week'));
+    expect(api.paths.last, contains('periods=8'));
 
     await tester.tap(find.text('4 weeks'));
     await tester.pumpAndSettle();
-    expect(api.paths.last, contains('weeks=4'));
+    expect(api.paths.last, contains('periods=4'));
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Monthly').last);
+    await tester.pumpAndSettle();
+    expect(api.paths.last, contains('period=month'));
+    expect(api.paths.last, contains('periods=6'));
 
     container
         .read(analyticsSegmentSelectionProvider('site-1').notifier)
@@ -67,6 +75,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Conversion goal'), findsOneWidget);
 
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Monthly').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.byType(DropdownButtonFormField<String>).last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Signup goal').last);
@@ -74,6 +86,8 @@ void main() {
 
     expect(api.lastCohortQuery?.queryParameters['basis'], 'goal_conversion');
     expect(api.lastCohortQuery?.queryParameters['goalId'], 'goal-1');
+    expect(api.lastCohortQuery?.queryParameters['period'], 'month');
+    expect(api.lastCohortQuery?.queryParameters['periods'], '6');
   });
 }
 
@@ -105,24 +119,24 @@ class _CohortApi extends SeeRayApi {
     if (uri.path.endsWith('/analytics/cohorts')) lastCohortQuery = uri;
     return [
       {
-        'cohortWeek': '2026-07-06',
-        'weekIndex': 0,
+        'cohortPeriod': '2026-07-06',
+        'periodIndex': 0,
         'cohortSize': 5,
         'retainedVisitors': 5,
         'retentionRate': 1.0,
         'complete': true,
       },
       {
-        'cohortWeek': '2026-07-06',
-        'weekIndex': 1,
+        'cohortPeriod': '2026-07-06',
+        'periodIndex': 1,
         'cohortSize': 5,
         'retainedVisitors': 3,
         'retentionRate': 0.6,
         'complete': true,
       },
       {
-        'cohortWeek': '2026-07-06',
-        'weekIndex': 2,
+        'cohortPeriod': '2026-07-06',
+        'periodIndex': 2,
         'cohortSize': 5,
         'retainedVisitors': 0,
         'retentionRate': 0,

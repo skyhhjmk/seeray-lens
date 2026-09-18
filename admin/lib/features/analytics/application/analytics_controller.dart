@@ -120,16 +120,16 @@ class AnalyticsUserFlowEdge {
 
 class AnalyticsCohortCell {
   const AnalyticsCohortCell({
-    required this.cohortWeek,
-    required this.weekIndex,
+    required this.cohortPeriod,
+    required this.periodIndex,
     required this.cohortSize,
     required this.retainedVisitors,
     required this.retentionRate,
     required this.complete,
   });
 
-  final String cohortWeek;
-  final int weekIndex;
+  final String cohortPeriod;
+  final int periodIndex;
   final int cohortSize;
   final int retainedVisitors;
   final double retentionRate;
@@ -137,8 +137,8 @@ class AnalyticsCohortCell {
 
   factory AnalyticsCohortCell.fromJson(Map<String, dynamic> json) =>
       AnalyticsCohortCell(
-        cohortWeek: json['cohortWeek'] as String? ?? '',
-        weekIndex: (json['weekIndex'] as num?)?.toInt() ?? 0,
+        cohortPeriod: json['cohortPeriod'] as String? ?? '',
+        periodIndex: (json['periodIndex'] as num?)?.toInt() ?? 0,
         cohortSize: (json['cohortSize'] as num?)?.toInt() ?? 0,
         retainedVisitors: (json['retainedVisitors'] as num?)?.toInt() ?? 0,
         retentionRate: (json['retentionRate'] as num?)?.toDouble() ?? 0,
@@ -150,7 +150,8 @@ class AnalyticsCohortQuery {
   const AnalyticsCohortQuery({
     required this.siteId,
     required this.range,
-    required this.weeks,
+    required this.period,
+    required this.periods,
     this.basis = 'first_visit',
     this.segmentId,
     this.goalId,
@@ -159,7 +160,8 @@ class AnalyticsCohortQuery {
   final String siteId;
   final AnalyticsDateRange range;
   final String? segmentId;
-  final int weeks;
+  final String period;
+  final int periods;
   final String basis;
   final String? goalId;
 
@@ -168,7 +170,8 @@ class AnalyticsCohortQuery {
       other is AnalyticsCohortQuery &&
       other.siteId == siteId &&
       other.segmentId == segmentId &&
-      other.weeks == weeks &&
+      other.period == period &&
+      other.periods == periods &&
       other.basis == basis &&
       other.goalId == goalId &&
       other.range.fromQuery == range.fromQuery &&
@@ -178,7 +181,8 @@ class AnalyticsCohortQuery {
   int get hashCode => Object.hash(
     siteId,
     segmentId,
-    weeks,
+    period,
+    periods,
     basis,
     goalId,
     range.fromQuery,
@@ -435,7 +439,8 @@ final analyticsCohortProvider =
       final parameters = <String, String>{
         'from': query.range.fromQuery,
         'to': query.range.toQuery,
-        'weeks': '${query.weeks}',
+        'period': query.period,
+        'periods': '${query.periods}',
         'basis': query.basis,
         if (query.segmentId != null) 'segmentId': query.segmentId!,
         if (query.goalId != null) 'goalId': query.goalId!,
