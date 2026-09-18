@@ -2,6 +2,7 @@ package io.seeray.lens.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.common.ControlPlaneException;
 import io.seeray.lens.domain.common.UuidV7;
 import io.seeray.lens.domain.site.Site;
@@ -9,6 +10,8 @@ import io.seeray.lens.domain.tag.*;
 import io.seeray.lens.domain.workspace.WorkspaceRole;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -26,12 +29,15 @@ public class TagManagerService {
     private final SiteService sites;
     private final WorkspaceAccess access;
     private final ObjectMapper mapper;
+    private final EntityManager entityManager;
 
     @Inject
-    public TagManagerService(SiteService sites, WorkspaceAccess access, ObjectMapper mapper) {
+    public TagManagerService(
+            SiteService sites, WorkspaceAccess access, ObjectMapper mapper, EntityManager entityManager) {
         this.sites = sites;
         this.access = access;
         this.mapper = mapper;
+        this.entityManager = entityManager;
     }
 
     public List<ContainerView> list(UUID siteId) {
@@ -419,14 +425,15 @@ public class TagManagerService {
     public VersionView publishToEnvironment(UUID siteId, UUID containerId, int version, String environment) {
         validateEnvironment(environment);
         TagContainer c = writableContainer(siteId, containerId);
+        if ("production".equals(environment)) {
+            throw new ControlPlaneException(
+                    409,
+                    "PRODUCTION_APPROVAL_REQUIRED",
+                    "Production releases must be requested and approved by another workspace administrator");
+        }
         TagContainerVersion v = TagContainerVersion.find("container.id = ?1 and version = ?2", c.id, version)
                 .firstResult();
         if (v == null) throw new ControlPlaneException(404, "VERSION_NOT_FOUND", "Container version was not found");
-        if ("production".equals(environment)) {
-            TagContainerVersion.update("status = 'draft' where container.id = ?1 and status = 'published'", c.id);
-            v.status = "published";
-            c.publishedVersion = v.version;
-        }
         TagContainerEnvironmentRelease release = TagContainerEnvironmentRelease.find(
                         "container.id = ?1 and environment = ?2", c.id, environment)
                 .firstResult();
@@ -441,6 +448,282 @@ public class TagManagerService {
         release.persist();
         c.updatedAt = Instant.now();
         return version(v);
+    }
+
+    @Transactional
+    public ProductionRequestView requestProductionRelease(UUID siteId, UUID containerId, int version, String note) {
+        TagContainer c = writableContainer(siteId, containerId);
+        entityManager.lock(c, LockModeType.PESSIMISTIC_WRITE);
+        TagContainerVersion target = TagContainerVersion.find("container.id = ?1 and version = ?2", c.id, version)
+                .firstResult();
+        if (target == null)
+            throw new ControlPlaneException(404, "VERSION_NOT_FOUND", "Container version was not found");
+        if (Objects.equals(c.publishedVersion, version)) {
+            throw new ControlPlaneException(
+                    409, "VERSION_ALREADY_IN_PRODUCTION", "This version is already live in production");
+        }
+        String cleanNote = requiredRequestNote(note);
+        if (TagManagerProductionRequest.count("container.id = ?1 and status = 'pending'", c.id) > 0) {
+            throw new ControlPlaneException(
+                    409,
+                    "PRODUCTION_REQUEST_PENDING",
+                    "Resolve the current production request before submitting another");
+        }
+        TagManagerProductionRequest request = new TagManagerProductionRequest();
+        request.id = UuidV7.next();
+        request.container = c;
+        request.baseVersion = c.publishedVersion;
+        request.targetVersion = target.version;
+        request.requestedBy = AppUser.findById(access.userId());
+        request.requestedAt = Instant.now();
+        request.requestNote = cleanNote;
+        request.status = "pending";
+        request.persist();
+        return productionRequest(request, access.userId(), WorkspaceRole.ADMIN);
+    }
+
+    public List<ProductionRequestView> productionRequests(UUID siteId, UUID containerId) {
+        TagContainer c = readableContainer(siteId, containerId);
+        UUID currentUserId = access.userId();
+        WorkspaceRole role = access.member(c.site.organization.id).role;
+        return TagManagerProductionRequest.<TagManagerProductionRequest>list(
+                        "container.id = ?1 order by requestedAt desc", c.id)
+                .stream()
+                .map(request -> productionRequest(request, currentUserId, role))
+                .toList();
+    }
+
+    @Transactional
+    public ProductionRequestView approveProductionRelease(UUID siteId, UUID containerId, UUID requestId, String note) {
+        TagContainer c = writableContainer(siteId, containerId);
+        entityManager.lock(c, LockModeType.PESSIMISTIC_WRITE);
+        TagManagerProductionRequest request = productionRequest(c, requestId);
+        UUID reviewerId = requireIndependentReviewer(request);
+        if (!Objects.equals(c.publishedVersion, request.baseVersion)) {
+            throw new ControlPlaneException(
+                    409,
+                    "PRODUCTION_BASE_CHANGED",
+                    "Production changed since this request was created; cancel it and review a fresh version");
+        }
+        String reviewNote = optionalReviewNote(note);
+        releaseProduction(c, request.targetVersion);
+        request.status = "approved";
+        request.reviewedBy = AppUser.findById(reviewerId);
+        request.reviewedAt = Instant.now();
+        request.reviewNote = reviewNote;
+        return productionRequest(request, reviewerId, WorkspaceRole.ADMIN);
+    }
+
+    @Transactional
+    public ProductionRequestView rejectProductionRelease(UUID siteId, UUID containerId, UUID requestId, String note) {
+        TagContainer c = writableContainer(siteId, containerId);
+        entityManager.lock(c, LockModeType.PESSIMISTIC_WRITE);
+        TagManagerProductionRequest request = productionRequest(c, requestId);
+        UUID reviewerId = requireIndependentReviewer(request);
+        String reviewNote = requiredReviewNote(note);
+        request.status = "rejected";
+        request.reviewedBy = AppUser.findById(reviewerId);
+        request.reviewedAt = Instant.now();
+        request.reviewNote = reviewNote;
+        return productionRequest(request, reviewerId, WorkspaceRole.ADMIN);
+    }
+
+    @Transactional
+    public ProductionRequestView cancelProductionRelease(UUID siteId, UUID containerId, UUID requestId) {
+        TagContainer c = writableContainer(siteId, containerId);
+        entityManager.lock(c, LockModeType.PESSIMISTIC_WRITE);
+        TagManagerProductionRequest request = productionRequest(c, requestId);
+        if (!"pending".equals(request.status)) {
+            throw new ControlPlaneException(
+                    409, "PRODUCTION_REQUEST_CLOSED", "This production request is already resolved");
+        }
+        UUID actorId = access.userId();
+        request.status = "cancelled";
+        request.reviewedBy = AppUser.findById(actorId);
+        request.reviewedAt = Instant.now();
+        request.reviewNote = "Cancelled by requester or workspace administrator";
+        return productionRequest(request, actorId, WorkspaceRole.ADMIN);
+    }
+
+    private void releaseProduction(TagContainer container, int version) {
+        TagContainerVersion target = TagContainerVersion.find(
+                        "container.id = ?1 and version = ?2", container.id, version)
+                .firstResult();
+        if (target == null)
+            throw new ControlPlaneException(404, "VERSION_NOT_FOUND", "Container version was not found");
+        TagContainerVersion.update("status = 'draft' where container.id = ?1 and status = 'published'", container.id);
+        target.status = "published";
+        container.publishedVersion = target.version;
+        TagContainerEnvironmentRelease release = TagContainerEnvironmentRelease.find(
+                        "container.id = ?1 and environment = 'production'", container.id)
+                .firstResult();
+        if (release == null) {
+            release = new TagContainerEnvironmentRelease();
+            release.id = UuidV7.next();
+            release.container = container;
+            release.environment = "production";
+        }
+        release.version = target.version;
+        release.releasedAt = Instant.now();
+        release.persist();
+        container.updatedAt = Instant.now();
+    }
+
+    private ProductionRequestView productionRequest(
+            TagManagerProductionRequest request, UUID currentUserId, WorkspaceRole role) {
+        List<ReleaseChange> changes = releaseChanges(request);
+        boolean pending = "pending".equals(request.status);
+        boolean admin = role == WorkspaceRole.OWNER || role == WorkspaceRole.ADMIN;
+        return new ProductionRequestView(
+                request.id,
+                request.targetVersion,
+                request.baseVersion,
+                request.status,
+                request.requestNote,
+                request.requestedBy.email,
+                request.requestedAt,
+                request.reviewedBy == null ? null : request.reviewedBy.email,
+                request.reviewedAt,
+                request.reviewNote,
+                changes,
+                pending && admin && !request.requestedBy.id.equals(currentUserId),
+                pending && admin);
+    }
+
+    private List<ReleaseChange> releaseChanges(TagManagerProductionRequest request) {
+        JsonNode before = versionTags(request.container.id, request.baseVersion);
+        JsonNode after = versionTags(request.container.id, request.targetVersion);
+        Map<String, JsonNode> oldTags = indexedTags(before);
+        Map<String, JsonNode> newTags = indexedTags(after);
+        List<ReleaseChange> changes = new ArrayList<>();
+        newTags.forEach((identity, tag) -> {
+            JsonNode old = oldTags.get(identity);
+            if (old == null) {
+                changes.add(releaseChange("added", tag, null));
+            } else if (!old.equals(tag)) {
+                changes.add(releaseChange("changed", tag, old));
+            }
+        });
+        oldTags.forEach((identity, tag) -> {
+            if (!newTags.containsKey(identity)) changes.add(releaseChange("removed", tag, null));
+        });
+        return List.copyOf(changes);
+    }
+
+    private JsonNode versionTags(UUID containerId, Integer version) {
+        if (version == null) return mapper.createArrayNode();
+        TagContainerVersion row = TagContainerVersion.find("container.id = ?1 and version = ?2", containerId, version)
+                .firstResult();
+        if (row == null) return mapper.createArrayNode();
+        try {
+            return mapper.readTree(row.tagsJson);
+        } catch (Exception error) {
+            throw new IllegalStateException("Stored tag container version is invalid", error);
+        }
+    }
+
+    private static Map<String, JsonNode> indexedTags(JsonNode tags) {
+        Map<String, JsonNode> indexed = new LinkedHashMap<>();
+        if (tags == null || !tags.isArray()) return indexed;
+        Map<String, Integer> occurrences = new HashMap<>();
+        for (JsonNode tag : tags) {
+            String type = tag.path("type").asText("tag");
+            String name = tag.path("name").asText("");
+            if (name.isBlank()) name = tag.path("eventType").asText("");
+            if (name.isBlank()) name = type;
+            String base = type + ":" + name;
+            int occurrence = occurrences.merge(base, 1, Integer::sum);
+            indexed.put(base + "#" + occurrence, tag);
+        }
+        return indexed;
+    }
+
+    private static ReleaseChange releaseChange(String kind, JsonNode tag, JsonNode old) {
+        String type = tag.path("type").asText("tag");
+        String name = tag.path("name").asText("");
+        if (name.isBlank()) name = tag.path("eventType").asText("");
+        if (name.isBlank()) name = "Unnamed tag";
+        boolean customCode = "custom_html".equals(type);
+        boolean codeChanged = customCode
+                && (old == null
+                        || !Objects.equals(
+                                old.path("code").asText(null), tag.path("code").asText(null)));
+        String emittedEvent = tag.path("eventType").asText("");
+        return new ReleaseChange(
+                kind, name, type, emittedEvent.isBlank() ? null : emittedEvent, tagTriggers(tag), codeChanged);
+    }
+
+    private static List<ReleaseTrigger> tagTriggers(JsonNode tag) {
+        List<ReleaseTrigger> result = new ArrayList<>();
+        JsonNode triggers = tag.path("triggers");
+        if (triggers.isArray()) {
+            for (JsonNode trigger : triggers) result.add(releaseTrigger(trigger));
+        } else if (tag.hasNonNull("trigger")) {
+            result.add(releaseTrigger(tag.path("trigger")));
+        }
+        return List.copyOf(result);
+    }
+
+    private static ReleaseTrigger releaseTrigger(JsonNode trigger) {
+        if (trigger.isTextual()) return new ReleaseTrigger("event", trigger.asText(), 0);
+        String kind = trigger.path("type").asText("event");
+        int conditions = trigger.path("conditions").isArray()
+                ? trigger.path("conditions").size()
+                : 0;
+        String value = "custom_js".equals(kind)
+                ? trigger.path("functionName").asText("function")
+                : trigger.path("event").asText("event");
+        return new ReleaseTrigger(kind, value, conditions);
+    }
+
+    private TagManagerProductionRequest productionRequest(TagContainer container, UUID requestId) {
+        TagManagerProductionRequest request = TagManagerProductionRequest.find(
+                        "id = ?1 and container.id = ?2", requestId, container.id)
+                .firstResult();
+        if (request == null)
+            throw new ControlPlaneException(
+                    404, "PRODUCTION_REQUEST_NOT_FOUND", "Production release request was not found");
+        if (!"pending".equals(request.status)) {
+            throw new ControlPlaneException(
+                    409, "PRODUCTION_REQUEST_CLOSED", "This production request is already resolved");
+        }
+        return request;
+    }
+
+    private UUID requireIndependentReviewer(TagManagerProductionRequest request) {
+        UUID reviewerId = access.userId();
+        if (request.requestedBy.id.equals(reviewerId)) {
+            throw new ControlPlaneException(
+                    409, "SELF_APPROVAL_FORBIDDEN", "A different workspace administrator must review this release");
+        }
+        return reviewerId;
+    }
+
+    private static String requiredRequestNote(String note) {
+        String value = note == null ? "" : note.strip();
+        if (value.isBlank() || value.length() > 1000) {
+            throw new ControlPlaneException(
+                    400, "INVALID_PRODUCTION_REQUEST", "Describe the production change in 1–1000 characters");
+        }
+        return value;
+    }
+
+    private static String requiredReviewNote(String note) {
+        String value = note == null ? "" : note.strip();
+        if (value.isBlank() || value.length() > 1000) {
+            throw new ControlPlaneException(
+                    400, "INVALID_PRODUCTION_REVIEW", "A rejection reason is required (1–1000 characters)");
+        }
+        return value;
+    }
+
+    private static String optionalReviewNote(String note) {
+        String value = note == null ? "" : note.strip();
+        if (value.length() > 1000) {
+            throw new ControlPlaneException(
+                    400, "INVALID_PRODUCTION_REVIEW", "Review notes must be at most 1000 characters");
+        }
+        return value.isEmpty() ? null : value;
     }
 
     public JsonNode published(String trackingId, String environment) {
@@ -612,4 +895,29 @@ public class TagManagerService {
             String outcome,
             String pagePath,
             Instant occurredAt) {}
+
+    public record ProductionRequestView(
+            UUID id,
+            int targetVersion,
+            Integer baseVersion,
+            String status,
+            String requestNote,
+            String requestedByEmail,
+            Instant requestedAt,
+            String reviewedByEmail,
+            Instant reviewedAt,
+            String reviewNote,
+            List<ReleaseChange> changes,
+            boolean canReview,
+            boolean canCancel) {}
+
+    public record ReleaseChange(
+            String kind,
+            String name,
+            String type,
+            String emittedEvent,
+            List<ReleaseTrigger> triggers,
+            boolean customCodeChanged) {}
+
+    public record ReleaseTrigger(String kind, String value, int filterCount) {}
 }

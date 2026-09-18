@@ -157,6 +157,58 @@ public class TagManagerResource {
         return tags.publishToEnvironment(siteId, id, version, environment);
     }
 
+    @GET
+    @Authenticated
+    @Path("/containers/{containerId}/production-requests")
+    public List<TagManagerService.ProductionRequestView> productionRequests(
+            @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID containerId) {
+        return tags.productionRequests(siteId, containerId);
+    }
+
+    @POST
+    @Authenticated
+    @Path("/containers/{containerId}/production-requests")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.ProductionRequestView requestProductionRelease(
+            @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID containerId, ProductionRequestBody body) {
+        return tags.requestProductionRelease(
+                siteId, containerId, body == null ? 0 : body.version, body == null ? null : body.requestNote);
+    }
+
+    @POST
+    @Authenticated
+    @Path("/containers/{containerId}/production-requests/{requestId}/approve")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.ProductionRequestView approveProductionRelease(
+            @PathParam("siteId") UUID siteId,
+            @PathParam("containerId") UUID containerId,
+            @PathParam("requestId") UUID requestId,
+            ReviewBody body) {
+        return tags.approveProductionRelease(siteId, containerId, requestId, body == null ? null : body.reviewNote);
+    }
+
+    @POST
+    @Authenticated
+    @Path("/containers/{containerId}/production-requests/{requestId}/reject")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.ProductionRequestView rejectProductionRelease(
+            @PathParam("siteId") UUID siteId,
+            @PathParam("containerId") UUID containerId,
+            @PathParam("requestId") UUID requestId,
+            ReviewBody body) {
+        return tags.rejectProductionRelease(siteId, containerId, requestId, body == null ? null : body.reviewNote);
+    }
+
+    @POST
+    @Authenticated
+    @Path("/containers/{containerId}/production-requests/{requestId}/cancel")
+    public TagManagerService.ProductionRequestView cancelProductionRelease(
+            @PathParam("siteId") UUID siteId,
+            @PathParam("containerId") UUID containerId,
+            @PathParam("requestId") UUID requestId) {
+        return tags.cancelProductionRelease(siteId, containerId, requestId);
+    }
+
     public static class CreateRequest {
         public String name;
     }
@@ -175,5 +227,14 @@ public class TagManagerResource {
     public static class PreviewRequest {
         public JsonNode tags;
         public boolean executeCustomCode;
+    }
+
+    public static class ProductionRequestBody {
+        public int version;
+        public String requestNote;
+    }
+
+    public static class ReviewBody {
+        public String reviewNote;
     }
 }

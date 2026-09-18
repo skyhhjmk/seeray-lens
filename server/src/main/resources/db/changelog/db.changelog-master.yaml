@@ -328,3 +328,17 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0047-campaign-cost-imports.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0048-tag-manager-production-approvals
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0048-tag-manager-production-approvals.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0049-tag-manager-approval-audit-actions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0049-tag-manager-approval-audit-actions.sql
+            relativeToChangelogFile: false

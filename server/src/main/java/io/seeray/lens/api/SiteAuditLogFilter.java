@@ -88,13 +88,7 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
         if ("heatmaps".equals(resource) && (path.length < 6 || !"config".equals(path[5]))) return null;
         String action =
                 switch (method) {
-                    case "POST" -> path.length > firstChild && "send-now".equals(path[path.length - 1])
-                            ? "SEND_NOW"
-                            : path.length > firstChild && "publish".equals(path[path.length - 1])
-                                    ? "PUBLISH"
-                                    : path.length > firstChild && "duplicate".equals(path[path.length - 1])
-                                            ? "DUPLICATE"
-                                            : "CREATE";
+                    case "POST" -> postAction(path, firstChild);
                     case "PUT", "PATCH" -> "UPDATE";
                     case "DELETE" -> "DELETE";
                     default -> null;
@@ -110,6 +104,19 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
             }
         }
         return new Mutation(siteId, action, resource, resourceId);
+    }
+
+    private static String postAction(String[] path, int firstChild) {
+        if (path.length <= firstChild) return "CREATE";
+        String last = path[path.length - 1];
+        if ("send-now".equals(last)) return "SEND_NOW";
+        if ("publish".equals(last)) return "PUBLISH";
+        if ("duplicate".equals(last)) return "DUPLICATE";
+        if ("approve".equals(last)) return "APPROVE_PRODUCTION";
+        if ("reject".equals(last)) return "REJECT_PRODUCTION";
+        if ("cancel".equals(last)) return "CANCEL_PRODUCTION";
+        if ("production-requests".equals(last)) return "REQUEST_PRODUCTION";
+        return "CREATE";
     }
 
     record Mutation(UUID siteId, String action, String resource, UUID resourceId) {}

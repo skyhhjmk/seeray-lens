@@ -4158,6 +4158,23 @@ class ControlPlaneResourceTest {
     void publishesTagManagerContainerAndRestrictsOrigins() {
         Tokens owner = register("tagmanager" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");
+        String reviewerEmail = "tagmanager-reviewer" + System.nanoTime() + "@example.test";
+        String viewerEmail = "tagmanager-viewer" + System.nanoTime() + "@example.test";
+        Tokens reviewer = register(reviewerEmail);
+        Tokens viewer = register(viewerEmail);
+        String membersPath = "/api/v1/workspaces/" + workspace + "/members";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + reviewerEmail + "\",\"role\":\"admin\"}")
+                .post(membersPath)
+                .then()
+                .statusCode(201);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + viewerEmail + "\",\"role\":\"viewer\"}")
+                .post(membersPath)
+                .then()
+                .statusCode(201);
         String site = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Tag manager\",\"timezone\":\"UTC\"}")
@@ -4267,8 +4284,66 @@ class ControlPlaneResourceTest {
         given().header("Authorization", "Bearer " + owner.access())
                 .post(draftPath + "/1/publish")
                 .then()
+                .statusCode(409)
+                .body("code", is("PRODUCTION_APPROVAL_REQUIRED"));
+        String requestPath = containerPath + "/" + container + "/production-requests";
+        String firstRequest = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"version\":1,\"requestNote\":\"Add the approved signup conversion tags\"}")
+                .post(requestPath)
+                .then()
                 .statusCode(200)
-                .body("status", is("published"));
+                .body("status", is("pending"))
+                .body("baseVersion", nullValue())
+                .body("changes.size()", is(2))
+                .body("changes[0].emittedEvent", is("tag_signup"))
+                .body("changes[0].triggers[0].kind", is("event"))
+                .body("changes[0].triggers[0].filterCount", is(1))
+                .body("changes[1].triggers.size()", is(2))
+                .body("canReview", is(false))
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"version\":1,\"requestNote\":\"Duplicate request\"}")
+                .post(requestPath)
+                .then()
+                .statusCode(409)
+                .body("code", is("PRODUCTION_REQUEST_PENDING"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{}")
+                .post(requestPath + "/" + firstRequest + "/approve")
+                .then()
+                .statusCode(409)
+                .body("code", is("SELF_APPROVAL_FORBIDDEN"));
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get(requestPath)
+                .then()
+                .statusCode(200)
+                .body("[0].canReview", is(false))
+                .body("[0].canCancel", is(false));
+        given().header("Authorization", "Bearer " + viewer.access())
+                .contentType("application/json")
+                .body("{\"reviewNote\":\"Looks good\"}")
+                .post(requestPath + "/" + firstRequest + "/approve")
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + reviewer.access())
+                .contentType("application/json")
+                .body("{}")
+                .post(requestPath + "/" + firstRequest + "/reject")
+                .then()
+                .statusCode(400)
+                .body("code", is("INVALID_PRODUCTION_REVIEW"));
+        given().header("Authorization", "Bearer " + reviewer.access())
+                .contentType("application/json")
+                .body("{\"reviewNote\":\"QA verified the event trigger and script scope\"}")
+                .post(requestPath + "/" + firstRequest + "/approve")
+                .then()
+                .statusCode(200)
+                .body("status", is("approved"))
+                .body("reviewNote", is("QA verified the event trigger and script scope"));
         String trackingId = given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + site)
                 .then()
@@ -4293,11 +4368,39 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("version", is(2))
                 .body("status", is("draft"));
-        given().header("Authorization", "Bearer " + owner.access())
-                .post(draftPath + "/2/publish")
+        String rejectedRequest = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"version\":2,\"requestNote\":\"Publish the purchase event update\"}")
+                .post(requestPath)
                 .then()
                 .statusCode(200)
-                .body("status", is("published"));
+                .body("baseVersion", is(1))
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + reviewer.access())
+                .contentType("application/json")
+                .body("{\"reviewNote\":\"The purchase trigger needs a staging check first\"}")
+                .post(requestPath + "/" + rejectedRequest + "/reject")
+                .then()
+                .statusCode(200)
+                .body("status", is("rejected"))
+                .body("reviewNote", is("The purchase trigger needs a staging check first"));
+        String secondRequest = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"version\":2,\"requestNote\":\"Publish the purchase event update after QA\"}")
+                .post(requestPath)
+                .then()
+                .statusCode(200)
+                .body("baseVersion", is(1))
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + reviewer.access())
+                .contentType("application/json")
+                .body("{}")
+                .post(requestPath + "/" + secondRequest + "/approve")
+                .then()
+                .statusCode(200)
+                .body("status", is("approved"));
         given().header("Authorization", "Bearer " + owner.access())
                 .post(draftPath + "/1/environments/staging/publish")
                 .then()
@@ -4305,14 +4408,38 @@ class ControlPlaneResourceTest {
                 .body("version", is(1))
                 .body("status", is("draft"));
         given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("[{\"type\":\"event\",\"trigger\":\"help_open\","
+                        + "\"eventType\":\"tag_help_open\",\"name\":\"help_open\"}]")
+                .post(draftPath)
+                .then()
+                .statusCode(200)
+                .body("version", is(3));
+        String thirdRequest = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"version\":3,\"requestNote\":\"Test withdrawal before final release\"}")
+                .post(requestPath)
+                .then()
+                .statusCode(200)
+                .body("canCancel", is(true))
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .post(requestPath + "/" + thirdRequest + "/cancel")
+                .then()
+                .statusCode(200)
+                .body("status", is("cancelled"));
+        given().header("Authorization", "Bearer " + owner.access())
                 .get(containerPath + "/" + container + "/versions")
                 .then()
                 .statusCode(200)
-                .body("size()", is(2))
-                .body("[0].version", is(2))
-                .body("[0].status", is("published"))
-                .body("[1].version", is(1))
-                .body("[1].status", is("draft"));
+                .body("size()", is(3))
+                .body("[0].version", is(3))
+                .body("[0].status", is("draft"))
+                .body("[1].version", is(2))
+                .body("[1].status", is("published"))
+                .body("[2].version", is(1))
+                .body("[2].status", is("draft"));
         given().header("Origin", "https://tags.example.test")
                 .get("/api/v1/tag-manager/" + trackingId + "/container")
                 .then()
@@ -4337,6 +4464,13 @@ class ControlPlaneResourceTest {
                 .body("[0].publishedVersion", is(2))
                 .body("[0].environmentVersions.staging", is(1))
                 .body("[0].environmentVersions.production", is(2));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/audit-log")
+                .then()
+                .statusCode(200)
+                .body(
+                        "entries.action",
+                        hasItems("REQUEST_PRODUCTION", "APPROVE_PRODUCTION", "REJECT_PRODUCTION", "CANCEL_PRODUCTION"));
         given().header("Origin", "https://evil.example.test")
                 .get("/api/v1/tag-manager/" + trackingId + "/container")
                 .then()

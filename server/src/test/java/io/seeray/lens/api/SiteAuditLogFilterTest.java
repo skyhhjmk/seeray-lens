@@ -82,4 +82,26 @@ class SiteAuditLogFilterTest {
         assertNotNull(delete);
         assertEquals("DELETE", delete.action());
     }
+
+    @Test
+    void recordsDistinctTagManagerProductionApprovalActions() {
+        String container = UUID.randomUUID().toString();
+        String request = UUID.randomUUID().toString();
+        String root = "/api/v1/sites/" + siteId + "/tag-manager/containers/" + container + "/production-requests";
+
+        assertEquals(
+                "REQUEST_PRODUCTION", SiteAuditLogFilter.classify("POST", root).action());
+        assertEquals(
+                "APPROVE_PRODUCTION",
+                SiteAuditLogFilter.classify("POST", root + "/" + request + "/approve")
+                        .action());
+        assertEquals(
+                "REJECT_PRODUCTION",
+                SiteAuditLogFilter.classify("POST", root + "/" + request + "/reject")
+                        .action());
+        assertEquals(
+                "CANCEL_PRODUCTION",
+                SiteAuditLogFilter.classify("POST", root + "/" + request + "/cancel")
+                        .action());
+    }
 }
