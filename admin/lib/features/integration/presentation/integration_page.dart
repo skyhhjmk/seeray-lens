@@ -9,6 +9,7 @@ import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../sites/application/site_controller.dart';
+import 'android_sdk_setup.dart';
 import 'crash_analytics_setup.dart';
 import 'product_features_page.dart';
 
@@ -39,23 +40,26 @@ class IntegrationPage extends ConsumerWidget {
         : '';
     final gif = '$base/api/v1/pixel/${site.trackingId}.gif';
     final svg = '$base/api/v1/pixel/${site.trackingId}.svg';
-    final initialTab =
-        GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
-            'web-vitals'
-        ? 6
+    final requestedTab = GoRouter.maybeOf(
+      context,
+    )?.state.uri.queryParameters['tab'];
+    final initialTab = requestedTab == 'android-sdk'
+        ? 1
+        : requestedTab == 'web-vitals'
+        ? 7
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'forms'
-        ? 13
-        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
         ? 14
+        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
+        ? 15
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
               'hosted-privacy'
-        ? 12
+        ? 13
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
               'crashes'
-        ? 15
+        ? 16
         : 0;
     return DefaultTabController(
-      length: 17,
+      length: 18,
       initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
@@ -67,9 +71,9 @@ class IntegrationPage extends ConsumerWidget {
                   englishTitle: 'Tracking integration',
                   chineseTitle: '追踪集成说明',
                   englishBody:
-                      'Use one JavaScript snippet per page. Repeated snippets for the same site are de-duplicated by the tracker. The no-JavaScript image fallback belongs inside noscript, so it never runs alongside JavaScript tracking.',
+                      'Use the JavaScript snippet for websites and the native SDK guide for Android apps. Repeated web snippets for the same site are de-duplicated by the tracker. The no-JavaScript image fallback belongs inside noscript.',
                   chineseBody:
-                      '每个页面只需放置一段 JavaScript 代码。同一站点的重复嵌入会由追踪器去重。无 JavaScript 的图片回退代码必须放在 noscript 中，因此不会与 JavaScript 追踪同时执行。',
+                      '网站使用 JavaScript 代码，Android 应用使用原生 SDK 向导。同一站点重复嵌入的网页追踪器会自动去重。无 JavaScript 图片回退必须放在 noscript 中。',
                 ),
               ),
         body: Column(
@@ -79,6 +83,7 @@ class IntegrationPage extends ConsumerWidget {
                 isScrollable: true,
                 tabs: [
                   Tab(text: context.tr('JavaScript', 'JavaScript')),
+                  Tab(text: context.tr('Android SDK', 'Android SDK')),
                   Tab(text: context.tr('Image fallback', '图片回退')),
                   Tab(text: context.tr('SVG fallback', 'SVG 回退')),
                   Tab(text: context.tr('Goals', '目标事件')),
@@ -112,6 +117,11 @@ class IntegrationPage extends ConsumerWidget {
                       'The tracker URL and collector path stay fixed. Do not add generated query parameters; site identity is the stable data-site-id value.',
                       '追踪器 URL 和 Collector 路径保持固定。不要添加自动生成的查询参数；站点身份使用稳定的 data-site-id。',
                     ),
+                  ),
+                  AndroidSdkSetup(
+                    trackingId: site.trackingId,
+                    apiOrigin: Uri.parse(base).origin,
+                    requireConsent: site.requireConsent,
                   ),
                   _Snippet(
                     title: context.tr(

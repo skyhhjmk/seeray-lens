@@ -7,6 +7,72 @@ import 'package:seeray_lens_admin/features/integration/presentation/integration_
 import 'package:seeray_lens_admin/features/sites/application/site_controller.dart';
 
 void main() {
+  testWidgets('provides a site-specific native Android SDK setup flow', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(_IntegrationApi()),
+        ],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Android SDK'));
+    await tester.tap(find.text('Android SDK'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Connect an Android app'), findsOneWidget);
+    expect(find.text('Source build only · v0.1.0'), findsOneWidget);
+    expect(find.text('HTTPS required for Android'), findsNothing);
+    expect(
+      find.textContaining('publishReleasePublicationToMavenLocal'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('srl_demo'), findsWidgets);
+    expect(find.textContaining('https://lens.example.test'), findsWidgets);
+    expect(find.text('Copy initialization code'), findsOneWidget);
+    expect(find.textContaining('This site requires consent.'), findsOneWidget);
+    expect(find.text('Copy tracking examples'), findsOneWidget);
+  });
+
+  testWidgets('blocks generated Android configuration over plaintext HTTP', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(
+            SeeRayApi(baseUrl: 'http://localhost:8080'),
+          ),
+        ],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Android SDK'));
+    await tester.tap(find.text('Android SDK'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('HTTPS required for Android'), findsOneWidget);
+    expect(find.text('Copy initialization code'), findsNothing);
+    expect(find.text('Copy tracking examples'), findsOneWidget);
+  });
+
   testWidgets('provides an opt-in Core Web Vitals snippet', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
