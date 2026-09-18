@@ -105,6 +105,21 @@ void main() {
     expect(api.lastCohortQuery?.queryParameters['goalId'], 'goal-1');
     expect(api.lastCohortQuery?.queryParameters['period'], 'month');
     expect(api.lastCohortQuery?.queryParameters['periods'], '6');
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Visits').last);
+    await tester.pumpAndSettle();
+    expect(api.lastCohortQuery?.queryParameters['basis'], 'goal_conversion');
+    expect(api.lastCohortQuery?.queryParameters['metric'], 'visits');
+    expect(api.lastCohortQuery?.queryParameters['goalId'], 'goal-1');
+    await tester.scrollUntilVisible(
+      find.text('9'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('9'), findsOneWidget);
   });
 }
 
@@ -144,6 +159,7 @@ class _CohortApi extends SeeRayApi {
         'goalConversions': 1,
         'goalConvertedVisitors': 1,
         'goalValue': 12.5,
+        'visits': 9,
         'complete': true,
       },
       {
@@ -155,6 +171,7 @@ class _CohortApi extends SeeRayApi {
         'goalConversions': 2,
         'goalConvertedVisitors': 2,
         'goalValue': 25.0,
+        'visits': 6,
         'complete': true,
       },
       {
@@ -166,6 +183,7 @@ class _CohortApi extends SeeRayApi {
         'goalConversions': 0,
         'goalConvertedVisitors': 0,
         'goalValue': 0,
+        'visits': 0,
         'complete': false,
       },
     ];

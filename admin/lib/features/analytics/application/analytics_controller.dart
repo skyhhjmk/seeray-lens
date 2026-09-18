@@ -128,6 +128,7 @@ class AnalyticsCohortCell {
     required this.goalConversions,
     required this.goalConvertedVisitors,
     required this.goalValue,
+    required this.visits,
     required this.complete,
   });
 
@@ -139,6 +140,7 @@ class AnalyticsCohortCell {
   final int goalConversions;
   final int goalConvertedVisitors;
   final double goalValue;
+  final int visits;
   final bool complete;
 
   factory AnalyticsCohortCell.fromJson(Map<String, dynamic> json) =>
@@ -152,6 +154,7 @@ class AnalyticsCohortCell {
         goalConvertedVisitors:
             (json['goalConvertedVisitors'] as num?)?.toInt() ?? 0,
         goalValue: (json['goalValue'] as num?)?.toDouble() ?? 0,
+        visits: (json['visits'] as num?)?.toInt() ?? 0,
         complete: json['complete'] as bool? ?? false,
       );
 }
