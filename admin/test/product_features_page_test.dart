@@ -683,6 +683,69 @@ void main() {
     expect((api.lastMutationBody as Map)['targeting'], {
       'pathPrefixes': ['/pricing'],
       'deviceTypes': ['desktop'],
+      'segmentId': null,
+      'segmentLookbackDays': 30,
+    });
+  });
+
+  testWidgets('targets an experiment with a saved audience and lookback', (
+    tester,
+  ) async {
+    final api = _EditorFeatureApi.experiment(
+      segments: [
+        {
+          'id': 'segment-returning',
+          'name': 'Returning readers',
+          'enabled': true,
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.experiments,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Saved audience segment'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField).first,
+      'Segment targeted hero',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('experiment-segment-all')),
+    );
+    await tester.tap(find.byKey(const ValueKey('experiment-segment-all')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Returning readers').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('New or unknown visitors are excluded'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.byType(DropdownButtonFormField<int>));
+    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Last 90 days').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect((api.lastMutationBody as Map)['targeting'], {
+      'pathPrefixes': <String>[],
+      'deviceTypes': <String>[],
+      'segmentId': 'segment-returning',
+      'segmentLookbackDays': 90,
     });
   });
 
@@ -745,6 +808,8 @@ void main() {
     expect((api.lastMutationBody as Map)['targeting'], {
       'pathPrefixes': ['/checkout'],
       'deviceTypes': ['desktop', 'mobile'],
+      'segmentId': null,
+      'segmentLookbackDays': 30,
     });
   });
 }
@@ -839,16 +904,22 @@ class _GraphicalFeatureApi extends SeeRayApi {
 }
 
 class _EditorFeatureApi extends SeeRayApi {
-  _EditorFeatureApi._(this.mode, [this.items = const []])
-    : super(baseUrl: 'https://lens.example.test');
+  _EditorFeatureApi._(
+    this.mode, {
+    this.items = const [],
+    this.segments = const [],
+  }) : super(baseUrl: 'https://lens.example.test');
 
   factory _EditorFeatureApi.funnel() => _EditorFeatureApi._('funnel');
 
-  factory _EditorFeatureApi.experiment({List<dynamic> items = const []}) =>
-      _EditorFeatureApi._('experiment', items);
+  factory _EditorFeatureApi.experiment({
+    List<dynamic> items = const [],
+    List<dynamic> segments = const [],
+  }) => _EditorFeatureApi._('experiment', items: items, segments: segments);
 
   final String mode;
   final List<dynamic> items;
+  final List<dynamic> segments;
   String? lastMutationMethod;
   String? lastMutationPath;
   Object? lastMutationBody;
@@ -883,6 +954,7 @@ class _EditorFeatureApi extends SeeRayApi {
         },
       ];
     }
+    if (method == 'GET' && path.endsWith('/segments')) return segments;
     if (method == 'GET' && mode == 'experiment') return items;
     return {'id': 'saved', 'name': 'saved', 'enabled': true};
   }

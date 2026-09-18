@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/i18n/app_i18n.dart';
 import '../../../core/network/seeray_api.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../analytics/application/analytics_segment.dart';
 import '../application/tag_manager_preview.dart';
 
 enum ProductFeatureMode { funnels, experiments, tagManager }
@@ -90,11 +91,14 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
   }
 
   Future<void> _create() async {
+    if (widget.mode == ProductFeatureMode.experiments) {
+      ref.invalidate(analyticsSegmentOptionsProvider(widget.siteId));
+    }
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => widget.mode == ProductFeatureMode.tagManager
           ? const _ContainerEditorDialog()
-          : _FeatureEditorDialog(mode: widget.mode),
+          : _FeatureEditorDialog(mode: widget.mode, siteId: widget.siteId),
     );
     if (result == null) return;
     await _run(() async {
@@ -118,10 +122,16 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
       });
       return;
     }
+    if (widget.mode == ProductFeatureMode.experiments) {
+      ref.invalidate(analyticsSegmentOptionsProvider(widget.siteId));
+    }
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) =>
-          _FeatureEditorDialog(mode: widget.mode, initial: item),
+      builder: (context) => _FeatureEditorDialog(
+        mode: widget.mode,
+        siteId: widget.siteId,
+        initial: item,
+      ),
     );
     if (result == null) return;
     await _run(() async {
@@ -650,8 +660,8 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
             children: [
               Text(
                 context.tr(
-                  'This snippet loads enabled variants and applies the configured page/device targeting. No variant is returned for visitors outside the target.',
-                  '这段代码会读取该站点已启用的变体，并按当前实验的页面和设备条件定向。未命中条件时返回空值，页面保持原样。',
+                  'This snippet loads enabled variants and applies saved-segment, page and device targeting. Segment eligibility uses recorded sessions in the selected lookback; unknown visitors remain outside until a matching session is recorded.',
+                  '这段代码会读取已启用变体，并应用保存分群、页面和设备定向。分群资格按所选回溯期内已记录的会话判断；尚无匹配会话的访客不会进入实验。',
                 ),
               ),
               const SizedBox(height: 12),
@@ -679,23 +689,31 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
       '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
 }
 
-class _FeatureEditorDialog extends StatefulWidget {
-  const _FeatureEditorDialog({required this.mode, this.initial});
+class _FeatureEditorDialog extends ConsumerStatefulWidget {
+  const _FeatureEditorDialog({
+    required this.mode,
+    required this.siteId,
+    this.initial,
+  });
 
   final ProductFeatureMode mode;
+  final String siteId;
   final Map<String, dynamic>? initial;
 
   @override
-  State<_FeatureEditorDialog> createState() => _FeatureEditorDialogState();
+  ConsumerState<_FeatureEditorDialog> createState() =>
+      _FeatureEditorDialogState();
 }
 
-class _FeatureEditorDialogState extends State<_FeatureEditorDialog> {
+class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
   late final TextEditingController _name;
   late bool _enabled;
   final _steps = <_FunnelStepForm>[];
   final _variants = <TextEditingController>[];
   final _targetPathPrefixes = <TextEditingController>[];
   final _targetDeviceTypes = <String>{};
+  String? _targetSegmentId;
+  int _segmentLookbackDays = 30;
   String? _error;
 
   bool get _editing => widget.initial != null;
@@ -730,6 +748,11 @@ class _FeatureEditorDialogState extends State<_FeatureEditorDialog> {
         final rawDevices = rawTargeting['deviceTypes'];
         if (rawDevices is List) {
           _targetDeviceTypes.addAll(rawDevices.whereType<String>());
+        }
+        _targetSegmentId = rawTargeting['segmentId'] as String?;
+        final lookbackDays = rawTargeting['segmentLookbackDays'];
+        if (lookbackDays is int && const {7, 30, 90}.contains(lookbackDays)) {
+          _segmentLookbackDays = lookbackDays;
         }
       }
       if (_variants.isEmpty) {
@@ -935,10 +958,12 @@ class _FeatureEditorDialogState extends State<_FeatureEditorDialog> {
       const SizedBox(height: 4),
       Text(
         context.tr(
-          'Page paths are ORed, and device types are ORed. When both groups have values, a visitor must match one from each group. An empty group adds no filter.',
-          '页面路径组内满足任意一项即可，设备类型组内也满足任意一项即可。两组都有条件时，访客必须各满足一组；留空的分组不限制访客。',
+          'Page paths and device types are ORed within their groups; configured groups are combined with AND. Saved-segment targeting additionally requires a previously recorded matching session within its lookback window.',
+          '页面路径和设备类型各自在组内满足任意一项即可；已配置的条件组之间为 AND。保存分群还要求回溯期内存在匹配的已记录会话。',
         ),
       ),
+      const SizedBox(height: 12),
+      _buildSavedSegmentTargeting(context),
       const SizedBox(height: 12),
       for (var index = 0; index < _targetPathPrefixes.length; index++)
         Padding(
@@ -1005,6 +1030,127 @@ class _FeatureEditorDialogState extends State<_FeatureEditorDialog> {
     ],
   );
 
+  Widget _buildSavedSegmentTargeting(BuildContext context) => ref
+      .watch(analyticsSegmentOptionsProvider(widget.siteId))
+      .when(
+        data: (segments) {
+          final selectedExists =
+              _targetSegmentId == null ||
+              segments.any((segment) => segment.id == _targetSegmentId);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              DropdownButtonFormField<String?>(
+                key: ValueKey(
+                  'experiment-segment-${_targetSegmentId ?? 'all'}',
+                ),
+                initialValue: _targetSegmentId,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: context.tr('Saved audience segment', '保存的受众分群'),
+                  border: const OutlineInputBorder(),
+                ),
+                items: [
+                  DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text(context.tr('All visitors', '所有访客')),
+                  ),
+                  if (!selectedExists)
+                    DropdownMenuItem<String?>(
+                      value: _targetSegmentId,
+                      child: Text(
+                        context.tr(
+                          'Unavailable segment — choose another',
+                          '分群不可用，请重新选择',
+                        ),
+                      ),
+                    ),
+                  for (final segment in segments)
+                    DropdownMenuItem<String?>(
+                      value: segment.id,
+                      child: Text(
+                        segment.name,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (value) => setState(() {
+                  _targetSegmentId = value;
+                  _error = null;
+                }),
+              ),
+              if (segments.isEmpty && _targetSegmentId == null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  context.tr(
+                    'Create and enable a segment in the Segments tab to target a saved audience.',
+                    '如需按保存的受众定向，请先在“分群”页创建并启用一个分群。',
+                  ),
+                ),
+              ],
+              if (_targetSegmentId != null) ...[
+                const SizedBox(height: 10),
+                DropdownButtonFormField<int>(
+                  initialValue: _segmentLookbackDays,
+                  decoration: InputDecoration(
+                    labelText: context.tr('Audience lookback', '受众回溯期'),
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final days in const [7, 30, 90])
+                      DropdownMenuItem<int>(
+                        value: days,
+                        child: Text(
+                          context.tr('Last $days days', '最近 $days 天'),
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) => setState(() {
+                    if (value != null) _segmentLookbackDays = value;
+                  }),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  context.tr(
+                    'A visitor is eligible when at least one recorded session in this window matches the segment. New or unknown visitors are excluded until a matching session is recorded.',
+                    '回溯窗口内至少有一个已记录会话符合该分群，访客才具备资格。新访客或尚未记录的访客暂不进入实验。',
+                  ),
+                ),
+              ],
+              if (!selectedExists) ...[
+                const SizedBox(height: 6),
+                Text(
+                  context.tr(
+                    'The selected segment is disabled or no longer available. Choose an enabled segment before saving.',
+                    '所选分群已停用或不存在。请改选一个已启用的分群再保存。',
+                  ),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          );
+        },
+        loading: () => const LinearProgressIndicator(),
+        error: (error, stackTrace) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              context.tr(
+                'Saved segments could not be loaded. Retry before changing audience targeting.',
+                '无法加载保存的分群。更改受众定向前请重试。',
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => ref.invalidate(
+                analyticsSegmentOptionsProvider(widget.siteId),
+              ),
+              icon: const Icon(Icons.refresh),
+              label: Text(context.tr('Retry', '重试')),
+            ),
+          ],
+        ),
+      );
+
   String _deviceLabel(String device) => switch (device) {
     'desktop' => 'Desktop',
     'mobile' => 'Mobile',
@@ -1052,6 +1198,22 @@ class _FeatureEditorDialogState extends State<_FeatureEditorDialog> {
       }
       body['steps'] = steps;
     } else {
+      final availableSegments = ref
+          .read(analyticsSegmentOptionsProvider(widget.siteId))
+          .value;
+      if (_targetSegmentId != null &&
+          (availableSegments == null ||
+              !availableSegments.any(
+                (segment) => segment.id == _targetSegmentId,
+              ))) {
+        setState(
+          () => _error = context.tr(
+            'Choose an available enabled segment, or retry loading segments.',
+            '请选择一个可用的已启用分群，或重试加载分群。',
+          ),
+        );
+        return;
+      }
       final variants = _variants
           .map((controller) => controller.text.trim())
           .where((value) => value.isNotEmpty)
@@ -1098,6 +1260,8 @@ class _FeatureEditorDialogState extends State<_FeatureEditorDialog> {
       body['targeting'] = {
         'pathPrefixes': pathPrefixes,
         'deviceTypes': _targetDeviceTypes.toList()..sort(),
+        'segmentId': _targetSegmentId,
+        'segmentLookbackDays': _segmentLookbackDays,
       };
     }
     Navigator.pop(context, body);
