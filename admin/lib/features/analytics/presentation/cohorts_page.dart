@@ -347,8 +347,8 @@ class _CohortReport extends StatelessWidget {
               padding: const EdgeInsets.all(24),
               child: Text(
                 context.tr(
-                  'Could not load cohort retention. Check the date range and selected audience, then try again.',
-                  '无法加载队列留存。请检查日期范围和所选分群后重试。',
+                  'Could not load the cohort report. Check the date range and selected audience, then try again.',
+                  '无法加载队列报告。请检查日期范围和所选分群后重试。',
                 ),
               ),
             ),

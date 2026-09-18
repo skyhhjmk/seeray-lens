@@ -1,4 +1,4 @@
-# Cohort retention
+# Cohort analysis
 
 The site-level **Cohorts** report groups anonymous visitors by either the local calendar day, week or month of their first meaningful session or their first conversion of a selected enabled goal. A meaningful session has at least one page view or one non-heartbeat event. A visitor is counted as retained in a later period when a meaningful session starts in that period, regardless of which cohort basis was selected.
 
