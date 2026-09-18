@@ -690,6 +690,52 @@ class AnalyticsLocationReport {
       );
 }
 
+class AnalyticsVisitTimeCell {
+  const AnalyticsVisitTimeCell({
+    required this.dayOfWeek,
+    required this.hour,
+    required this.sessions,
+  });
+
+  /// Monday is 0 and Sunday is 6.
+  final int dayOfWeek;
+  final int hour;
+  final int sessions;
+
+  factory AnalyticsVisitTimeCell.fromJson(Map<String, dynamic> json) =>
+      AnalyticsVisitTimeCell(
+        dayOfWeek: (json['dayOfWeek'] as num?)?.toInt() ?? 0,
+        hour: (json['hour'] as num?)?.toInt() ?? 0,
+        sessions: (json['sessions'] as num?)?.toInt() ?? 0,
+      );
+}
+
+final analyticsVisitTimeProvider =
+    FutureProvider.family<
+      List<AnalyticsVisitTimeCell>,
+      AnalyticsDashboardQuery
+    >((ref, query) async {
+      final parameters = <String, String>{
+        'from': query.range.fromQuery,
+        'to': query.range.toQuery,
+        if (query.segmentId != null) 'segmentId': query.segmentId!,
+      };
+      final path = Uri(
+        path: '/api/v1/sites/${query.siteId}/analytics/visit-time',
+        queryParameters: parameters,
+      );
+      final result =
+          await ref.read(apiProvider).request('GET', path.toString()) as List;
+      return result
+          .whereType<Map>()
+          .map(
+            (item) => AnalyticsVisitTimeCell.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .toList(growable: false);
+    });
+
 final analyticsLocationProvider =
     FutureProvider.family<AnalyticsLocationReport, AnalyticsDashboardQuery>((
       ref,

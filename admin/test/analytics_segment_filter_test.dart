@@ -88,6 +88,29 @@ void main() {
     expect(api.paths.any((path) => path.contains('/content?')), isTrue);
     expect(api.paths.any((path) => path.contains('/web-vitals?')), isTrue);
   });
+
+  test('visit-time report carries the selected range and segment', () async {
+    final api = _AnalyticsApi();
+    final container = ProviderContainer(
+      overrides: [apiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    final query = AnalyticsDashboardQuery(
+      'site-1',
+      AnalyticsDateRange(DateTime(2026, 9, 1), DateTime(2026, 9, 7)),
+      segmentId: 'segment-1',
+    );
+    final cells = await container.read(
+      analyticsVisitTimeProvider(query).future,
+    );
+
+    expect(cells, isEmpty);
+    expect(api.paths.single, contains('/analytics/visit-time?'));
+    expect(api.paths.single, contains('from=2026-09-01'));
+    expect(api.paths.single, contains('to=2026-09-07'));
+    expect(api.paths.single, contains('segmentId=segment-1'));
+  });
 }
 
 class _AnalyticsApi extends SeeRayApi {

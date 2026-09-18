@@ -29,6 +29,8 @@ class SiteTabShell extends ConsumerWidget {
         ? SiteTopTab.annotations
         : path.endsWith('/realtime')
         ? SiteTopTab.realtime
+        : path.endsWith('/visitors/time')
+        ? SiteTopTab.visitTime
         : path.endsWith('/visitors/cohorts')
         ? SiteTopTab.cohorts
         : path.endsWith('/visitors/technology')
@@ -75,6 +77,7 @@ class SiteTabShell extends ConsumerWidget {
     final supportsSegmentFilter = {
       SiteTopTab.dashboard,
       SiteTopTab.visitors,
+      SiteTopTab.visitTime,
       SiteTopTab.cohorts,
       SiteTopTab.technology,
       SiteTopTab.locations,
@@ -110,6 +113,7 @@ class SiteTabShell extends ConsumerWidget {
                 ref.invalidate(analyticsDashboardRangeProvider);
                 ref.invalidate(analyticsDashboardProvider);
                 ref.invalidate(analyticsTechnologyProvider);
+                ref.invalidate(analyticsVisitTimeProvider);
                 ref.invalidate(analyticsCohortProvider);
                 ref.invalidate(analyticsLocationProvider);
                 ref.invalidate(analyticsRealtimeProvider);
