@@ -68,8 +68,10 @@ public class AnalyticsResource {
             @QueryParam("from") String from,
             @QueryParam("to") String to,
             @QueryParam("weeks") @DefaultValue("8") int weeks,
-            @QueryParam("segmentId") UUID segmentId) {
-        return cohorts.report(site, analytics.range(site, from, to), segmentId, weeks);
+            @QueryParam("segmentId") UUID segmentId,
+            @QueryParam("basis") @DefaultValue("first_visit") String basis,
+            @QueryParam("goalId") UUID goalId) {
+        return cohorts.report(site, analytics.range(site, from, to), segmentId, weeks, basis, goalId);
     }
 
     @GET
