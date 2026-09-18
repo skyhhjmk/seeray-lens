@@ -24,7 +24,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Measure Core Web Vitals'), findsOneWidget);
-    final snippet = tester.widget<SelectableText>(find.byType(SelectableText));
+    final snippet = tester.widget<SelectableText>(
+      find.byType(SelectableText).first,
+    );
     expect(snippet.data, contains('data-web-vitals'));
     expect(snippet.data, contains('data-require-consent="true"'));
     expect(find.textContaining('does not read page text'), findsOneWidget);
@@ -68,6 +70,9 @@ void main() {
   testWidgets('provides an accessible consent and withdrawal setup', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1000, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [sitesProvider.overrideWith(_SitesController.new)],
@@ -84,11 +89,28 @@ void main() {
 
     expect(find.text('Visitor consent setup'), findsOneWidget);
     expect(find.text('Consent required for this site'), findsOneWidget);
-    final snippet = tester.widget<SelectableText>(find.byType(SelectableText));
+    final snippet = tester.widget<SelectableText>(
+      find.byType(SelectableText).first,
+    );
     expect(snippet.data, contains('data-require-consent="true"'));
     expect(snippet.data, contains('data-seeray-consent-accept'));
     expect(snippet.data, contains('SeeRay.optOut'));
     expect(snippet.data, contains('seeray-consent-manage-srl_demo'));
+
+    await tester.ensureVisible(find.text('Hosted privacy'));
+    await tester.tap(find.text('Hosted privacy'));
+    await tester.pumpAndSettle();
+    expect(find.text('Hosted privacy preferences'), findsOneWidget);
+    final hostedSnippet = tester.widget<SelectableText>(
+      find.byType(SelectableText),
+    );
+    expect(hostedSnippet.data, contains('data-seeray-privacy'));
+    expect(
+      hostedSnippet.data,
+      contains('/privacy/preferences?siteId=srl_demo'),
+    );
+    await tester.ensureVisible(find.text('Copy hosted privacy setup'));
+    expect(find.text('Copy hosted privacy setup'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Image fallback'));
     await tester.tap(find.text('Image fallback'));

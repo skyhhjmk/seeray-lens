@@ -44,15 +44,18 @@ class IntegrationPage extends ConsumerWidget {
             'web-vitals'
         ? 6
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'forms'
-        ? 12
-        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
         ? 13
+        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
+        ? 14
+        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
+              'hosted-privacy'
+        ? 12
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
               'crashes'
-        ? 14
+        ? 15
         : 0;
     return DefaultTabController(
-      length: 16,
+      length: 17,
       initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
@@ -87,6 +90,7 @@ class IntegrationPage extends ConsumerWidget {
                   Tab(text: context.tr('A/B tests', 'A/B 测试')),
                   Tab(text: context.tr('Tag Manager', 'Tag Manager')),
                   Tab(text: context.tr('Consent & privacy', '同意与隐私')),
+                  Tab(text: context.tr('Hosted privacy', '托管隐私')),
                   Tab(text: context.tr('Form analytics', '表单分析')),
                   Tab(text: context.tr('Media analytics', '媒体分析')),
                   Tab(text: context.tr('Crash analytics', '崩溃分析')),
@@ -220,6 +224,11 @@ class IntegrationPage extends ConsumerWidget {
                   ),
                   _ConsentSetup(
                     siteId: site.id,
+                    trackingId: site.trackingId,
+                    trackerUrl: script,
+                    requiredBySite: site.requireConsent,
+                  ),
+                  _HostedPrivacySetup(
                     trackingId: site.trackingId,
                     trackerUrl: script,
                     requiredBySite: site.requireConsent,
@@ -382,6 +391,96 @@ class _ConsentSetup extends StatelessWidget {
           },
           icon: const Icon(Icons.copy),
           label: Text(context.tr('Copy consent setup', '复制同意设置代码')),
+        ),
+      ),
+    ],
+  );
+}
+
+class _HostedPrivacySetup extends StatelessWidget {
+  const _HostedPrivacySetup({
+    required this.trackingId,
+    required this.trackerUrl,
+    required this.requiredBySite,
+  });
+
+  final String trackingId;
+  final String trackerUrl;
+  final bool requiredBySite;
+
+  String get _snippet {
+    final consentAttribute = requiredBySite
+        ? ' data-require-consent="true"'
+        : '';
+    final apiOrigin = Uri.parse(trackerUrl).origin;
+    return '''<script src="$trackerUrl" data-site-id="$trackingId"$consentAttribute></script>
+<iframe
+  data-seeray-privacy
+  title="Privacy preferences"
+  src="$apiOrigin/privacy/preferences?siteId=$trackingId"
+  width="100%"
+  height="230"
+  loading="lazy"></iframe>''';
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(20),
+    children: [
+      Text(
+        context.tr('Hosted privacy preferences', '托管隐私设置页'),
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+      const SizedBox(height: 8),
+      Text(
+        context.tr(
+          'Use this ready-to-use control instead of the starter banner. Keep the tracker and iframe together on the same page. The hosted page updates the matching tracker and stores the choice in this browser; it does not send analytics itself.',
+          '可用此开箱即用的控件替代基础横幅。追踪器与 iframe 必须放在同一页面；托管页会更新匹配的追踪器并把选择保存在当前浏览器，本身不会发送分析数据。',
+        ),
+      ),
+      const SizedBox(height: 12),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.privacy_tip_outlined),
+          title: Text(
+            requiredBySite
+                ? context.tr('Consent required', '需要访客同意')
+                : context.tr(
+                    'Tracking is optional by site policy',
+                    '站点策略允许默认采集',
+                  ),
+          ),
+          subtitle: Text(
+            context.tr(
+              'The hosted page only controls a tracker running on the same customer page. Opening its URL by itself cannot change another website’s browser storage.',
+              '托管页面只能控制同一客户网页中运行的追踪器。单独打开该 URL 无法修改其他网站的浏览器存储。',
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 12),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SelectableText(
+            _snippet,
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+        ),
+      ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.icon(
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: _snippet));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(context.tr('Code copied', '代码已复制'))),
+              );
+            }
+          },
+          icon: const Icon(Icons.copy),
+          label: Text(context.tr('Copy hosted privacy setup', '复制托管隐私设置代码')),
         ),
       ),
     ],
