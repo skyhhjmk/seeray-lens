@@ -4,6 +4,7 @@ import io.seeray.lens.domain.common.ControlPlaneException;
 import io.seeray.lens.domain.site.Site;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.sql.*;
 import java.time.LocalDate;
 import java.util.*;
@@ -54,6 +55,19 @@ public class CohortQueryService {
             int periods,
             String basis,
             UUID goalId) {
+        return report(siteId, range, segmentId, period, periods, basis, goalId, "returning_visitors", null);
+    }
+
+    public List<RetentionCell> report(
+            UUID siteId,
+            AnalyticsQueryService.Range range,
+            UUID segmentId,
+            String period,
+            int periods,
+            String basis,
+            UUID goalId,
+            String metric,
+            UUID metricGoalId) {
         if (!validPeriodWindow(period, periods)) {
             throw new ControlPlaneException(400, "INVALID_COHORT_WINDOW", "Cohort period or window is invalid");
         }
@@ -62,6 +76,13 @@ public class CohortQueryService {
         }
         if ("goal_conversion".equals(basis) && goalId == null) {
             throw new ControlPlaneException(400, "GOAL_REQUIRED", "A goal is required for goal-conversion cohorts");
+        }
+        if (!"returning_visitors".equals(metric) && !"goal_conversions".equals(metric)) {
+            throw new ControlPlaneException(400, "INVALID_COHORT_METRIC", "Cohort metric is invalid");
+        }
+        if ("goal_conversions".equals(metric) && metricGoalId == null) {
+            throw new ControlPlaneException(
+                    400, "METRIC_GOAL_REQUIRED", "A configured goal is required for the goal-conversion metric");
         }
         Site site = sites.site(siteId);
         SegmentService.SessionFilter filter = segments.sessionFilter(siteId, segmentId);
@@ -82,6 +103,28 @@ public class CohortQueryService {
                     case "month" -> "(s.cohort_period+(a.period_index+1)*interval '1 month'-interval '1 day')::date<=?::date";
                     default -> throw new IllegalStateException("Validated cohort period was not supported");
                 };
+        String goalActivityCtes;
+        if ("goal_conversions".equals(metric)) {
+            String conversionBucket = periodBucket(GOAL_EVENT_TIMESTAMP, period);
+            String conversionIndex = periodIndex("a.activity_period", "a.cohort_period", period);
+            goalActivityCtes = "goal_events as (select c.cohort_period,c.visitor_id," + conversionBucket
+                    + " activity_period,g.fixed_value from cohort_members c "
+                    + "join analytics_session s on s.site_id=? and s.visitor_id=c.visitor_id "
+                    + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
+                    + "join goal_definition g on g.site_id=s.site_id and g.id=? and g.enabled "
+                    + "join raw_event e on e.site_id=s.site_id and e.client_session_id=s.client_session_id "
+                    + "and e.client_visitor_id=v.client_visitor_id and " + GOAL_EVENT_TIMESTAMP
+                    + " between s.started_at and s.last_activity_at where " + GOAL_EVENT_MATCH
+                    + " and (" + GOAL_EVENT_TIMESTAMP + " at time zone ?)::date<=?),"
+                    + " goal_activity as (select a.cohort_period," + conversionIndex
+                    + " period_index,count(*)::bigint goal_conversions,count(distinct a.visitor_id)::bigint "
+                    + "goal_converted_visitors,coalesce(sum(a.fixed_value),0)::numeric goal_value "
+                    + "from goal_events a where a.activity_period>=a.cohort_period "
+                    + "group by a.cohort_period,period_index)";
+        } else {
+            goalActivityCtes = "goal_activity as (select null::date cohort_period,0::int period_index,"
+                    + "0::bigint goal_conversions,0::bigint goal_converted_visitors,0::numeric goal_value where false)";
+        }
         String cohortCandidates;
         if ("goal_conversion".equals(basis)) {
             cohortCandidates = "cohort_candidates as (select distinct s.*,v.client_visitor_id,"
@@ -110,6 +153,7 @@ public class CohortQueryService {
                 + "(s.cohort_at at time zone ?)::date between ? and ? and (" + filter.expression() + ")),"
                 + " cohort_sizes as (select cohort_period,count(distinct visitor_id)::bigint cohort_size "
                 + "from cohort_members group by cohort_period),"
+                + goalActivityCtes + ","
                 + " activity_periods as (select distinct s.visitor_id," + activityBucket + " activity_period "
                 + "from eligible_sessions s where (s.started_at at time zone ?)::date<=?),"
                 + " retained as (select c.cohort_period," + retentionIndex + " period_index,"
@@ -119,11 +163,15 @@ public class CohortQueryService {
                 + " ages as (select generate_series(0,?-1)::int period_index),"
                 + " cells as (select s.cohort_period,a.period_index,s.cohort_size,"
                 + "case when a.period_index=0 then s.cohort_size else coalesce(r.retained_visitors,0) end retained_visitors,"
+                + "coalesce(g.goal_conversions,0) goal_conversions,"
+                + "coalesce(g.goal_converted_visitors,0) goal_converted_visitors,coalesce(g.goal_value,0)::numeric goal_value,"
                 + "(a.period_index=0 or " + completionDate + ") complete "
                 + "from cohort_sizes s cross join ages a left join retained r "
-                + "on r.cohort_period=s.cohort_period and r.period_index=a.period_index) "
+                + "on r.cohort_period=s.cohort_period and r.period_index=a.period_index "
+                + "left join goal_activity g on g.cohort_period=s.cohort_period and g.period_index=a.period_index) "
                 + "select cohort_period,period_index,cohort_size,retained_visitors,"
-                + "case when cohort_size=0 then 0 else retained_visitors::double precision/cohort_size end,complete "
+                + "case when cohort_size=0 then 0 else retained_visitors::double precision/cohort_size end,"
+                + "goal_conversions,goal_converted_visitors,goal_value,complete "
                 + "from cells order by cohort_period desc,period_index";
 
         List<RetentionCell> result = new ArrayList<>();
@@ -140,6 +188,13 @@ public class CohortQueryService {
             statement.setObject(next++, range.from());
             statement.setObject(next++, range.to());
             for (Object value : filter.values()) statement.setObject(next++, value);
+            if ("goal_conversions".equals(metric)) {
+                statement.setString(next++, site.timezone);
+                statement.setObject(next++, siteId);
+                statement.setObject(next++, metricGoalId);
+                statement.setString(next++, site.timezone);
+                statement.setObject(next++, range.to());
+            }
             statement.setString(next++, site.timezone);
             statement.setString(next++, site.timezone);
             statement.setObject(next++, range.to());
@@ -153,7 +208,10 @@ public class CohortQueryService {
                             rows.getLong(3),
                             rows.getLong(4),
                             rows.getDouble(5),
-                            rows.getBoolean(6)));
+                            rows.getLong(6),
+                            rows.getLong(7),
+                            rows.getBigDecimal(8),
+                            rows.getBoolean(9)));
                 }
             }
             return result;
@@ -181,11 +239,27 @@ public class CohortQueryService {
         };
     }
 
+    private static String periodIndex(String activityPeriod, String cohortPeriod, String period) {
+        return switch (period) {
+            case "day" -> "(" + activityPeriod + "-" + cohortPeriod + ")::int";
+            case "week" -> "((" + activityPeriod + "-" + cohortPeriod + ")/7)::int";
+            case "month" -> "((extract(year from " + activityPeriod + ")-extract(year from " + cohortPeriod + "))*12+"
+                    + "extract(month from " + activityPeriod + ")-extract(month from " + cohortPeriod + "))::int";
+            default -> throw new IllegalStateException("Validated cohort period was not supported");
+        };
+    }
+
+    private static final String GOAL_EVENT_TIMESTAMP = "(case when e.occurred_at < e.received_at - interval '24 hours' "
+            + "or e.occurred_at > e.received_at + interval '24 hours' then e.received_at else e.occurred_at end)";
+
     public record RetentionCell(
             LocalDate cohortPeriod,
             int periodIndex,
             long cohortSize,
             long retainedVisitors,
             double retentionRate,
+            long goalConversions,
+            long goalConvertedVisitors,
+            BigDecimal goalValue,
             boolean complete) {}
 }

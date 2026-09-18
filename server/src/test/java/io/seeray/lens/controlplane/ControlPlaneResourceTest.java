@@ -1635,7 +1635,7 @@ class ControlPlaneResourceTest {
         String goalId = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Reached cohort B\",\"triggerType\":\"page_view\","
-                        + "\"pathPattern\":\"/cohort/b\",\"pathMatchMode\":\"exact\"}")
+                        + "\"pathPattern\":\"/cohort/b\",\"pathMatchMode\":\"exact\",\"fixedValue\":15}")
                 .post("/api/v1/sites/" + siteId + "/goals")
                 .then()
                 .statusCode(200)
@@ -1663,6 +1663,33 @@ class ControlPlaneResourceTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(0, goalWeekOne.get("retainedVisitors"));
+
+        List<java.util.Map<String, Object>> goalConversions = given().header(
+                        "Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&metric=goal_conversions&metricGoalId=" + goalId)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var conversionWeekZero = goalConversions.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(1, conversionWeekZero.get("goalConversions"));
+        assertEquals(1, conversionWeekZero.get("goalConvertedVisitors"));
+        assertEquals(15.0d, ((Number) conversionWeekZero.get("goalValue")).doubleValue());
+        var conversionWeekOne = goalConversions.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(0, conversionWeekOne.get("goalConversions"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&metric=goal_conversions")
+                .then()
+                .statusCode(400);
 
         given().header("Authorization", "Bearer " + owner.access())
                 .get(goalCohortPath + "&segmentId=" + segmentId)
