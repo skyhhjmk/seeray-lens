@@ -26,8 +26,9 @@ public class IngestionPersistence {
                     """
                     INSERT INTO raw_event (ingest_id, site_id, client_event_id, client_visitor_id, client_session_id, received_at, occurred_at, event_type,
                       page_scheme, page_host, page_path, page_title, referrer_scheme, referrer_host, referrer_path,
-                      utm_source, utm_medium, utm_campaign, utm_term, utm_content, event_data, duration_ms, user_id_hash, ingest_version, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, 1, now())
+                      utm_source, utm_medium, utm_campaign, utm_term, utm_content, ad_click_platform, ad_click_id_hash,
+                      event_data, duration_ms, user_id_hash, ingest_version, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, 1, now())
                     ON CONFLICT (site_id, client_event_id) DO NOTHING""")) {
                 for (TrackingMessage event : events) {
                     statement.setObject(1, event.ingestId());
@@ -50,10 +51,14 @@ public class IngestionPersistence {
                             19, event.page() == null ? null : event.page().term());
                     statement.setString(
                             20, event.page() == null ? null : event.page().content());
-                    statement.setString(21, event.eventData());
-                    if (event.durationMs() == null) statement.setNull(22, Types.INTEGER);
-                    else statement.setInt(22, event.durationMs());
-                    statement.setString(23, event.userIdHash());
+                    statement.setString(
+                            21, event.page() == null ? null : event.page().adClickPlatform());
+                    statement.setString(
+                            22, event.page() == null ? null : event.page().adClickIdHash());
+                    statement.setString(23, event.eventData());
+                    if (event.durationMs() == null) statement.setNull(24, Types.INTEGER);
+                    else statement.setInt(24, event.durationMs());
+                    statement.setString(25, event.userIdHash());
                     statement.addBatch();
                 }
                 statement.executeBatch();

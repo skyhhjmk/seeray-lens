@@ -64,7 +64,7 @@ public class TrackingResource {
             boolean clientError = "client_error".equals(event.type());
             TrackingSanitizer.CleanUrl page = clientError
                     ? TrackingSanitizer.crashUrl(event.url(), mapper)
-                    : TrackingSanitizer.url(event.url(), mapper, event.title());
+                    : TrackingSanitizer.url(event.url(), mapper, event.title(), site.id);
             TrackingSanitizer.CleanUrl ref = clientError ? null : TrackingSanitizer.url(event.referrer(), mapper);
             String requestOrigin = origin != null && !origin.isBlank() ? origin : referer;
             if (!matchesAllowed(page == null ? null : page.host(), allowed)

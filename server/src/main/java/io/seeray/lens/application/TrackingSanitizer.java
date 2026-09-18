@@ -5,11 +5,24 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seeray.lens.domain.common.ControlPlaneException;
 import java.net.IDN;
 import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.UUID;
 
 public final class TrackingSanitizer {
     private static final Set<String> UTM =
             Set.of("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content");
+    private static final List<ClickParameter> AD_CLICK_PARAMETERS = List.of(
+            new ClickParameter("gclid", "google_ads", "google", "paid_search"),
+            new ClickParameter("wbraid", "google_ads", "google", "paid_search"),
+            new ClickParameter("gbraid", "google_ads", "google", "paid_search"),
+            new ClickParameter("dclid", "google_ads", "google", "paid_display"),
+            new ClickParameter("msclkid", "microsoft_ads", "bing", "paid_search"),
+            new ClickParameter("fbclid", "meta_ads", "facebook", "paid_social"),
+            new ClickParameter("ttclid", "tiktok_ads", "tiktok", "paid_social"),
+            new ClickParameter("li_fat_id", "linkedin_ads", "linkedin", "paid_social"),
+            new ClickParameter("twclid", "x_ads", "x", "paid_social"));
 
     private TrackingSanitizer() {}
 
@@ -18,9 +31,13 @@ public final class TrackingSanitizer {
     }
 
     public static CleanUrl url(String value, ObjectMapper mapper, String title) {
+        return url(value, mapper, title, null);
+    }
+
+    public static CleanUrl url(String value, ObjectMapper mapper, String title, UUID siteId) {
         String cleanTitle = cleanTitle(title);
         if (value == null || value.isBlank())
-            return new CleanUrl(null, null, null, null, null, null, null, null, cleanTitle, null, null);
+            return new CleanUrl(null, null, null, null, null, null, null, null, cleanTitle, null, null, null, null);
         try {
             URI uri = URI.create(value.trim());
             if (uri.getScheme() == null || uri.getHost() == null || uri.getUserInfo() != null)
@@ -28,24 +45,56 @@ public final class TrackingSanitizer {
             String host = IDN.toASCII(uri.getHost(), IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
             String path = uri.getPath() == null || uri.getPath().isBlank() ? "/" : limit(uri.getPath(), 2048);
             Map<String, String> utm = new HashMap<>();
+            Map<String, String> query = new HashMap<>();
             if (uri.getRawQuery() != null) {
                 for (String part : uri.getRawQuery().split("&")) {
                     String[] pair = part.split("=", 2);
-                    if (pair.length == 2 && UTM.contains(pair[0])) utm.put(pair[0], limit(pair[1], 256));
+                    if (pair.length != 2) continue;
+                    try {
+                        String key = URLDecoder.decode(pair[0], StandardCharsets.UTF_8)
+                                .toLowerCase(Locale.ROOT);
+                        String decoded = URLDecoder.decode(pair[1], StandardCharsets.UTF_8);
+                        if (UTM.contains(key)) utm.putIfAbsent(key, limit(decoded, 256));
+                        else if (query.containsKey(key)
+                                || AD_CLICK_PARAMETERS.stream()
+                                        .anyMatch(click -> click.parameter().equals(key)))
+                            query.putIfAbsent(key, decoded);
+                    } catch (IllegalArgumentException ignored) {
+                        // Ignore malformed percent encoding; unrelated query strings are discarded anyway.
+                    }
                 }
             }
+            ClickParameter clickParameter = null;
+            String clickId = null;
+            for (ClickParameter candidate : AD_CLICK_PARAMETERS) {
+                String candidateId = query.get(candidate.parameter());
+                if (candidateId != null
+                        && !candidateId.isBlank()
+                        && candidateId.length() <= 512
+                        && candidateId.chars().noneMatch(Character::isISOControl)) {
+                    clickParameter = candidate;
+                    clickId = candidateId;
+                    break;
+                }
+            }
+            String source = utm.get("utm_source");
+            String medium = utm.get("utm_medium");
+            if (clickParameter != null && source == null) source = clickParameter.source();
+            if (clickParameter != null && medium == null) medium = clickParameter.medium();
             return new CleanUrl(
                     uri.getScheme().toLowerCase(Locale.ROOT),
                     host,
                     path,
-                    utm.get("utm_source"),
-                    utm.get("utm_medium"),
+                    source,
+                    medium,
                     utm.get("utm_campaign"),
                     utm.get("utm_term"),
                     utm.get("utm_content"),
                     cleanTitle,
                     null,
-                    null);
+                    null,
+                    clickParameter == null ? null : clickParameter.platform(),
+                    clickId == null ? null : TrackingIdentityHasher.hash(siteId, "ad-click:" + clickId));
         } catch (Exception e) {
             throw new ControlPlaneException(400, "INVALID_EVENT_URL", "Event URL is invalid");
         }
@@ -58,6 +107,8 @@ public final class TrackingSanitizer {
                 clean.scheme(),
                 clean.host(),
                 safeCrashPath(clean.path()),
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -140,5 +191,9 @@ public final class TrackingSanitizer {
             String content,
             String title,
             String referrerScheme,
-            String referrerHost) {}
+            String referrerHost,
+            String adClickPlatform,
+            String adClickIdHash) {}
+
+    private record ClickParameter(String parameter, String platform, String source, String medium) {}
 }

@@ -62,7 +62,7 @@ public class PixelTrackingResource {
             if (!rateLimiter.allow(trackingId)) return;
             Site site = Site.find("trackingId", trackingId).firstResult();
             if (site == null || !site.trackingEnabled || referer == null || referer.isBlank()) return;
-            TrackingSanitizer.CleanUrl page = TrackingSanitizer.url(referer, mapper);
+            TrackingSanitizer.CleanUrl page = TrackingSanitizer.url(referer, mapper, null, site.id);
             if (!allowed(page.host(), sites.trackingDomains(site.id))) return;
             UUID visitor = cookie(headers, visitorCookie(trackingId));
             UUID session = cookie(headers, sessionCookie(trackingId));
@@ -75,7 +75,8 @@ public class PixelTrackingResource {
                     Instant.now(),
                     "page_view",
                     page,
-                    new TrackingSanitizer.CleanUrl(null, null, null, null, null, null, null, null, null, null, null),
+                    new TrackingSanitizer.CleanUrl(
+                            null, null, null, null, null, null, null, null, null, null, null, null, null),
                     TrackingSanitizer.json(
                             Map.of(
                                     "visitorId",

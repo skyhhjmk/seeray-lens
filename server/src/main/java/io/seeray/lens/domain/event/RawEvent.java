@@ -72,6 +72,12 @@ public class RawEvent {
     @Column(name = "utm_content")
     public String utmContent;
 
+    @Column(name = "ad_click_platform", length = 32)
+    public String adClickPlatform;
+
+    @Column(name = "ad_click_id_hash", length = 64)
+    public String adClickIdHash;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "event_data", nullable = false, columnDefinition = "jsonb")
     public String eventData;

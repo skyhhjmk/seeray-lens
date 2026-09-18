@@ -314,3 +314,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0045-unified-visitor-identities.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0046-ad-click-attribution
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0046-ad-click-attribution.sql
+            relativeToChangelogFile: false

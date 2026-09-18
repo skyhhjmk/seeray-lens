@@ -531,7 +531,7 @@ class ControlPlaneResourceTest {
                 .statusCode(201);
         String eventId = UUID.randomUUID().toString();
         String body = "{\"schemaVersion\":1,\"siteId\":\"" + trackingId + "\",\"events\":[{\"eventId\":\"" + eventId
-                + "\",\"type\":\"page_view\",\"visitorId\":\"00000000-0000-4000-8000-000000000001\",\"sessionId\":\"00000000-0000-4000-8000-000000000002\",\"userId\":\"opaque-user-01\",\"url\":\"https://example.com/order?id=secret&utm_source=google#x\",\"title\":\"Order confirmation\",\"context\":{\"browser\":\"Chrome\",\"browserVersion\":\"132\",\"operatingSystem\":\"Linux\",\"operatingSystemVersion\":\"6.8\",\"deviceType\":\"desktop\",\"language\":\"zh-CN\",\"screenWidth\":1920,\"screenHeight\":1080,\"viewportWidth\":1440,\"viewportHeight\":900,\"pixelRatio\":1.5}}]}";
+                + "\",\"type\":\"page_view\",\"visitorId\":\"00000000-0000-4000-8000-000000000001\",\"sessionId\":\"00000000-0000-4000-8000-000000000002\",\"userId\":\"opaque-user-01\",\"url\":\"https://example.com/order?id=secret&gclid=click-secret-123#x\",\"title\":\"Order confirmation\",\"context\":{\"browser\":\"Chrome\",\"browserVersion\":\"132\",\"operatingSystem\":\"Linux\",\"operatingSystemVersion\":\"6.8\",\"deviceType\":\"desktop\",\"language\":\"zh-CN\",\"screenWidth\":1920,\"screenHeight\":1080,\"viewportWidth\":1440,\"viewportHeight\":900,\"pixelRatio\":1.5}}]}";
         given().header("cf-ipcountry", "US")
                 .header("cf-ipcontinent", "NA")
                 .header("cf-region-code", "CA")
@@ -571,7 +571,7 @@ class ControlPlaneResourceTest {
         assertEquals(1, count);
         try (var connection = dataSource.getConnection();
                 var statement = connection.prepareStatement(
-                        "select page_path, page_title, utm_source, event_data->'context'->>'browser',event_data->'context'->>'countryCode',user_id_hash,event_data::text from raw_event where client_event_id = ?")) {
+                        "select page_path, page_title, utm_source, event_data->'context'->>'browser',event_data->'context'->>'countryCode',user_id_hash,event_data::text,utm_medium,ad_click_platform,ad_click_id_hash from raw_event where client_event_id = ?")) {
             statement.setObject(1, UUID.fromString(eventId));
             try (var result = statement.executeQuery()) {
                 assertTrue(result.next());
@@ -585,6 +585,13 @@ class ControlPlaneResourceTest {
                                 UUID.fromString(site.path("id")), "opaque-user-01"),
                         result.getString(6));
                 assertFalse(result.getString(7).contains("opaque-user-01"));
+                assertEquals("paid_search", result.getString(8));
+                assertEquals("google_ads", result.getString(9));
+                assertEquals(
+                        io.seeray.lens.application.TrackingIdentityHasher.hash(
+                                UUID.fromString(site.path("id")), "ad-click:click-secret-123"),
+                        result.getString(10));
+                assertFalse(result.getString(7).contains("click-secret-123"));
             }
         }
         UUID siteUuid = UUID.fromString(site.path("id"));
@@ -592,7 +599,7 @@ class ControlPlaneResourceTest {
         aggregation.rebuild(siteUuid, LocalDate.parse(today), LocalDate.parse(today));
         try (var connection = dataSource.getConnection();
                 var statement = connection.prepareStatement(
-                        "select count(*),min(browser),min(browser_version),min(device_type),min(country_code),min(city),min(user_id_hash) from analytics_session where site_id = ?")) {
+                        "select count(*),min(browser),min(browser_version),min(device_type),min(country_code),min(city),min(user_id_hash),min(ad_click_platform),min(ad_click_id_hash) from analytics_session where site_id = ?")) {
             statement.setObject(1, siteUuid);
             try (var result = statement.executeQuery()) {
                 result.next();
@@ -605,8 +612,19 @@ class ControlPlaneResourceTest {
                 assertEquals(
                         io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "opaque-user-01"),
                         result.getString(7));
+                assertEquals("google_ads", result.getString(8));
+                assertEquals(
+                        io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "ad-click:click-secret-123"),
+                        result.getString(9));
             }
         }
+        given().header("Authorization", "Bearer " + tokens.access())
+                .get("/api/v1/sites/" + siteUuid + "/analytics/traffic?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("channel", contains("campaign"))
+                .body("source", contains("google"))
+                .body("medium", contains("paid_search"));
         List<java.util.Map<String, Object>> technology = given().header("Authorization", "Bearer " + tokens.access())
                 .get("/api/v1/sites/" + site.path("id") + "/analytics/technology?from=" + today + "&to=" + today)
                 .then()
