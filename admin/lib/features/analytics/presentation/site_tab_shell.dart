@@ -4,8 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../shared/presentation/page_help_button.dart';
 import '../../../shared/presentation/site_top_bar.dart';
-import '../application/analytics_controller.dart';
 import '../application/analytics_attribution.dart';
+import '../application/analytics_controller.dart';
 import '../application/analytics_annotations.dart';
 import '../application/analytics_range.dart';
 import '../application/form_analytics.dart';
@@ -119,6 +119,7 @@ class SiteTabShell extends ConsumerWidget {
                 ref.invalidate(analyticsVisitTimeProvider);
                 ref.invalidate(analyticsVisitorInterestProvider);
                 ref.invalidate(analyticsCohortProvider);
+                ref.invalidate(analyticsGoalDefinitionsProvider(siteId));
                 ref.invalidate(analyticsLocationProvider);
                 ref.invalidate(analyticsRealtimeProvider);
                 ref.invalidate(analyticsBehaviourProvider);

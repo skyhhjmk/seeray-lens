@@ -46,12 +46,42 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('builds a cohort around a configured goal conversion', (
+    tester,
+  ) async {
+    final api = _CohortApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: CohortsPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('First goal conversion').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Conversion goal'), findsOneWidget);
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Signup goal').last);
+    await tester.pumpAndSettle();
+
+    expect(api.lastCohortQuery?.queryParameters['basis'], 'goal_conversion');
+    expect(api.lastCohortQuery?.queryParameters['goalId'], 'goal-1');
+  });
 }
 
 class _CohortApi extends SeeRayApi {
   _CohortApi() : super(baseUrl: 'https://lens.example.test');
 
   final paths = <String>[];
+  Uri? lastCohortQuery;
 
   @override
   Future<dynamic> request(
@@ -61,6 +91,18 @@ class _CohortApi extends SeeRayApi {
     bool retried = false,
   }) async {
     paths.add(path);
+    final uri = Uri.parse(path);
+    if (uri.path.endsWith('/goals')) {
+      return [
+        {
+          'id': 'goal-1',
+          'name': 'Signup goal',
+          'enabled': true,
+          'fixedValue': 0,
+        },
+      ];
+    }
+    if (uri.path.endsWith('/analytics/cohorts')) lastCohortQuery = uri;
     return [
       {
         'cohortWeek': '2026-07-06',

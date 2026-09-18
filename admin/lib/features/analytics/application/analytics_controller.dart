@@ -151,13 +151,17 @@ class AnalyticsCohortQuery {
     required this.siteId,
     required this.range,
     required this.weeks,
+    this.basis = 'first_visit',
     this.segmentId,
+    this.goalId,
   });
 
   final String siteId;
   final AnalyticsDateRange range;
   final String? segmentId;
   final int weeks;
+  final String basis;
+  final String? goalId;
 
   @override
   bool operator ==(Object other) =>
@@ -165,12 +169,21 @@ class AnalyticsCohortQuery {
       other.siteId == siteId &&
       other.segmentId == segmentId &&
       other.weeks == weeks &&
+      other.basis == basis &&
+      other.goalId == goalId &&
       other.range.fromQuery == range.fromQuery &&
       other.range.toQuery == range.toQuery;
 
   @override
-  int get hashCode =>
-      Object.hash(siteId, segmentId, weeks, range.fromQuery, range.toQuery);
+  int get hashCode => Object.hash(
+    siteId,
+    segmentId,
+    weeks,
+    basis,
+    goalId,
+    range.fromQuery,
+    range.toQuery,
+  );
 }
 
 class AnalyticsSiteSearchTerm {
@@ -423,7 +436,9 @@ final analyticsCohortProvider =
         'from': query.range.fromQuery,
         'to': query.range.toQuery,
         'weeks': '${query.weeks}',
+        'basis': query.basis,
         if (query.segmentId != null) 'segmentId': query.segmentId!,
+        if (query.goalId != null) 'goalId': query.goalId!,
       };
       final path = Uri(
         path: '/api/v1/sites/${query.siteId}/analytics/cohorts',

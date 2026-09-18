@@ -65,6 +65,19 @@ class AttributionGoal {
       );
 }
 
+final analyticsGoalDefinitionsProvider =
+    FutureProvider.family<List<AttributionGoal>, String>((ref, siteId) async {
+      final response = await ref
+          .read(apiProvider)
+          .request('GET', '/api/v1/sites/$siteId/goals');
+      return (response as List)
+          .whereType<Map>()
+          .map(
+            (item) => AttributionGoal.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false);
+    });
+
 class AttributionRow {
   const AttributionRow({
     required this.goalId,
@@ -156,15 +169,10 @@ final analyticsAttributionProvider =
         },
       );
       final responses = await Future.wait<dynamic>([
-        api.request('GET', '/api/v1/sites/${query.siteId}/goals'),
+        ref.watch(analyticsGoalDefinitionsProvider(query.siteId).future),
         api.request('GET', reportUri.toString()),
       ]);
-      final goals = (responses[0] as List)
-          .whereType<Map>()
-          .map(
-            (item) => AttributionGoal.fromJson(Map<String, dynamic>.from(item)),
-          )
-          .toList(growable: false);
+      final goals = responses[0] as List<AttributionGoal>;
       return AttributionData(
         goals: goals,
         report: AttributionReport.fromJson(
