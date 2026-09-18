@@ -468,3 +468,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0067-linkedin-ads-capi-config.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0068-x-ads-capi-config
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0068-x-ads-capi-config.sql
+            relativeToChangelogFile: false

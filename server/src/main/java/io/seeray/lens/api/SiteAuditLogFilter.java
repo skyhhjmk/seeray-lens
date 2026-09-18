@@ -126,6 +126,7 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
             return "SEND_TO_META_ADS";
         if ("send".equals(last) && path.length > firstChild && "linkedin-ads".equals(path[firstChild]))
             return "SEND_TO_LINKEDIN_ADS";
+        if ("send".equals(last) && path.length > firstChild && "x-ads".equals(path[firstChild])) return "SEND_TO_X_ADS";
         if ("publish".equals(last)) return "PUBLISH";
         if ("duplicate".equals(last)) return "DUPLICATE";
         if ("approve".equals(last)) return "APPROVE_PRODUCTION";

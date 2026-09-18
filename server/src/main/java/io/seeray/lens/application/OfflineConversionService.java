@@ -26,6 +26,7 @@ public class OfflineConversionService {
     private static final int MAX_GOOGLE_ADS_ROWS = 2_000;
     private static final int MAX_META_ADS_ROWS = 1_000;
     private static final int MAX_LINKEDIN_ADS_ROWS = 5_000;
+    private static final int MAX_X_ADS_ROWS = 2_000;
     private static final int MAX_IMPORT_CHARACTERS = 2 * 1024 * 1024;
     private static final Set<String> PLATFORMS =
             Set.of("google_ads", "microsoft_ads", "meta_ads", "tiktok_ads", "linkedin_ads", "x_ads");
@@ -51,6 +52,7 @@ public class OfflineConversionService {
     private final MicrosoftAdsCapiGateway microsoftAds;
     private final MetaAdsCapiGateway metaAds;
     private final LinkedInConversionsGateway linkedInAds;
+    private final XAdsConversionsGateway xAds;
     private final SecretEncryptionService encryption;
 
     @Inject
@@ -63,6 +65,7 @@ public class OfflineConversionService {
             MicrosoftAdsCapiGateway microsoftAds,
             MetaAdsCapiGateway metaAds,
             LinkedInConversionsGateway linkedInAds,
+            XAdsConversionsGateway xAds,
             SecretEncryptionService encryption) {
         this.dataSource = dataSource;
         this.sites = sites;
@@ -72,6 +75,7 @@ public class OfflineConversionService {
         this.microsoftAds = microsoftAds;
         this.metaAds = metaAds;
         this.linkedInAds = linkedInAds;
+        this.xAds = xAds;
         this.encryption = encryption;
     }
 
@@ -820,6 +824,275 @@ public class OfflineConversionService {
         return new LinkedInAdsTransferResult(events.size(), result.eventsReceived());
     }
 
+    public XAdsConfigView xAdsConfig(UUID siteId) {
+        Site site = readableSite(siteId);
+        var member = access.member(site.organization.id);
+        boolean canManage = member.role == WorkspaceRole.OWNER || member.role == WorkspaceRole.ADMIN;
+        ExistingXAdsConfig config = existingXAdsConfig(siteId);
+        try (Connection connection = dataSource.getConnection()) {
+            List<XAdsGoalMappingView> mappings = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "select m.goal_id,g.name,m.event_id from analytics_x_ads_goal_mapping m "
+                            + "join goal_definition g on g.id=m.goal_id and g.site_id=m.site_id "
+                            + "where m.site_id=? and g.enabled order by g.name,m.goal_id")) {
+                statement.setObject(1, siteId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        mappings.add(new XAdsGoalMappingView(
+                                rows.getObject(1, UUID.class), rows.getString(2), rows.getString(3)));
+                    }
+                }
+            }
+            return new XAdsConfigView(
+                    canManage,
+                    config != null,
+                    config != null,
+                    config == null ? null : config.pixelId(),
+                    config == null ? null : config.currencyCode(),
+                    List.copyOf(mappings));
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read X Ads Conversion API configuration", error);
+        }
+    }
+
+    @Transactional
+    public XAdsConfigView saveXAdsConfig(UUID siteId, XAdsConfigInput input) {
+        writableSite(siteId);
+        if (input == null) throw invalid("Enter an X Pixel ID, currency, and access token.");
+        String pixelId = input.pixelId() == null ? "" : input.pixelId().strip();
+        if (!pixelId.matches("[A-Za-z0-9._~-]{1,256}")) throw invalid("Enter a valid X Pixel ID.");
+        String currencyCode =
+                input.currencyCode() == null ? "" : input.currencyCode().strip().toUpperCase(Locale.ROOT);
+        try {
+            Currency.getInstance(currencyCode);
+        } catch (IllegalArgumentException error) {
+            throw invalid("Choose a valid three-letter ISO currency code.");
+        }
+        ExistingXAdsConfig existing = existingXAdsConfig(siteId);
+        byte[] encryptedToken;
+        if (input.accessToken() == null || input.accessToken().isBlank()) {
+            if (existing == null || !existing.pixelId().equals(pixelId)) {
+                throw new ControlPlaneException(
+                        400,
+                        "X_ADS_TOKEN_REQUIRED",
+                        "Enter an access token on first connection or when changing the Pixel ID.");
+            }
+            encryptedToken = existing.tokenCiphertext();
+        } else {
+            String token = input.accessToken().strip();
+            if (token.length() > 8_192) throw invalid("The X Pixel access token is too long.");
+            encryptedToken = encryption.encrypt(token);
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_x_ads_capi_config(site_id,pixel_id,currency_code,access_token_ciphertext,updated_by,updated_at) "
+                                + "values(?,?,?,?,?,now()) on conflict(site_id) do update set pixel_id=excluded.pixel_id,"
+                                + "currency_code=excluded.currency_code,access_token_ciphertext=excluded.access_token_ciphertext,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, pixelId);
+            statement.setString(3, currencyCode);
+            statement.setBytes(4, encryptedToken);
+            statement.setObject(5, access.userId());
+            statement.executeUpdate();
+            return xAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save X Ads Conversion API configuration", error);
+        }
+    }
+
+    @Transactional
+    public XAdsConfigView mapXAdsGoal(UUID siteId, UUID goalId, String eventIdValue) {
+        writableSite(siteId);
+        goal(siteId, goalId, true);
+        String eventId = eventIdValue == null ? "" : eventIdValue.strip();
+        if (!eventId.matches("[A-Za-z0-9._~-]{1,256}")) {
+            throw invalid("Enter the X Event ID shown for the event in Events Manager.");
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_x_ads_goal_mapping(site_id,goal_id,event_id,updated_by,updated_at) "
+                                + "values(?,?,?,?,now()) on conflict(site_id,goal_id) do update set event_id=excluded.event_id,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.setString(3, eventId);
+            statement.setObject(4, access.userId());
+            statement.executeUpdate();
+            return xAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save X Ads goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public XAdsConfigView removeXAdsGoalMapping(UUID siteId, UUID goalId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "delete from analytics_x_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.executeUpdate();
+            return xAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove X Ads goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public XAdsConfigView removeXAdsConfig(UUID siteId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("delete from analytics_x_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            statement.executeUpdate();
+            return xAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove X Ads Conversion API configuration", error);
+        }
+    }
+
+    public XAdsTransferResult transferToXAds(UUID siteId, XAdsTransferInput input) {
+        writableSite(siteId);
+        if (input == null
+                || input.goalId() == null
+                || input.rows() == null
+                || input.rows().isEmpty()
+                || input.rows().size() > MAX_X_ADS_ROWS) {
+            throw invalid("Choose 1 to " + MAX_X_ADS_ROWS + " X conversion rows per send.");
+        }
+        if (!input.consentConfirmed()) {
+            throw new ControlPlaneException(
+                    400,
+                    "X_ADS_CONSENT_CONFIRMATION_REQUIRED",
+                    "Confirm that every exported row has consent for ad-storage and conversion measurement.");
+        }
+        XAdsDestination destination = xAdsDestination(siteId);
+        Goal goal = goal(siteId, input.goalId(), true);
+        String eventId = xAdsEventId(siteId, input.goalId());
+        List<NormalizedRow> normalized = normalizeRows(siteId, input.rows());
+        ensureRowsMatchImportedConversions(siteId, input.goalId(), normalized, "x_ads");
+        Map<String, RowInput> rawRows = new HashMap<>();
+        for (RowInput row : input.rows()) {
+            String key = TrackingIdentityHasher.hash(
+                    siteId, "offline-conversion:" + row.conversionId().trim());
+            rawRows.put(key, row);
+        }
+        Map<String, NavigableSet<Instant>> clickVisits = xClickVisits(siteId, normalized);
+        Instant now = Instant.now();
+        List<Map<String, Object>> events = new ArrayList<>(normalized.size());
+        for (NormalizedRow row : normalized) {
+            RowInput raw = rawRows.get(row.conversionKeyHash());
+            if (!"x_ads".equals(row.platform())) throw invalid("Every row must use platform x_ads.");
+            String clickId = field(raw.clickId(), 2_048, "twclid", 0);
+            if (row.convertedAt().isAfter(now)) throw invalid("X conversion timestamps cannot be in the future.");
+            NavigableSet<Instant> visits = clickVisits.get(row.clickIdHash());
+            Instant clickAt = visits == null ? null : visits.floor(row.convertedAt());
+            if (clickAt == null || clickAt.isBefore(row.convertedAt().minus(Duration.ofDays(30)))) {
+                throw new ControlPlaneException(
+                        409,
+                        "X_ADS_MATCHED_VISIT_REQUIRED",
+                        "Every row must match a tracked X ad click from this site within the 30-day maximum click attribution window.");
+            }
+            Map<String, Object> identifier = Map.of("twclid", clickId);
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("conversion_timestamp", row.convertedAt().toEpochMilli());
+            event.put("identifiers", List.of(identifier));
+            event.put("event_id", eventId);
+            event.put(
+                    "conversion_id",
+                    TrackingIdentityHasher.hash(
+                            siteId, "x-ads-conversion:" + raw.conversionId().trim()));
+            if (goal.fixedValue() != null) event.put("value", goal.fixedValue());
+            event.put("price_currency", destination.currencyCode());
+            events.add(event);
+        }
+        Map<String, Object> payload = Map.of("conversions", events);
+        XAdsConversionsGateway.Result result =
+                xAds.send(destination.pixelId(), encryption.decrypt(destination.tokenCiphertext()), payload);
+        return new XAdsTransferResult(events.size(), result.eventsReceived());
+    }
+
+    private Map<String, NavigableSet<Instant>> xClickVisits(UUID siteId, List<NormalizedRow> rows) {
+        Set<String> clickHashes = new HashSet<>();
+        Instant earliestConversion = rows.stream()
+                .map(NormalizedRow::convertedAt)
+                .min(Instant::compareTo)
+                .orElseThrow();
+        Instant latestConversion = rows.stream()
+                .map(NormalizedRow::convertedAt)
+                .max(Instant::compareTo)
+                .orElseThrow();
+        rows.forEach(row -> clickHashes.add(row.clickIdHash()));
+        Map<String, NavigableSet<Instant>> visits = new HashMap<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select ad_click_id_hash,started_at from analytics_session where site_id=? "
+                                + "and ad_click_platform='x_ads' and ad_click_id_hash=any(?) "
+                                + "and started_at>=? and started_at<=? order by ad_click_id_hash,started_at")) {
+            statement.setObject(1, siteId);
+            statement.setArray(2, connection.createArrayOf("varchar", clickHashes.toArray(String[]::new)));
+            statement.setTimestamp(3, Timestamp.from(earliestConversion.minus(Duration.ofDays(30))));
+            statement.setTimestamp(4, Timestamp.from(latestConversion));
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    visits.computeIfAbsent(result.getString(1), ignored -> new TreeSet<>())
+                            .add(result.getTimestamp(2).toInstant());
+                }
+            }
+            return visits;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not match imported X click IDs to tracked visits", error);
+        }
+    }
+
+    private ExistingXAdsConfig existingXAdsConfig(UUID siteId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select pixel_id,currency_code,access_token_ciphertext from analytics_x_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return null;
+                return new ExistingXAdsConfig(row.getString(1), row.getString(2), row.getBytes(3));
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read X Ads Conversion API credentials", error);
+        }
+    }
+
+    private XAdsDestination xAdsDestination(UUID siteId) {
+        ExistingXAdsConfig config = existingXAdsConfig(siteId);
+        if (config == null) {
+            throw new ControlPlaneException(
+                    409, "X_ADS_CONFIG_REQUIRED", "Save the X Pixel ID, currency, and access token first.");
+        }
+        return new XAdsDestination(config.pixelId(), config.currencyCode(), config.tokenCiphertext());
+    }
+
+    private String xAdsEventId(UUID siteId, UUID goalId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select event_id from analytics_x_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) {
+                    throw new ControlPlaneException(
+                            409,
+                            "X_ADS_GOAL_MAPPING_REQUIRED",
+                            "Map this SeeRay goal to an X Events Manager Event ID first.");
+                }
+                return row.getString(1);
+            }
+        } catch (ControlPlaneException error) {
+            throw error;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not load X Ads goal mapping", error);
+        }
+    }
+
     private Map<String, NavigableSet<Instant>> linkedinClickVisits(UUID siteId, List<NormalizedRow> rows) {
         Set<String> clickHashes = new HashSet<>();
         Instant earliestConversion = rows.stream()
@@ -1479,6 +1752,22 @@ public class OfflineConversionService {
 
     public record LinkedInAdsTransferResult(int rowsProcessed, int eventsReceived) {}
 
+    public record XAdsConfigInput(String pixelId, String currencyCode, String accessToken) {}
+
+    public record XAdsConfigView(
+            boolean canManage,
+            boolean configured,
+            boolean credentialConfigured,
+            String pixelId,
+            String currencyCode,
+            List<XAdsGoalMappingView> goalMappings) {}
+
+    public record XAdsGoalMappingView(UUID goalId, String goalName, String eventId) {}
+
+    public record XAdsTransferInput(UUID goalId, boolean consentConfirmed, List<RowInput> rows) {}
+
+    public record XAdsTransferResult(int rowsProcessed, int eventsReceived) {}
+
     public record RowInput(String conversionId, String platform, String clickId, String convertedAt) {}
 
     public record ImportBatch(UUID id, UUID goalId, String goalName, int rowCount, Instant importedAt) {}
@@ -1527,6 +1816,10 @@ public class OfflineConversionService {
     private record ExistingLinkedInAdsConfig(String currencyCode, byte[] tokenCiphertext) {}
 
     private record LinkedInAdsDestination(String currencyCode, byte[] tokenCiphertext) {}
+
+    private record ExistingXAdsConfig(String pixelId, String currencyCode, byte[] tokenCiphertext) {}
+
+    private record XAdsDestination(String pixelId, String currencyCode, byte[] tokenCiphertext) {}
 
     private record StoredConversion(String platform, String clickIdHash, Instant convertedAt) {}
 

@@ -18,6 +18,7 @@ import io.seeray.lens.application.MetaAdsCapiGateway;
 import io.seeray.lens.application.MicrosoftAdsCapiGateway;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
 import io.seeray.lens.application.SearchConsoleGateway;
+import io.seeray.lens.application.XAdsConversionsGateway;
 import io.seeray.lens.application.YandexWebmasterGateway;
 import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.auth.AuthSession;
@@ -2744,6 +2745,154 @@ class ControlPlaneResourceTest {
             try (var result = statement.executeQuery()) {
                 assertTrue(result.next());
                 assertEquals("SEND_TO_LINKEDIN_ADS", result.getString(1));
+            }
+        }
+    }
+
+    @Test
+    void sendsMatchedConsentedXConversionsWithOnlyTwclidAndEncryptedToken() throws Exception {
+        Tokens owner = register("x-ads-capi" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "X Ads CAPI site");
+        String goalId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Qualified lead\",\"triggerType\":\"page_view\","
+                        + "\"pathPattern\":\"/qualified\",\"pathMatchMode\":\"exact\",\"fixedValue\":25}")
+                .post("/api/v1/sites/" + siteId + "/goals")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        UUID siteUuid = UUID.fromString(siteId);
+        Instant clickAt = Instant.now().minusSeconds(7_200);
+        Instant convertedAt = clickAt.plusSeconds(3_600);
+        String clientSession = "x-click-session-" + UUID.randomUUID();
+        insertAttributionPage(
+                siteUuid,
+                UUID.randomUUID().toString(),
+                clientSession,
+                clickAt,
+                "/landing",
+                null,
+                "x",
+                "paid_social",
+                "fall-launch");
+        factBuilder.rebuild(siteUuid, clickAt.minusSeconds(1), clickAt.plusSeconds(1));
+
+        String rawClickId = "twclid-A1b2c3d4_E5-f6";
+        String clickHash = io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "ad-click:" + rawClickId);
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update analytics_session set ad_click_platform='x_ads',ad_click_id_hash=? "
+                                + "where site_id=? and client_session_id=?")) {
+            statement.setString(1, clickHash);
+            statement.setObject(2, siteUuid);
+            statement.setString(3, clientSession);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        String endpoint = "/api/v1/sites/" + siteId + "/offline-conversions/x-ads";
+        String matchedRow = "{\"conversionId\":\"crm-x-lead-0081\",\"platform\":\"x_ads\"," + "\"clickId\":\""
+                + rawClickId + "\",\"convertedAt\":\"" + convertedAt + "\"}";
+        String unmatchedClickId = "twclid-unmatched-1111-2222";
+        String unmatchedRow = "{\"conversionId\":\"crm-x-lead-0082\",\"platform\":\"x_ads\"," + "\"clickId\":\""
+                + unmatchedClickId + "\",\"convertedAt\":\"" + convertedAt + "\"}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"rows\":[" + matchedRow + "," + unmatchedRow + "]}")
+                .post("/api/v1/sites/" + siteId + "/offline-conversions/imports")
+                .then()
+                .statusCode(200)
+                .body("rowsImported", is(2));
+
+        AtomicReference<Map<String, Object>> outboundPayload = new AtomicReference<>();
+        AtomicReference<String> outboundToken = new AtomicReference<>();
+        AtomicReference<String> outboundPixelId = new AtomicReference<>();
+        QuarkusMock.installMockForType(
+                (XAdsConversionsGateway) (pixelId, token, payload) -> {
+                    outboundPixelId.set(pixelId);
+                    outboundToken.set(token);
+                    outboundPayload.set(payload);
+                    return new XAdsConversionsGateway.Result(1);
+                },
+                XAdsConversionsGateway.class);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"pixelId\":\"pixel-123\",\"currencyCode\":\"USD\",\"accessToken\":\"x-pixel-secret\"}")
+                .put(endpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("credentialConfigured", is(true))
+                .body("accessToken", nullValue());
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select access_token_ciphertext from analytics_x_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertFalse(new String(result.getBytes(1), StandardCharsets.UTF_8).contains("x-pixel-secret"));
+            }
+        }
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"eventId\":\"tw-pixel-123-lead\"}")
+                .put(endpoint + "/config/goals/" + goalId)
+                .then()
+                .statusCode(200)
+                .body("goalMappings.size()", is(1))
+                .body("goalMappings[0].eventId", is("tw-pixel-123-lead"));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":false,\"rows\":[" + matchedRow + "]}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(400)
+                .body("code", is("X_ADS_CONSENT_CONFIRMATION_REQUIRED"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":true,\"rows\":[" + matchedRow + ","
+                        + unmatchedRow + "]}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(409)
+                .body("code", is("X_ADS_MATCHED_VISIT_REQUIRED"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":true,\"rows\":[" + matchedRow + "]}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(200)
+                .body("rowsProcessed", is(1))
+                .body("eventsReceived", is(1));
+
+        assertEquals("pixel-123", outboundPixelId.get());
+        assertEquals("x-pixel-secret", outboundToken.get());
+        Map<?, ?> event = (Map<?, ?>) ((List<?>) outboundPayload.get().get("conversions")).getFirst();
+        assertEquals(convertedAt.toEpochMilli(), ((Number) event.get("conversion_timestamp")).longValue());
+        assertEquals("tw-pixel-123-lead", event.get("event_id"));
+        assertEquals("USD", event.get("price_currency"));
+        assertEquals(0, new java.math.BigDecimal("25").compareTo((java.math.BigDecimal) event.get("value")));
+        assertEquals(List.of(Map.of("twclid", rawClickId)), event.get("identifiers"));
+        assertEquals(
+                Set.of("conversion_timestamp", "identifiers", "event_id", "conversion_id", "value", "price_currency"),
+                event.keySet());
+        assertNotEquals("crm-x-lead-0081", event.get("conversion_id"));
+
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select action from site_audit_log where site_id=? and action='SEND_TO_X_ADS'")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals("SEND_TO_X_ADS", result.getString(1));
             }
         }
     }
