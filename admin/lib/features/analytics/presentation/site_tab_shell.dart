@@ -29,7 +29,7 @@ class SiteTabShell extends ConsumerWidget {
         ? SiteTopTab.technology
         : path.endsWith('/visitors/locations')
         ? SiteTopTab.locations
-        : path.endsWith('/visitors')
+        : path.contains('/visitors/') || path.endsWith('/visitors')
         ? SiteTopTab.visitors
         : path.contains('/acquisition')
         ? SiteTopTab.acquisition

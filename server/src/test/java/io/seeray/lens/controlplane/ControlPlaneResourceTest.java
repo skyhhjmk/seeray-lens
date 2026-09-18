@@ -577,13 +577,21 @@ class ControlPlaneResourceTest {
         insertRaw(site, visitor, session, "page_view", base, "/landing");
         insertRaw(site, visitor, session, "page_view", base.plusSeconds(20), "/pricing");
         insertRaw(site, visitor, session, "page_view", base.plusSeconds(40), "/checkout");
+        for (int index = 0; index < 21; index++) {
+            String journeyVisitor = UUID.randomUUID().toString();
+            String journeySession = UUID.randomUUID().toString();
+            Instant journeyStart = base.minusSeconds(100L - index);
+            insertRaw(site, journeyVisitor, journeySession, "page_view", journeyStart, "/landing");
+            insertRaw(site, journeyVisitor, journeySession, "page_view", journeyStart.plusSeconds(5), "/pricing");
+            insertRaw(site, journeyVisitor, journeySession, "page_view", journeyStart.plusSeconds(10), "/checkout");
+        }
         String deepVisitor = UUID.randomUUID().toString();
         String deepSession = UUID.randomUUID().toString();
         for (int index = 1; index <= 6; index++) {
             insertRaw(
                     site, deepVisitor, deepSession, "page_view", base.minusSeconds(40L - index * 2L), "/deep/" + index);
         }
-        factBuilder.rebuild(site, base.minusSeconds(50), base.plusSeconds(80));
+        factBuilder.rebuild(site, base.minusSeconds(200), base.plusSeconds(80));
 
         String today = reportDay.toString();
         List<java.util.Map<String, Object>> transitions = given().header("Authorization", "Bearer " + owner.access())
@@ -599,7 +607,7 @@ class ControlPlaneResourceTest {
                 .orElseThrow();
         assertEquals(1, landingTransition.get("step"));
         assertEquals("/pricing", landingTransition.get("targetPath"));
-        assertEquals(1, landingTransition.get("sessions"));
+        assertEquals(22, landingTransition.get("sessions"));
         var pricingTransition = transitions.stream()
                 .filter(row -> "/pricing".equals(row.get("sourcePath")))
                 .findFirst()
@@ -619,6 +627,74 @@ class ControlPlaneResourceTest {
         assertEquals(5, fifthDeepTransition.get("step"));
         assertEquals("/deep/6", fifthDeepTransition.get("targetPath"));
         assertTrue(transitions.stream().noneMatch(row -> Integer.valueOf(6).equals(row.get("step"))));
+
+        var samples = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/user-flow/samples?from=" + today + "&to=" + today
+                        + "&step=1&sourcePath=/landing&targetPath=/pricing")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath();
+        assertNotNull(samples.get("totalSessions"), samples.get().toString());
+        assertEquals(22, samples.getLong("totalSessions"));
+        assertTrue(samples.getBoolean("hasMore"));
+        assertNotNull(samples.getString("nextCursor"));
+        assertEquals(20, samples.getList("sessions").size());
+        assertEquals(3, samples.getList("sessions[0].pages").size());
+        assertEquals("/landing", samples.getString("sessions[0].pages[0].path"));
+        assertEquals("/pricing", samples.getString("sessions[0].pages[1].path"));
+        assertFalse(samples.getMap("sessions[0]").containsKey("visitorId"));
+
+        String nextCursor = samples.getString("nextCursor");
+        var olderSamples = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/user-flow/samples?from=" + today + "&to=" + today
+                        + "&step=1&sourcePath=/landing&targetPath=/pricing&cursor=" + nextCursor)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath();
+        assertEquals(22, olderSamples.getLong("totalSessions"));
+        assertFalse(olderSamples.getBoolean("hasMore"));
+        assertNull(olderSamples.get("nextCursor"));
+        assertEquals(2, olderSamples.getList("sessions").size());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/user-flow/samples?from=" + today + "&to=" + today
+                        + "&step=1&sourcePath=/landing&targetPath=/pricing&cursor=not-a-cursor")
+                .then()
+                .statusCode(400);
+
+        String longVisitSegment = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Long visits\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"page_views\",\"operator\":\"at_least\",\"value\":\"4\"}]}")
+                .post("/api/v1/sites/" + siteId + "/segments")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/user-flow/samples?from=" + today + "&to=" + today
+                        + "&segmentId=" + longVisitSegment + "&step=1&sourcePath=/landing&targetPath=/pricing")
+                .then()
+                .statusCode(200)
+                .body("totalSessions", is(0))
+                .body("sessions.size()", is(0));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/user-flow/samples?from=" + today + "&to=" + today
+                        + "&step=6&sourcePath=/landing&targetPath=/pricing")
+                .then()
+                .statusCode(400);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/user-flow/samples?from=" + today + "&to=" + today
+                        + "&step=3&sourcePath=/checkout&exit=true")
+                .then()
+                .statusCode(200)
+                .body("totalSessions", is(22))
+                .body("sessions.size()", is(20))
+                .body("sessions[0].pages.size()", is(3));
     }
 
     @Test
@@ -1830,6 +1906,23 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("visitorId", contains(visitor));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(analyticsPath + "/visitors/" + visitor + filteredPeriod)
+                .then()
+                .statusCode(200)
+                .body("visitorId", is(visitor))
+                .body("lifetimeSessions", is(1))
+                .body("rangeSessions", is(1))
+                .body("rangePageViews", is(1))
+                .body("sessions.size()", is(1))
+                .body("sessions[0].visitorType", is("new"))
+                .body("sessions[0].entryPage", is("/pricing"))
+                .body("actions.size()", is(3))
+                .body("actions.eventType", hasItems("page_view", "product_interaction"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(analyticsPath + "/visitors/not-a-real-visitor" + filteredPeriod)
+                .then()
+                .statusCode(404);
         given().header("Authorization", "Bearer " + owner.access())
                 .get(analyticsPath + "/goals" + filteredPeriod)
                 .then()

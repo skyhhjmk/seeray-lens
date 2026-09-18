@@ -7,6 +7,7 @@ import io.seeray.lens.application.CohortQueryService;
 import io.seeray.lens.application.CustomReportService;
 import io.seeray.lens.application.GeoLocationResolver;
 import io.seeray.lens.application.SegmentedAnalyticsQueryService;
+import io.seeray.lens.domain.common.ControlPlaneException;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import java.util.*;
@@ -113,6 +114,43 @@ public class AnalyticsResource {
     }
 
     @GET
+    @Path("/user-flow/samples")
+    public AnalyticsQueryService.UserFlowSamples userFlowSamples(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId,
+            @QueryParam("step") Integer step,
+            @QueryParam("sourcePath") String sourcePath,
+            @QueryParam("sourceTitle") String sourceTitle,
+            @QueryParam("targetPath") String targetPath,
+            @QueryParam("targetTitle") String targetTitle,
+            @QueryParam("cursor") String cursor,
+            @QueryParam("exit") @DefaultValue("false") boolean exit) {
+        if (step == null
+                || step < 1
+                || step > 5
+                || sourcePath == null
+                || sourcePath.isBlank()
+                || sourcePath.length() > 2048
+                || (!exit && (targetPath == null || targetPath.isBlank() || targetPath.length() > 2048))
+                || (cursor != null && cursor.length() > 256)
+                || (exit && targetPath != null)) {
+            throw new ControlPlaneException(400, "INVALID_USER_FLOW_EDGE", "User-flow transition is invalid");
+        }
+        return segmented.userFlowSamples(
+                site,
+                analytics.range(site, from, to),
+                segmentId,
+                step,
+                sourcePath,
+                sourceTitle,
+                exit ? null : targetPath,
+                exit ? null : targetTitle,
+                cursor);
+    }
+
+    @GET
     @Path("/traffic")
     public List<AnalyticsQueryService.Traffic> traffic(
             @PathParam("siteId") UUID site,
@@ -187,6 +225,19 @@ public class AnalyticsResource {
         return segmentId == null
                 ? analytics.visitorLog(site, range, limit)
                 : segmented.visitorLog(site, range, segmentId, limit);
+    }
+
+    @GET
+    @Path("/visitors/{visitorId}")
+    public AnalyticsQueryService.VisitorProfile visitorProfile(
+            @PathParam("siteId") UUID site,
+            @PathParam("visitorId") String visitorId,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        var profile = segmented.visitorProfile(site, analytics.range(site, from, to), segmentId, visitorId);
+        if (profile == null) throw new NotFoundException();
+        return profile;
     }
 
     @GET

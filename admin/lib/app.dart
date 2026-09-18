@@ -23,6 +23,7 @@ import 'features/analytics/presentation/site_audit_log_page.dart';
 import 'features/analytics/presentation/scheduled_reports_page.dart';
 import 'features/analytics/presentation/analytics_alerts_page.dart';
 import 'features/analytics/presentation/attribution_page.dart';
+import 'features/analytics/presentation/visitor_profile_page.dart';
 import 'features/landing/presentation/landing_page.dart';
 import 'features/integration/presentation/integration_page.dart';
 import 'features/domains/presentation/domains_page.dart';
@@ -146,6 +147,19 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
               _Authenticated(
                 child: LocationsPage(
                   siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/visitors/:visitorId',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: VisitorProfilePage(
+                  siteId: state.pathParameters['siteId']!,
+                  visitorId: state.pathParameters['visitorId']!,
                   embedded: true,
                 ),
               ),
@@ -374,6 +388,19 @@ class _SeeRayLensAdminAppState extends ConsumerState<SeeRayLensAdminApp> {
                 child: AnalyticsDetailPage(
                   siteId: state.pathParameters['siteId']!,
                   view: AnalyticsView.visitors,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/visitors/:visitorId',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: VisitorProfilePage(
+                  siteId: state.pathParameters['siteId']!,
+                  visitorId: state.pathParameters['visitorId']!,
                   embedded: true,
                 ),
               ),

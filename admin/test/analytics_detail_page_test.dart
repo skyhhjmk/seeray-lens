@@ -36,9 +36,10 @@ void main() {
   testWidgets('shows page, entry-exit, and drillable flow reports', (
     tester,
   ) async {
+    final api = _BehaviourApi();
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [apiProvider.overrideWithValue(_BehaviourApi())],
+        overrides: [apiProvider.overrideWithValue(api)],
         child: const MaterialApp(
           home: AnalyticsDetailPage(
             siteId: 'site-1',
@@ -101,6 +102,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('User flow'), findsOneWidget);
     expect(find.text('/landing'), findsWidgets);
+    await tester.tap(find.text('View visits').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Visits for this transition'), findsOneWidget);
+    expect(find.text('21 matching visits · showing 20'), findsOneWidget);
+    expect(find.textContaining('Visit 1 · 2026-09-10'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.textContaining('Visit 20 ·'),
+      350,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.textContaining('Visit 20 ·'), findsOneWidget);
+    expect(find.text('/landing'), findsWidgets);
+    expect(find.text('/pricing'), findsWidgets);
+    await tester.scrollUntilVisible(
+      find.text('Load older visits'),
+      350,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Load older visits'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.textContaining('Visit 21 ·'),
+      350,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('21 matching visits · showing 21'), findsOneWidget);
+    expect(find.textContaining('Visit 21 ·'), findsOneWidget);
+    expect(api.sampleRequests, hasLength(2));
+    expect(
+      api.sampleRequests.last.queryParameters['cursor'],
+      'sample-cursor-20',
+    );
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('/pricing').last);
     await tester.pumpAndSettle();
     expect(find.text('/checkout'), findsWidgets);
@@ -300,6 +335,8 @@ class _AcquisitionApi extends SeeRayApi {
 class _BehaviourApi extends SeeRayApi {
   _BehaviourApi() : super(baseUrl: 'https://lens.example.test');
 
+  final List<Uri> sampleRequests = [];
+
   @override
   Future<dynamic> request(
     String method,
@@ -307,6 +344,22 @@ class _BehaviourApi extends SeeRayApi {
     Object? body,
     bool retried = false,
   }) async {
+    final uri = Uri.parse(path);
+    if (uri.path.endsWith('/user-flow/samples')) {
+      sampleRequests.add(uri);
+      final isContinuation = uri.queryParameters.containsKey('cursor');
+      final startIndex = isContinuation ? 20 : 0;
+      final count = isContinuation ? 1 : 20;
+      return {
+        'totalSessions': 21,
+        'hasMore': !isContinuation,
+        'nextCursor': isContinuation ? null : 'sample-cursor-20',
+        'sessions': [
+          for (var index = startIndex; index < startIndex + count; index++)
+            _sampleSession(index),
+        ],
+      };
+    }
     if (path.contains('/page-titles')) {
       return [
         {'path': '/pricing', 'title': 'Pricing overview', 'pageViews': 17},
@@ -428,6 +481,42 @@ class _BehaviourApi extends SeeRayApi {
       ];
     }
     return const <dynamic>[];
+  }
+
+  Map<String, dynamic> _sampleSession(int index) {
+    final started = DateTime.utc(
+      2026,
+      9,
+      10,
+      12,
+    ).subtract(Duration(hours: index));
+    return {
+      'sessionId': 'opaque-session-$index',
+      'startedAt': started.toIso8601String(),
+      'lastActivityAt': started
+          .add(const Duration(minutes: 2))
+          .toIso8601String(),
+      'pages': [
+        {
+          'step': 1,
+          'at': started.toIso8601String(),
+          'path': '/landing',
+          'title': 'Landing',
+        },
+        {
+          'step': 2,
+          'at': started.add(const Duration(minutes: 1)).toIso8601String(),
+          'path': '/pricing',
+          'title': 'Pricing',
+        },
+        {
+          'step': 3,
+          'at': started.add(const Duration(minutes: 2)).toIso8601String(),
+          'path': '/checkout',
+          'title': 'Checkout',
+        },
+      ],
+    };
   }
 }
 

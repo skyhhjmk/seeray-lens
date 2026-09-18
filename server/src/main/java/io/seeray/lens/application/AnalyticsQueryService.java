@@ -368,6 +368,14 @@ public class AnalyticsQueryService {
     public record PageTransition(
             int step, String sourcePath, String sourceTitle, String targetPath, String targetTitle, long sessions) {}
 
+    public record UserFlowSamples(
+            long totalSessions, boolean hasMore, String nextCursor, List<UserFlowSampleSession> sessions) {}
+
+    public record UserFlowSampleSession(
+            String sessionId, Instant startedAt, Instant lastActivityAt, List<UserFlowSamplePage> pages) {}
+
+    public record UserFlowSamplePage(int step, Instant at, String path, String title) {}
+
     public record Traffic(
             String channel,
             String source,
@@ -398,6 +406,46 @@ public class AnalyticsQueryService {
             long durationMs,
             boolean bounce,
             String visitorType) {}
+
+    public record VisitorProfile(
+            String visitorId,
+            Instant firstSeenAt,
+            Instant lastSeenAt,
+            long lifetimeSessions,
+            long rangeSessions,
+            long rangePageViews,
+            long rangeEvents,
+            long rangeBouncedSessions,
+            long averageSessionDurationMs,
+            List<VisitorProfileSession> sessions,
+            boolean hasMoreSessions,
+            List<VisitorProfileAction> actions,
+            boolean hasMoreActions) {}
+
+    public record VisitorProfileSession(
+            String sessionId,
+            Instant startedAt,
+            Instant lastActivityAt,
+            String entryPage,
+            String exitPage,
+            int pageViews,
+            int events,
+            long durationMs,
+            boolean bounce,
+            String visitorType,
+            String browser,
+            String operatingSystem,
+            String deviceType,
+            String language,
+            String countryCode,
+            String region,
+            String city,
+            String referrerHost,
+            String campaignSource,
+            String campaignMedium,
+            String campaignName) {}
+
+    public record VisitorProfileAction(Instant at, String eventType, String path, String title, String sessionId) {}
 
     public record Goal(
             String name, long count, long convertedSessions, java.math.BigDecimal value, double conversionRate) {}

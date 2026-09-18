@@ -1,9 +1,11 @@
 package io.seeray.lens.application;
 
+import io.seeray.lens.domain.common.ControlPlaneException;
 import io.seeray.lens.domain.site.Site;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.sql.*;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.*;
 import javax.sql.DataSource;
@@ -152,6 +154,123 @@ public class SegmentedAnalyticsQueryService {
                         row.getString(4),
                         row.getString(5),
                         row.getLong(6)));
+    }
+
+    public AnalyticsQueryService.UserFlowSamples userFlowSamples(
+            UUID siteId,
+            AnalyticsQueryService.Range range,
+            UUID segmentId,
+            int step,
+            String sourcePath,
+            String sourceTitle,
+            String targetPath,
+            String targetTitle,
+            String cursorToken) {
+        QueryContext context = context(siteId, range, segmentId);
+        UserFlowCursor cursor = UserFlowCursor.decode(cursorToken);
+        final int sampleLimit = 20;
+        String sql = cte(context)
+                + ", page_actions as (select ms.id session_id,e.page_path path,nullif(btrim(e.page_title),'') title,"
+                + EVENT_TIME + " event_at,row_number() over(partition by ms.id order by " + EVENT_TIME
+                + ",e.received_at,e.ingest_id) step from matching_sessions ms join raw_event e on "
+                + eventScope("e", "ms")
+                + " where e.event_type='page_view' and e.page_path is not null),"
+                + " transitions as (select session_id,step,path source_path,title source_title,"
+                + "lead(path) over(partition by session_id order by step) target_path,"
+                + "lead(title) over(partition by session_id order by step) target_title from page_actions),"
+                + " matched_transitions as (select distinct session_id from transitions where step=? "
+                + "and source_path=? and (?::text is null or source_title=?) and target_path is not distinct from ? "
+                + "and (?::text is null or target_title=?)),"
+                + " sample_sessions as (select ms.id,ms.client_session_id,ms.started_at,ms.last_activity_at "
+                + "from matching_sessions ms join matched_transitions mt on mt.session_id=ms.id "
+                + (cursor == null ? "" : "where (ms.started_at < ? or (ms.started_at = ? and ms.id < ?::uuid)) ")
+                + "order by ms.started_at desc,ms.id desc limit ?),"
+                + " report_total as (select count(*) total from matched_transitions) "
+                + "select ss.id,ss.client_session_id,ss.started_at,ss.last_activity_at,pa.step,pa.event_at,pa.path,"
+                + "pa.title,rt.total from report_total rt left join sample_sessions ss on true "
+                + "left join page_actions pa on pa.session_id=ss.id and pa.step<=6 "
+                + "order by ss.started_at desc,ss.id desc,pa.step";
+
+        List<Object> parameters = new ArrayList<>(
+                Arrays.asList(step, sourcePath, sourceTitle, sourceTitle, targetPath, targetTitle, targetTitle));
+        if (cursor != null) {
+            Timestamp timestamp = Timestamp.from(cursor.startedAt());
+            parameters.add(timestamp);
+            parameters.add(timestamp);
+            parameters.add(cursor.sessionKey());
+        }
+        parameters.add(sampleLimit + 1);
+        Map<UUID, UserFlowSampleBuilder> grouped = new LinkedHashMap<>();
+        long[] total = {0};
+        list(context, sql, parameters, row -> {
+            total[0] = row.getLong(9);
+            UUID sessionKey = row.getObject(1, UUID.class);
+            if (sessionKey == null) return null;
+            String sessionId = row.getString(2);
+            UserFlowSampleBuilder sample = grouped.computeIfAbsent(
+                    sessionKey,
+                    ignored ->
+                            new UserFlowSampleBuilder(sessionKey, sessionId, rowInstant(row, 3), rowInstant(row, 4)));
+            if (row.getObject(5) != null) {
+                sample.pages.add(new AnalyticsQueryService.UserFlowSamplePage(
+                        row.getInt(5), rowInstant(row, 6), row.getString(7), row.getString(8)));
+            }
+            return null;
+        });
+        List<UserFlowSampleBuilder> page = new ArrayList<>(grouped.values());
+        boolean hasMore = page.size() > sampleLimit;
+        if (hasMore) page.remove(page.size() - 1);
+        List<AnalyticsQueryService.UserFlowSampleSession> sessions = page.stream()
+                .map(sample -> new AnalyticsQueryService.UserFlowSampleSession(
+                        sample.clientSessionId, sample.startedAt, sample.lastActivityAt, List.copyOf(sample.pages)))
+                .toList();
+        String nextCursor = hasMore ? UserFlowCursor.encode(page.get(page.size() - 1)) : null;
+        return new AnalyticsQueryService.UserFlowSamples(total[0], hasMore, nextCursor, sessions);
+    }
+
+    private record UserFlowCursor(Instant startedAt, UUID sessionKey) {
+        private static String encode(UserFlowSampleBuilder sample) {
+            String raw = sample.startedAt + "|" + sample.sessionKey;
+            return Base64.getUrlEncoder()
+                    .withoutPadding()
+                    .encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+
+        private static UserFlowCursor decode(String token) {
+            if (token == null) return null;
+            try {
+                String raw = new String(Base64.getUrlDecoder().decode(token), java.nio.charset.StandardCharsets.UTF_8);
+                String[] parts = raw.split("\\|", -1);
+                if (parts.length != 2) throw new IllegalArgumentException("Invalid cursor payload");
+                return new UserFlowCursor(Instant.parse(parts[0]), UUID.fromString(parts[1]));
+            } catch (RuntimeException error) {
+                throw new ControlPlaneException(400, "INVALID_USER_FLOW_CURSOR", "User-flow cursor is invalid");
+            }
+        }
+    }
+
+    private static Instant rowInstant(ResultSet row, int column) {
+        try {
+            return row.getTimestamp(column).toInstant();
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read user-flow sample time", error);
+        }
+    }
+
+    private static final class UserFlowSampleBuilder {
+        private final UUID sessionKey;
+        private final String clientSessionId;
+        private final Instant startedAt;
+        private final Instant lastActivityAt;
+        private final List<AnalyticsQueryService.UserFlowSamplePage> pages = new ArrayList<>();
+
+        private UserFlowSampleBuilder(
+                UUID sessionKey, String clientSessionId, Instant startedAt, Instant lastActivityAt) {
+            this.sessionKey = sessionKey;
+            this.clientSessionId = clientSessionId;
+            this.startedAt = startedAt;
+            this.lastActivityAt = lastActivityAt;
+        }
     }
 
     public List<AnalyticsQueryService.Traffic> traffic(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
@@ -456,6 +575,111 @@ public class SegmentedAnalyticsQueryService {
                         row.getLong(8),
                         row.getBoolean(9),
                         row.getString(10)));
+    }
+
+    public AnalyticsQueryService.VisitorProfile visitorProfile(
+            UUID siteId, AnalyticsQueryService.Range range, UUID segmentId, String visitorId) {
+        if (visitorId == null || visitorId.isBlank() || visitorId.length() > 64)
+            throw new ControlPlaneException(400, "INVALID_VISITOR_ID", "Visitor ID is invalid");
+
+        Instant firstSeenAt;
+        Instant lastSeenAt;
+        long lifetimeSessions;
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select first_seen_at,last_seen_at,session_count from analytics_visitor where site_id=? and client_visitor_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, visitorId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return null;
+                firstSeenAt = row.getTimestamp(1).toInstant();
+                lastSeenAt = row.getTimestamp(2).toInstant();
+                lifetimeSessions = row.getLong(3);
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not query visitor profile", error);
+        }
+
+        QueryContext context = context(siteId, range, segmentId);
+        long[] totals = single(
+                context,
+                cte(context)
+                        + " select count(*),coalesce(sum(page_view_count),0),coalesce(sum(event_count),0),"
+                        + "count(*) filter(where is_bounce),coalesce(avg(duration_ms),0) from matching_sessions "
+                        + "where client_visitor_id=?",
+                List.of(visitorId),
+                row -> new long[] {row.getLong(1), row.getLong(2), row.getLong(3), row.getLong(4), row.getLong(5)});
+
+        final int sessionLimit = 50;
+        List<AnalyticsQueryService.VisitorProfileSession> sessions = list(
+                context,
+                cte(context)
+                        + " select client_session_id,started_at,last_activity_at,entry_page,exit_page,page_view_count,"
+                        + "event_count,duration_ms,is_bounce,visitor_type,browser,operating_system,device_type,language,"
+                        + "country_code,region_name,city,initial_referrer_host,initial_utm_source,initial_utm_medium,"
+                        + "initial_utm_campaign from matching_sessions where client_visitor_id=? "
+                        + "order by started_at desc,client_session_id limit ?",
+                List.of(visitorId, sessionLimit + 1),
+                row -> new AnalyticsQueryService.VisitorProfileSession(
+                        row.getString(1),
+                        row.getTimestamp(2).toInstant(),
+                        row.getTimestamp(3).toInstant(),
+                        row.getString(4),
+                        row.getString(5),
+                        row.getInt(6),
+                        row.getInt(7),
+                        row.getLong(8),
+                        row.getBoolean(9),
+                        row.getString(10),
+                        row.getString(11),
+                        row.getString(12),
+                        row.getString(13),
+                        row.getString(14),
+                        row.getString(15),
+                        row.getString(16),
+                        row.getString(17),
+                        row.getString(18),
+                        row.getString(19),
+                        row.getString(20),
+                        row.getString(21)));
+        boolean hasMoreSessions = sessions.size() > sessionLimit;
+        if (hasMoreSessions) sessions.remove(sessions.size() - 1);
+
+        final int actionLimit = 100;
+        String actionsSql = cte(context)
+                + ", visitor_actions as (select " + EVENT_TIME
+                + " action_at,e.ingest_id,e.event_type,e.page_path,e.page_title,ms.client_session_id "
+                + "from matching_sessions ms join raw_event e on " + eventScope("e", "ms")
+                + " where ms.client_visitor_id=? and e.event_type<>'web_vital') "
+                + "select action_at,event_type,page_path,page_title,client_session_id from visitor_actions "
+                + "order by action_at desc,ingest_id desc limit ?";
+        List<AnalyticsQueryService.VisitorProfileAction> actions = list(
+                context,
+                actionsSql,
+                List.of(visitorId, actionLimit + 1),
+                row -> new AnalyticsQueryService.VisitorProfileAction(
+                        row.getTimestamp(1).toInstant(),
+                        row.getString(2),
+                        row.getString(3),
+                        row.getString(4),
+                        row.getString(5)));
+        boolean hasMoreActions = actions.size() > actionLimit;
+        if (hasMoreActions) actions.remove(actions.size() - 1);
+
+        return new AnalyticsQueryService.VisitorProfile(
+                visitorId,
+                firstSeenAt,
+                lastSeenAt,
+                lifetimeSessions,
+                totals[0],
+                totals[1],
+                totals[2],
+                totals[3],
+                totals[0] == 0 ? 0 : totals[4],
+                List.copyOf(sessions),
+                hasMoreSessions,
+                List.copyOf(actions),
+                hasMoreActions);
     }
 
     public List<AnalyticsQueryService.Goal> goals(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {

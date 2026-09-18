@@ -11,6 +11,8 @@ import '../../auth/application/auth_controller.dart';
 import '../application/analytics_controller.dart';
 import '../application/analytics_range.dart';
 import '../application/analytics_segment.dart';
+import '../application/user_flow_controller.dart';
+import 'visitor_log_panel.dart';
 
 enum AnalyticsView { visitors, acquisition, behaviour, goals }
 
@@ -44,7 +46,8 @@ class AnalyticsDetailPage extends ConsumerWidget {
                     context.tr('Could not load analytics', '无法加载分析数据'),
                   ),
                 ),
-                data: (data) => _BehaviourBody(siteId: siteId, data: data),
+                data: (data) =>
+                    _BehaviourBody(siteId: siteId, data: data, query: query),
               )
         : view == AnalyticsView.goals
         ? ref
@@ -95,10 +98,15 @@ class AnalyticsDetailPage extends ConsumerWidget {
 }
 
 class _BehaviourBody extends StatelessWidget {
-  const _BehaviourBody({required this.siteId, required this.data});
+  const _BehaviourBody({
+    required this.siteId,
+    required this.data,
+    required this.query,
+  });
 
   final String siteId;
   final AnalyticsBehaviourData data;
+  final AnalyticsDashboardQuery query;
 
   @override
   Widget build(BuildContext context) {
@@ -189,7 +197,7 @@ class _BehaviourBody extends StatelessWidget {
           rows: eventRows,
         ),
         const SizedBox(height: 16),
-        _UserFlowExplorer(edges: data.userFlow),
+        _UserFlowExplorer(edges: data.userFlow, query: query),
       ],
     );
   }
@@ -752,9 +760,10 @@ class _BoundedReportText extends StatelessWidget {
 }
 
 class _UserFlowExplorer extends StatefulWidget {
-  const _UserFlowExplorer({required this.edges});
+  const _UserFlowExplorer({required this.edges, required this.query});
 
   final List<AnalyticsUserFlowEdge> edges;
+  final AnalyticsDashboardQuery query;
 
   @override
   State<_UserFlowExplorer> createState() => _UserFlowExplorerState();
@@ -874,6 +883,16 @@ class _UserFlowExplorerState extends State<_UserFlowExplorer> {
                 _UserFlowTransition(
                   edge: edge,
                   maxSessions: maxSessions,
+                  onInspect: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => _UserFlowSamplesDialog(
+                      query: AnalyticsUserFlowSamplesQuery(
+                        dashboard: widget.query,
+                        edge: edge,
+                      ),
+                      edge: edge,
+                    ),
+                  ),
                   onFollow: edge.targetPath == null || _step == 5
                       ? null
                       : () => setState(() {
@@ -901,11 +920,13 @@ class _UserFlowTransition extends StatelessWidget {
   const _UserFlowTransition({
     required this.edge,
     required this.maxSessions,
+    required this.onInspect,
     required this.onFollow,
   });
 
   final AnalyticsUserFlowEdge edge;
   final int maxSessions;
+  final VoidCallback onInspect;
   final VoidCallback? onFollow;
 
   @override
@@ -966,6 +987,14 @@ class _UserFlowTransition extends StatelessWidget {
                   ),
                 ],
               ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: onInspect,
+                  icon: const Icon(Icons.travel_explore_outlined),
+                  label: Text(context.tr('View visits', '查看访问样本')),
+                ),
+              ),
             ],
           ),
         ),
@@ -975,6 +1004,274 @@ class _UserFlowTransition extends StatelessWidget {
 
   String _pageLabel(String? title, String path) =>
       title?.isNotEmpty == true ? '$title · $path' : path;
+}
+
+class _UserFlowSamplesDialog extends ConsumerStatefulWidget {
+  const _UserFlowSamplesDialog({required this.query, required this.edge});
+
+  final AnalyticsUserFlowSamplesQuery query;
+  final AnalyticsUserFlowEdge edge;
+
+  @override
+  ConsumerState<_UserFlowSamplesDialog> createState() =>
+      _UserFlowSamplesDialogState();
+}
+
+class _UserFlowSamplesDialogState
+    extends ConsumerState<_UserFlowSamplesDialog> {
+  final List<AnalyticsUserFlowSampleSession> _olderSessions = [];
+  String? _nextCursor;
+  bool? _hasMore;
+  bool _loadingMore = false;
+  Object? _loadError;
+
+  Future<void> _loadMore(String? cursor) async {
+    if (cursor == null || _loadingMore) return;
+    setState(() {
+      _loadingMore = true;
+      _loadError = null;
+    });
+    try {
+      final page = await ref.read(
+        analyticsUserFlowSamplesProvider(
+          widget.query.withCursor(cursor),
+        ).future,
+      );
+      if (!mounted) return;
+      setState(() {
+        _olderSessions.addAll(page.sessions);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore;
+        _loadingMore = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error;
+        _loadingMore = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final edge = widget.edge;
+    final source = edge.sourceTitle?.isNotEmpty == true
+        ? '${edge.sourceTitle} · ${edge.sourcePath}'
+        : edge.sourcePath;
+    final target = edge.targetPath == null
+        ? context.tr('Exit after this page', '访问在此页面结束')
+        : edge.targetTitle?.isNotEmpty == true
+        ? '${edge.targetTitle} · ${edge.targetPath}'
+        : edge.targetPath!;
+    return AlertDialog(
+      title: Text(context.tr('Visits for this transition', '此路径的访问样本')),
+      content: SizedBox(
+        width: 680,
+        child: ref
+            .watch(analyticsUserFlowSamplesProvider(widget.query))
+            .when(
+              loading: () => const SizedBox(
+                height: 180,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (error, _) => SizedBox(
+                height: 180,
+                child: Center(
+                  child: Text(
+                    context.tr('Could not load visit samples', '无法加载访问样本'),
+                  ),
+                ),
+              ),
+              data: (report) {
+                final sessions = [...report.sessions, ..._olderSessions];
+                final hasMore = _hasMore ?? report.hasMore;
+                final cursor = _nextCursor ?? report.nextCursor;
+                return ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 560),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('$source  →  $target'),
+                      const SizedBox(height: 4),
+                      Text(
+                        context.tr(
+                          '${report.totalSessions} matching visits · showing ${sessions.length}',
+                          '${report.totalSessions} 次匹配访问 · 已展示 ${sessions.length} 次',
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: sessions.isEmpty
+                            ? Center(
+                                child: Text(
+                                  context.tr('No matching visits', '暂无匹配访问'),
+                                ),
+                              )
+                            : ListView.builder(
+                                itemCount: sessions.length + (hasMore ? 1 : 0),
+                                itemBuilder: (context, index) {
+                                  if (index < sessions.length) {
+                                    return _UserFlowSampleCard(
+                                      number: index + 1,
+                                      sample: sessions[index],
+                                      transitionStep: edge.step,
+                                      isExit: edge.targetPath == null,
+                                    );
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 10,
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        if (_loadError != null)
+                                          Text(
+                                            context.tr(
+                                              'Could not load older visits. Try again.',
+                                              '加载更早访问失败，请重试。',
+                                            ),
+                                          ),
+                                        OutlinedButton.icon(
+                                          onPressed:
+                                              _loadingMore || cursor == null
+                                              ? null
+                                              : () => _loadMore(cursor),
+                                          icon: _loadingMore
+                                              ? const SizedBox(
+                                                  width: 16,
+                                                  height: 16,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                )
+                                              : const Icon(Icons.expand_more),
+                                          label: Text(
+                                            context.tr(
+                                              'Load older visits',
+                                              '加载更早访问',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.tr('Close', '关闭')),
+        ),
+      ],
+    );
+  }
+}
+
+class _UserFlowSampleCard extends StatelessWidget {
+  const _UserFlowSampleCard({
+    required this.number,
+    required this.sample,
+    required this.transitionStep,
+    required this.isExit,
+  });
+
+  final int number;
+  final AnalyticsUserFlowSampleSession sample;
+  final int transitionStep;
+  final bool isExit;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: const EdgeInsets.only(bottom: 10),
+    elevation: 0,
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            context.tr(
+              'Visit $number · ${_formatSampleTime(sample.startedAt)}',
+              '访问 $number · ${_formatSampleTime(sample.startedAt)}',
+            ),
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(height: 8),
+          if (sample.pages.isEmpty)
+            Text(context.tr('No page sequence available', '暂无页面序列'))
+          else
+            for (final page in sample.pages) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color:
+                      page.step == transitionStep ||
+                          (!isExit && page.step == transitionStep + 1)
+                      ? Theme.of(context).colorScheme.primaryContainer
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 46,
+                      child: Text(
+                        'S${page.step}',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        page.title?.isNotEmpty == true
+                            ? '${page.title} · ${page.path}'
+                            : page.path,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _formatSampleTime(page.at),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              if (page.step == transitionStep && isExit)
+                Padding(
+                  padding: const EdgeInsets.only(left: 56, top: 2, bottom: 2),
+                  child: Text(
+                    context.tr('Visit ended', '访问结束'),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+            ],
+        ],
+      ),
+    ),
+  );
+
+  String _formatSampleTime(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
 }
 
 class _FlowPageNode extends StatelessWidget {
@@ -1235,6 +1532,10 @@ class _Body extends StatelessWidget {
           )
         else
           ...rows,
+        if (view == AnalyticsView.visitors) ...[
+          const SizedBox(height: 16),
+          VisitorLogPanel(siteId: siteId),
+        ],
       ],
     );
   }
