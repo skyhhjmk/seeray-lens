@@ -17,6 +17,7 @@ import 'features/analytics/presentation/custom_dimensions_page.dart';
 import 'features/analytics/presentation/segments_page.dart';
 import 'features/analytics/presentation/technology_page.dart';
 import 'features/analytics/presentation/visit_time_page.dart';
+import 'features/analytics/presentation/visitor_interest_page.dart';
 import 'features/analytics/presentation/locations_page.dart';
 import 'features/analytics/presentation/cohorts_page.dart';
 import 'features/analytics/presentation/realtime_page.dart';
@@ -134,6 +135,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
                 child: AnalyticsDetailPage(
                   siteId: state.pathParameters['siteId']!,
                   view: AnalyticsView.visitors,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/visitors/engagement',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: VisitorInterestPage(
+                  siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),
               ),

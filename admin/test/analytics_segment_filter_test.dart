@@ -111,6 +111,33 @@ void main() {
     expect(api.paths.single, contains('to=2026-09-07'));
     expect(api.paths.single, contains('segmentId=segment-1'));
   });
+
+  test(
+    'visitor engagement query decodes frequency and session distributions',
+    () async {
+      final api = _AnalyticsApi();
+      final container = ProviderContainer(
+        overrides: [apiProvider.overrideWithValue(api)],
+      );
+      addTearDown(container.dispose);
+
+      final query = AnalyticsDashboardQuery(
+        'site-1',
+        AnalyticsDateRange(DateTime(2026, 9, 1), DateTime(2026, 9, 30)),
+        segmentId: 'segment-1',
+      );
+      final report = await container.read(
+        analyticsVisitorInterestProvider(query).future,
+      );
+
+      expect(report.visitors, 2);
+      expect(report.frequency.single.visits, '1');
+      expect(report.frequency.single.visitors, 2);
+      expect(report.eventsPerSession.single.band, '1–2');
+      expect(api.paths.single, contains('/analytics/visitor-interest?'));
+      expect(api.paths.single, contains('segmentId=segment-1'));
+    },
+  );
 }
 
 class _AnalyticsApi extends SeeRayApi {
@@ -126,6 +153,28 @@ class _AnalyticsApi extends SeeRayApi {
     bool retried = false,
   }) async {
     paths.add(path);
+    if (path.contains('/visitor-interest')) {
+      return {
+        'visitors': 2,
+        'sessions': 3,
+        'pageViews': 5,
+        'events': 7,
+        'averageSessionDurationMs': 42000,
+        'frequency': [
+          {'visits': '1', 'visitors': 2, 'sessions': 2},
+        ],
+        'pageViewsPerSession': [
+          {'metric': 'page_views', 'band': '1', 'sessions': 2},
+        ],
+        'eventsPerSession': [
+          {'metric': 'events', 'band': '1–2', 'sessions': 2},
+        ],
+        'durationPerSession': [
+          {'metric': 'duration', 'band': '<10s', 'sessions': 2},
+        ],
+      };
+    }
+    if (path.contains('/visit-time')) return const <dynamic>[];
     if (path.endsWith('/segments')) {
       return [
         {'id': 'segment-1', 'name': 'Pro visitors', 'enabled': true},

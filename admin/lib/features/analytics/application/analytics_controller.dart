@@ -736,6 +736,111 @@ final analyticsVisitTimeProvider =
           .toList(growable: false);
     });
 
+class VisitorFrequencyBand {
+  const VisitorFrequencyBand({
+    required this.visits,
+    required this.visitors,
+    required this.sessions,
+  });
+
+  final String visits;
+  final int visitors;
+  final int sessions;
+
+  factory VisitorFrequencyBand.fromJson(Map<String, dynamic> json) =>
+      VisitorFrequencyBand(
+        visits: json['visits'] as String? ?? '',
+        visitors: (json['visitors'] as num?)?.toInt() ?? 0,
+        sessions: (json['sessions'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class SessionActivityBand {
+  const SessionActivityBand({required this.band, required this.sessions});
+
+  final String band;
+  final int sessions;
+
+  factory SessionActivityBand.fromJson(Map<String, dynamic> json) =>
+      SessionActivityBand(
+        band: json['band'] as String? ?? '',
+        sessions: (json['sessions'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class VisitorInterestReport {
+  const VisitorInterestReport({
+    required this.visitors,
+    required this.sessions,
+    required this.pageViews,
+    required this.events,
+    required this.averageSessionDurationMs,
+    required this.frequency,
+    required this.pageViewsPerSession,
+    required this.eventsPerSession,
+    required this.durationPerSession,
+  });
+
+  final int visitors;
+  final int sessions;
+  final int pageViews;
+  final int events;
+  final double averageSessionDurationMs;
+  final List<VisitorFrequencyBand> frequency;
+  final List<SessionActivityBand> pageViewsPerSession;
+  final List<SessionActivityBand> eventsPerSession;
+  final List<SessionActivityBand> durationPerSession;
+
+  factory VisitorInterestReport.fromJson(Map<String, dynamic> json) =>
+      VisitorInterestReport(
+        visitors: (json['visitors'] as num?)?.toInt() ?? 0,
+        sessions: (json['sessions'] as num?)?.toInt() ?? 0,
+        pageViews: (json['pageViews'] as num?)?.toInt() ?? 0,
+        events: (json['events'] as num?)?.toInt() ?? 0,
+        averageSessionDurationMs:
+            (json['averageSessionDurationMs'] as num?)?.toDouble() ?? 0,
+        frequency: (json['frequency'] as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (row) =>
+                  VisitorFrequencyBand.fromJson(Map<String, dynamic>.from(row)),
+            )
+            .toList(growable: false),
+        pageViewsPerSession: _sessionActivityBands(json['pageViewsPerSession']),
+        eventsPerSession: _sessionActivityBands(json['eventsPerSession']),
+        durationPerSession: _sessionActivityBands(json['durationPerSession']),
+      );
+
+  static List<SessionActivityBand> _sessionActivityBands(Object? input) =>
+      (input as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (row) =>
+                SessionActivityBand.fromJson(Map<String, dynamic>.from(row)),
+          )
+          .toList(growable: false);
+}
+
+final analyticsVisitorInterestProvider =
+    FutureProvider.family<VisitorInterestReport, AnalyticsDashboardQuery>((
+      ref,
+      query,
+    ) async {
+      final parameters = <String, String>{
+        'from': query.range.fromQuery,
+        'to': query.range.toQuery,
+        if (query.segmentId != null) 'segmentId': query.segmentId!,
+      };
+      final path = Uri(
+        path: '/api/v1/sites/${query.siteId}/analytics/visitor-interest',
+        queryParameters: parameters,
+      );
+      final result =
+          await ref.read(apiProvider).request('GET', path.toString())
+              as Map<String, dynamic>;
+      return VisitorInterestReport.fromJson(result);
+    });
+
 final analyticsLocationProvider =
     FutureProvider.family<AnalyticsLocationReport, AnalyticsDashboardQuery>((
       ref,

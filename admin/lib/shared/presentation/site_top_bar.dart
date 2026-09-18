@@ -11,6 +11,7 @@ enum SiteTopTab {
   annotations,
   realtime,
   visitors,
+  visitorInterest,
   visitTime,
   cohorts,
   technology,
@@ -101,6 +102,13 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
             ),
             _tab(context, SiteTopTab.realtime, 'Live', '实时访客', 'realtime'),
             _tab(context, SiteTopTab.visitors, 'Visitors', '访客', 'visitors'),
+            _tab(
+              context,
+              SiteTopTab.visitorInterest,
+              'Engagement',
+              '参与度',
+              'visitors/engagement',
+            ),
             _tab(
               context,
               SiteTopTab.visitTime,
