@@ -5,6 +5,8 @@
 **/.flutter-plugins-dependencies
 tracker/node_modules/
 tracker/dist/
+tracker/test-results/
+tracker/playwright-report/
 .idea/
 .vscode/
 .env
