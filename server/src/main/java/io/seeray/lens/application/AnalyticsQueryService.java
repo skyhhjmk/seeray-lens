@@ -418,6 +418,8 @@ public class AnalyticsQueryService {
             Instant firstSeenAt,
             Instant lastSeenAt,
             long lifetimeSessions,
+            String identityLinkStatus,
+            int linkedBrowserCount,
             long rangeSessions,
             long rangePageViews,
             long rangeEvents,

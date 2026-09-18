@@ -582,32 +582,59 @@ public class SegmentedAnalyticsQueryService {
         if (visitorId == null || visitorId.isBlank() || visitorId.length() > 64)
             throw new ControlPlaneException(400, "INVALID_VISITOR_ID", "Visitor ID is invalid");
 
+        VisitorIdentity identity = resolveVisitorIdentity(siteId, visitorId);
         Instant firstSeenAt;
         Instant lastSeenAt;
         long lifetimeSessions;
-        try (Connection connection = dataSource.getConnection();
-                PreparedStatement statement = connection.prepareStatement(
-                        "select first_seen_at,last_seen_at,session_count from analytics_visitor where site_id=? and client_visitor_id=?")) {
-            statement.setObject(1, siteId);
-            statement.setString(2, visitorId);
-            try (ResultSet row = statement.executeQuery()) {
-                if (!row.next()) return null;
-                firstSeenAt = row.getTimestamp(1).toInstant();
-                lastSeenAt = row.getTimestamp(2).toInstant();
-                lifetimeSessions = row.getLong(3);
+        int linkedBrowserCount;
+        if (identity.userIdHash() != null) {
+            try (Connection connection = dataSource.getConnection();
+                    PreparedStatement statement =
+                            connection.prepareStatement("select min(s.started_at),max(s.last_activity_at),count(*),"
+                                    + "count(distinct v.client_visitor_id) from analytics_session s "
+                                    + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
+                                    + "where s.site_id=? and (v.client_visitor_id=? or s.user_id_hash=?)")) {
+                statement.setObject(1, siteId);
+                statement.setString(2, visitorId);
+                statement.setString(3, identity.userIdHash());
+                try (ResultSet row = statement.executeQuery()) {
+                    if (!row.next() || row.getTimestamp(1) == null) return null;
+                    firstSeenAt = row.getTimestamp(1).toInstant();
+                    lastSeenAt = row.getTimestamp(2).toInstant();
+                    lifetimeSessions = row.getLong(3);
+                    linkedBrowserCount = row.getInt(4);
+                }
+            } catch (SQLException error) {
+                throw new IllegalStateException("Could not query linked visitor profile", error);
             }
-        } catch (SQLException error) {
-            throw new IllegalStateException("Could not query visitor profile", error);
+        } else {
+            try (Connection connection = dataSource.getConnection();
+                    PreparedStatement statement = connection.prepareStatement(
+                            "select first_seen_at,last_seen_at,session_count from analytics_visitor where site_id=? and client_visitor_id=?")) {
+                statement.setObject(1, siteId);
+                statement.setString(2, visitorId);
+                try (ResultSet row = statement.executeQuery()) {
+                    if (!row.next()) return null;
+                    firstSeenAt = row.getTimestamp(1).toInstant();
+                    lastSeenAt = row.getTimestamp(2).toInstant();
+                    lifetimeSessions = row.getLong(3);
+                    linkedBrowserCount = 1;
+                }
+            } catch (SQLException error) {
+                throw new IllegalStateException("Could not query visitor profile", error);
+            }
         }
 
         QueryContext context = context(siteId, range, segmentId);
+        String profilePredicate = profilePredicate(identity, "client_visitor_id", "user_id_hash");
+        List<Object> profileParameters = profileParameters(visitorId, identity);
         long[] totals = single(
                 context,
                 cte(context)
                         + " select count(*),coalesce(sum(page_view_count),0),coalesce(sum(event_count),0),"
                         + "count(*) filter(where is_bounce),coalesce(avg(duration_ms),0) from matching_sessions "
-                        + "where client_visitor_id=?",
-                List.of(visitorId),
+                        + "where " + profilePredicate,
+                profileParameters,
                 row -> new long[] {row.getLong(1), row.getLong(2), row.getLong(3), row.getLong(4), row.getLong(5)});
 
         final int sessionLimit = 50;
@@ -617,9 +644,9 @@ public class SegmentedAnalyticsQueryService {
                         + " select client_session_id,started_at,last_activity_at,entry_page,exit_page,page_view_count,"
                         + "event_count,duration_ms,is_bounce,visitor_type,browser,operating_system,device_type,language,"
                         + "country_code,region_name,city,initial_referrer_host,initial_utm_source,initial_utm_medium,"
-                        + "initial_utm_campaign from matching_sessions where client_visitor_id=? "
+                        + "initial_utm_campaign from matching_sessions where " + profilePredicate + " "
                         + "order by started_at desc,client_session_id limit ?",
-                List.of(visitorId, sessionLimit + 1),
+                withLimit(profileParameters, sessionLimit + 1),
                 row -> new AnalyticsQueryService.VisitorProfileSession(
                         row.getString(1),
                         row.getTimestamp(2).toInstant(),
@@ -657,13 +684,15 @@ public class SegmentedAnalyticsQueryService {
                 + ", visitor_actions as (select " + EVENT_TIME
                 + " action_at,e.ingest_id,e.event_type,e.page_path,e.page_title,ms.client_session_id "
                 + "from matching_sessions ms join raw_event e on " + eventScope("e", "ms")
-                + " where ms.client_visitor_id=? and e.event_type<>'web_vital') "
+                + " where " + profilePredicate(identity, "ms.client_visitor_id", "ms.user_id_hash")
+                + " and e.event_type<>'web_vital') "
                 + "select action_at,event_type,page_path,page_title,client_session_id,ingest_id from visitor_actions "
                 + "order by action_at desc,ingest_id desc limit ?";
+        List<Object> actionParameters = withLimit(profileParameters, actionLimit + 1);
         List<VisitorProfileActionCursor> actionRows = list(
                 context,
                 actionsSql,
-                List.of(visitorId, actionLimit + 1),
+                actionParameters,
                 row -> new VisitorProfileActionCursor(
                         new AnalyticsQueryService.VisitorProfileAction(
                                 row.getTimestamp(1).toInstant(),
@@ -689,6 +718,8 @@ public class SegmentedAnalyticsQueryService {
                 firstSeenAt,
                 lastSeenAt,
                 lifetimeSessions,
+                identity.status(),
+                linkedBrowserCount,
                 totals[0],
                 totals[1],
                 totals[2],
@@ -711,8 +742,11 @@ public class SegmentedAnalyticsQueryService {
             String actionsCursorToken) {
         if (visitorId == null || visitorId.isBlank() || visitorId.length() > 64)
             throw new ControlPlaneException(400, "INVALID_VISITOR_ID", "Visitor ID is invalid");
+        VisitorIdentity identity = resolveVisitorIdentity(siteId, visitorId);
         if (!visitorExists(siteId, visitorId)) return null;
         QueryContext context = context(siteId, range, segmentId);
+        String profilePredicate = profilePredicate(identity, "client_visitor_id", "user_id_hash");
+        List<Object> profileParameters = profileParameters(visitorId, identity);
         final int sessionLimit = 50;
         boolean includeSessions = sessionsCursorToken != null || actionsCursorToken == null;
         boolean includeActions = actionsCursorToken != null || sessionsCursorToken == null;
@@ -721,7 +755,7 @@ public class SegmentedAnalyticsQueryService {
         if (includeSessions) {
             VisitorHistoryCursor sessionCursor = VisitorHistoryCursor.decode(sessionsCursorToken, "s", visitorId);
             List<Object> sessionParameters = new ArrayList<>();
-            sessionParameters.add(visitorId);
+            sessionParameters.addAll(profileParameters);
             String sessionCursorPredicate = "";
             if (sessionCursor != null) {
                 sessionCursorPredicate = " and (started_at<? or (started_at=? and client_session_id>?))";
@@ -737,7 +771,7 @@ public class SegmentedAnalyticsQueryService {
                             + " select client_session_id,started_at,last_activity_at,entry_page,exit_page,page_view_count,"
                             + "event_count,duration_ms,is_bounce,visitor_type,browser,operating_system,device_type,language,"
                             + "country_code,region_name,city,initial_referrer_host,initial_utm_source,initial_utm_medium,"
-                            + "initial_utm_campaign from matching_sessions where client_visitor_id=?"
+                            + "initial_utm_campaign from matching_sessions where " + profilePredicate
                             + sessionCursorPredicate
                             + " order by started_at desc,client_session_id limit ?",
                     sessionParameters,
@@ -757,7 +791,7 @@ public class SegmentedAnalyticsQueryService {
         if (includeActions) {
             VisitorHistoryCursor actionCursor = VisitorHistoryCursor.decode(actionsCursorToken, "a", visitorId);
             List<Object> actionParameters = new ArrayList<>();
-            actionParameters.add(visitorId);
+            actionParameters.addAll(profileParameters);
             String actionCursorPredicate = "";
             if (actionCursor != null) {
                 actionCursorPredicate = " and (" + EVENT_TIME + "<? or (" + EVENT_TIME + "=? and e.ingest_id<?))";
@@ -771,7 +805,8 @@ public class SegmentedAnalyticsQueryService {
                     + ", visitor_actions as (select " + EVENT_TIME
                     + " action_at,e.ingest_id,e.event_type,e.page_path,e.page_title,ms.client_session_id "
                     + "from matching_sessions ms join raw_event e on " + eventScope("e", "ms")
-                    + " where ms.client_visitor_id=? and e.event_type<>'web_vital'" + actionCursorPredicate + ") "
+                    + " where " + profilePredicate(identity, "ms.client_visitor_id", "ms.user_id_hash")
+                    + " and e.event_type<>'web_vital'" + actionCursorPredicate + ") "
                     + "select action_at,event_type,page_path,page_title,client_session_id,ingest_id from visitor_actions "
                     + "order by action_at desc,ingest_id desc limit ?";
             actionRows = list(
@@ -814,6 +849,50 @@ public class SegmentedAnalyticsQueryService {
             throw new IllegalStateException("Could not verify visitor profile", error);
         }
     }
+
+    private VisitorIdentity resolveVisitorIdentity(UUID siteId, String visitorId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("select s.user_id_hash,s.user_id_conflict from analytics_session s "
+                                + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
+                                + "where s.site_id=? and v.client_visitor_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, visitorId);
+            try (ResultSet rows = statement.executeQuery()) {
+                Set<String> hashes = new HashSet<>();
+                boolean conflict = false;
+                while (rows.next()) {
+                    String hash = rows.getString(1);
+                    if (hash != null) hashes.add(hash);
+                    conflict |= rows.getBoolean(2);
+                    if (hashes.size() > 1) conflict = true;
+                }
+                if (conflict) return new VisitorIdentity("ambiguous", null);
+                if (hashes.isEmpty()) return new VisitorIdentity("anonymous", null);
+                return new VisitorIdentity("linked", hashes.iterator().next());
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not resolve visitor identity", error);
+        }
+    }
+
+    private static String profilePredicate(VisitorIdentity identity, String visitorColumn, String hashColumn) {
+        return identity.userIdHash() == null
+                ? visitorColumn + "=?"
+                : "(" + visitorColumn + "=? or " + hashColumn + "=?)";
+    }
+
+    private static List<Object> profileParameters(String visitorId, VisitorIdentity identity) {
+        return identity.userIdHash() == null ? List.of(visitorId) : List.of(visitorId, identity.userIdHash());
+    }
+
+    private static List<Object> withLimit(List<Object> parameters, int limit) {
+        List<Object> result = new ArrayList<>(parameters);
+        result.add(limit);
+        return result;
+    }
+
+    private record VisitorIdentity(String status, String userIdHash) {}
 
     private static AnalyticsQueryService.VisitorProfileSession mapVisitorProfileSession(ResultSet row)
             throws SQLException {
@@ -1071,7 +1150,7 @@ public class SegmentedAnalyticsQueryService {
                 + "s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,s.browser,s.browser_version,s.operating_system,"
                 + "s.operating_system_version,s.device_type,s.language,s.screen_width,s.screen_height,"
                 + "s.viewport_width,s.viewport_height,s.pixel_ratio,s.country_code,s.continent_code,s.region_code,"
-                + "s.region_name,s.city,s.geo_timezone from analytics_session s "
+                + "s.region_name,s.city,s.geo_timezone,s.user_id_hash from analytics_session s "
                 + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
                 + "where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
                 + context.filter().expression() + "))";

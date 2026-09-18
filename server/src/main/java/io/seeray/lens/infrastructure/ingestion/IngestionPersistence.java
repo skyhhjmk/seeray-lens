@@ -26,8 +26,8 @@ public class IngestionPersistence {
                     """
                     INSERT INTO raw_event (ingest_id, site_id, client_event_id, client_visitor_id, client_session_id, received_at, occurred_at, event_type,
                       page_scheme, page_host, page_path, page_title, referrer_scheme, referrer_host, referrer_path,
-                      utm_source, utm_medium, utm_campaign, utm_term, utm_content, event_data, duration_ms, ingest_version, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, 1, now())
+                      utm_source, utm_medium, utm_campaign, utm_term, utm_content, event_data, duration_ms, user_id_hash, ingest_version, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, 1, now())
                     ON CONFLICT (site_id, client_event_id) DO NOTHING""")) {
                 for (TrackingMessage event : events) {
                     statement.setObject(1, event.ingestId());
@@ -53,6 +53,7 @@ public class IngestionPersistence {
                     statement.setString(21, event.eventData());
                     if (event.durationMs() == null) statement.setNull(22, Types.INTEGER);
                     else statement.setInt(22, event.durationMs());
+                    statement.setString(23, event.userIdHash());
                     statement.addBatch();
                 }
                 statement.executeBatch();

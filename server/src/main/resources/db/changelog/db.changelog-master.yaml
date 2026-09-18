@@ -293,3 +293,17 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0042-crash-source-maps.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0043-authenticated-visitor-identities
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0043-authenticated-visitor-identities.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0044-visitor-identity-conflicts
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0044-visitor-identity-conflicts.sql
+            relativeToChangelogFile: false

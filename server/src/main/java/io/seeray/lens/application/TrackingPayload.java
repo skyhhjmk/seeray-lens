@@ -33,7 +33,8 @@ public record TrackingPayload(
             @Size(max = 256) String name,
             Map<String, Object> data,
             JsonNode properties,
-            @Valid ClientContext context) {}
+            @Valid ClientContext context,
+            @Size(max = 256) @Pattern(regexp = "^[^\\p{Cc}]{1,256}$") String userId) {}
 
     public record ClientContext(
             @Pattern(regexp = "^(Chrome|Safari|Firefox|Edge|Opera|Samsung Internet|Other)$") String browser,

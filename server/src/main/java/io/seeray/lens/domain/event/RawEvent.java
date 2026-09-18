@@ -79,6 +79,9 @@ public class RawEvent {
     @Column(name = "duration_ms")
     public Integer durationMs;
 
+    @Column(name = "user_id_hash", length = 64)
+    public String userIdHash;
+
     @Column(name = "ingest_version", nullable = false)
     public int ingestVersion;
 

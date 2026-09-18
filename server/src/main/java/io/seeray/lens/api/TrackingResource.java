@@ -98,7 +98,10 @@ public class TrackingResource {
                     TrackingSanitizer.json(eventData, mapper),
                     event.durationMs(),
                     clientError ? null : event.visitorId(),
-                    clientError ? null : event.sessionId());
+                    clientError ? null : event.sessionId(),
+                    clientError
+                            ? null
+                            : io.seeray.lens.application.TrackingIdentityHasher.hash(site.id, event.userId()));
             try {
                 publisher
                         .sendMessage(Message.of(mapper.writeValueAsString(message)))

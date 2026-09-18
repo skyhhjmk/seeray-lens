@@ -16,4 +16,5 @@ public record TrackingMessage(
         String eventData,
         Integer durationMs,
         String visitorId,
-        String sessionId) {}
+        String sessionId,
+        String userIdHash) {}

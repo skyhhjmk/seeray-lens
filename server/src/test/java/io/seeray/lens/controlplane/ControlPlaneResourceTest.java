@@ -531,7 +531,7 @@ class ControlPlaneResourceTest {
                 .statusCode(201);
         String eventId = UUID.randomUUID().toString();
         String body = "{\"schemaVersion\":1,\"siteId\":\"" + trackingId + "\",\"events\":[{\"eventId\":\"" + eventId
-                + "\",\"type\":\"page_view\",\"visitorId\":\"00000000-0000-4000-8000-000000000001\",\"sessionId\":\"00000000-0000-4000-8000-000000000002\",\"url\":\"https://example.com/order?id=secret&utm_source=google#x\",\"title\":\"Order confirmation\",\"context\":{\"browser\":\"Chrome\",\"browserVersion\":\"132\",\"operatingSystem\":\"Linux\",\"operatingSystemVersion\":\"6.8\",\"deviceType\":\"desktop\",\"language\":\"zh-CN\",\"screenWidth\":1920,\"screenHeight\":1080,\"viewportWidth\":1440,\"viewportHeight\":900,\"pixelRatio\":1.5}}]}";
+                + "\",\"type\":\"page_view\",\"visitorId\":\"00000000-0000-4000-8000-000000000001\",\"sessionId\":\"00000000-0000-4000-8000-000000000002\",\"userId\":\"opaque-user-01\",\"url\":\"https://example.com/order?id=secret&utm_source=google#x\",\"title\":\"Order confirmation\",\"context\":{\"browser\":\"Chrome\",\"browserVersion\":\"132\",\"operatingSystem\":\"Linux\",\"operatingSystemVersion\":\"6.8\",\"deviceType\":\"desktop\",\"language\":\"zh-CN\",\"screenWidth\":1920,\"screenHeight\":1080,\"viewportWidth\":1440,\"viewportHeight\":900,\"pixelRatio\":1.5}}]}";
         given().header("cf-ipcountry", "US")
                 .header("cf-ipcontinent", "NA")
                 .header("cf-region-code", "CA")
@@ -571,7 +571,7 @@ class ControlPlaneResourceTest {
         assertEquals(1, count);
         try (var connection = dataSource.getConnection();
                 var statement = connection.prepareStatement(
-                        "select page_path, page_title, utm_source, event_data->'context'->>'browser',event_data->'context'->>'countryCode' from raw_event where client_event_id = ?")) {
+                        "select page_path, page_title, utm_source, event_data->'context'->>'browser',event_data->'context'->>'countryCode',user_id_hash,event_data::text from raw_event where client_event_id = ?")) {
             statement.setObject(1, UUID.fromString(eventId));
             try (var result = statement.executeQuery()) {
                 assertTrue(result.next());
@@ -580,6 +580,11 @@ class ControlPlaneResourceTest {
                 assertEquals("google", result.getString(3));
                 assertEquals("Chrome", result.getString(4));
                 assertEquals("US", result.getString(5));
+                assertEquals(
+                        io.seeray.lens.application.TrackingIdentityHasher.hash(
+                                UUID.fromString(site.path("id")), "opaque-user-01"),
+                        result.getString(6));
+                assertFalse(result.getString(7).contains("opaque-user-01"));
             }
         }
         UUID siteUuid = UUID.fromString(site.path("id"));
@@ -587,7 +592,7 @@ class ControlPlaneResourceTest {
         aggregation.rebuild(siteUuid, LocalDate.parse(today), LocalDate.parse(today));
         try (var connection = dataSource.getConnection();
                 var statement = connection.prepareStatement(
-                        "select count(*),min(browser),min(browser_version),min(device_type),min(country_code),min(city) from analytics_session where site_id = ?")) {
+                        "select count(*),min(browser),min(browser_version),min(device_type),min(country_code),min(city),min(user_id_hash) from analytics_session where site_id = ?")) {
             statement.setObject(1, siteUuid);
             try (var result = statement.executeQuery()) {
                 result.next();
@@ -597,6 +602,9 @@ class ControlPlaneResourceTest {
                 assertEquals("desktop", result.getString(4));
                 assertEquals("US", result.getString(5));
                 assertEquals("San Francisco", result.getString(6));
+                assertEquals(
+                        io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "opaque-user-01"),
+                        result.getString(7));
             }
         }
         List<java.util.Map<String, Object>> technology = given().header("Authorization", "Bearer " + tokens.access())
@@ -3501,6 +3509,84 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void visitorProfileLinksUniqueUserIdsButKeepsConflictingBrowserIdentitySeparate() throws Exception {
+        Tokens owner = register("visitor-identity" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Visitor identities\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+
+        UUID siteId = UUID.fromString(site);
+        String firstBrowser = UUID.randomUUID().toString();
+        String secondBrowser = UUID.randomUUID().toString();
+        String sharedBrowser = UUID.randomUUID().toString();
+        String intraSessionConflictBrowser = UUID.randomUUID().toString();
+        Instant base = Instant.now().minusSeconds(3600);
+        String accountA = io.seeray.lens.application.TrackingIdentityHasher.hash(siteId, "opaque-account-A");
+        String accountB = io.seeray.lens.application.TrackingIdentityHasher.hash(siteId, "opaque-account-B");
+        assertEquals(accountA, io.seeray.lens.application.TrackingIdentityHasher.hash(siteId, "  opaque-account-A  "));
+        assertNotEquals(
+                accountA,
+                io.seeray.lens.application.TrackingIdentityHasher.hash(UUID.randomUUID(), "opaque-account-A"));
+        insertRawWithIdentity(siteId, firstBrowser, "identity-session-a1", base, accountA, "/one");
+        insertRawWithIdentity(siteId, secondBrowser, "identity-session-a2", base.plusSeconds(60), accountA, "/two");
+        insertRawWithIdentity(siteId, sharedBrowser, "identity-session-a3", base.plusSeconds(120), accountA, "/three");
+        insertRawWithIdentity(siteId, sharedBrowser, "identity-session-b1", base.plusSeconds(180), accountB, "/four");
+        insertRawWithIdentity(
+                siteId,
+                intraSessionConflictBrowser,
+                "identity-session-conflict",
+                base.plusSeconds(240),
+                accountA,
+                "/five");
+        insertRawWithIdentity(
+                siteId,
+                intraSessionConflictBrowser,
+                "identity-session-conflict",
+                base.plusSeconds(241),
+                accountB,
+                "/six");
+        factBuilder.rebuild(siteId, base.minusSeconds(1), base.plusSeconds(300));
+
+        String api = "/api/v1/sites/" + site + "/analytics/visitors/";
+        String linkedProfile = given().header("Authorization", "Bearer " + owner.access())
+                .get(api + firstBrowser)
+                .then()
+                .statusCode(200)
+                .body("identityLinkStatus", is("linked"))
+                .body("linkedBrowserCount", is(3))
+                .body("lifetimeSessions", is(3))
+                .body("rangeSessions", is(3))
+                .body("sessions.size()", is(3))
+                .extract()
+                .asString();
+        assertFalse(linkedProfile.contains(accountA));
+        assertFalse(linkedProfile.contains("opaque-account-A"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(api + sharedBrowser)
+                .then()
+                .statusCode(200)
+                .body("identityLinkStatus", is("ambiguous"))
+                .body("linkedBrowserCount", is(1))
+                .body("lifetimeSessions", is(2))
+                .body("rangeSessions", is(2))
+                .body("sessions.size()", is(2));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(api + intraSessionConflictBrowser)
+                .then()
+                .statusCode(200)
+                .body("identityLinkStatus", is("ambiguous"))
+                .body("linkedBrowserCount", is(1))
+                .body("lifetimeSessions", is(1))
+                .body("rangeSessions", is(1));
+    }
+
+    @Test
     void savedSegmentTargetsOnlyMatchingVisitorsWithinItsLookback() throws Exception {
         Tokens owner = register("experiment-segment" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");
@@ -4219,6 +4305,27 @@ class ControlPlaneResourceTest {
     private void insertRaw(UUID siteId, String visitor, String session, String type, Instant occurred, String path)
             throws Exception {
         insertRaw(siteId, visitor, session, type, occurred, path, "{}");
+    }
+
+    private void insertRawWithIdentity(
+            UUID siteId, String visitor, String session, Instant occurred, String userIdHash, String path)
+            throws Exception {
+        try (var c = dataSource.getConnection();
+                var p = c.prepareStatement(
+                        "insert into raw_event(ingest_id,site_id,client_event_id,client_visitor_id,client_session_id,received_at,occurred_at,event_type,page_path,event_data,ingest_version,user_id_hash) values(?,?,?,?,?,?,?,?,?,?::jsonb,1,?)")) {
+            p.setObject(1, UUID.randomUUID());
+            p.setObject(2, siteId);
+            p.setObject(3, UUID.randomUUID());
+            p.setString(4, visitor);
+            p.setString(5, session);
+            p.setTimestamp(6, java.sql.Timestamp.from(occurred.plusSeconds(1)));
+            p.setTimestamp(7, java.sql.Timestamp.from(occurred));
+            p.setString(8, "page_view");
+            p.setString(9, path);
+            p.setString(10, "{}");
+            p.setString(11, userIdHash);
+            p.executeUpdate();
+        }
     }
 
     private void insertAttributionPage(
