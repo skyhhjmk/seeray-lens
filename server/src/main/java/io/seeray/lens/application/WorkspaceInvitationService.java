@@ -259,7 +259,7 @@ public class WorkspaceInvitationService {
 
     private String invitationUrl(String token) {
         URI base = URI.create(adminUrl.strip().endsWith("/") ? adminUrl.strip() : adminUrl.strip() + "/");
-        return base.resolve("accept-invitation?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8))
+        return base.resolve("#/accept-invitation?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8))
                 .toString();
     }
 

@@ -426,8 +426,10 @@ class ControlPlaneResourceTest {
                 .findFirst()
                 .orElseThrow()
                 .group(1);
-        String publicPreview = "/api/v1/auth/invitations/" + token;
-        given().get(publicPreview)
+        String publicPreview = "/api/v1/auth/invitations/preview";
+        given().contentType("application/json")
+                .body("{\"token\":\"" + token + "\"}")
+                .post(publicPreview)
                 .then()
                 .statusCode(200)
                 .body("email", is(newEmail))
@@ -459,7 +461,11 @@ class ControlPlaneResourceTest {
                 .get(endpoint)
                 .then()
                 .statusCode(403);
-        given().get(publicPreview).then().statusCode(410);
+        given().contentType("application/json")
+                .body("{\"token\":\"" + token + "\"}")
+                .post(publicPreview)
+                .then()
+                .statusCode(410);
 
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
@@ -507,7 +513,11 @@ class ControlPlaneResourceTest {
                 .delete(endpoint + "/" + revokeInvitation.path("id"))
                 .then()
                 .statusCode(204);
-        given().get("/api/v1/auth/invitations/" + revokeToken).then().statusCode(410);
+        given().contentType("application/json")
+                .body("{\"token\":\"" + revokeToken + "\"}")
+                .post(publicPreview)
+                .then()
+                .statusCode(410);
     }
 
     @Test
