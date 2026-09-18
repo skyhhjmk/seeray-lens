@@ -32,7 +32,7 @@ public class SegmentedAnalyticsQueryService {
         String sql = cte(context)
                 + " select (select count(*) from matching_sessions ms join raw_event e on " + eventScope("e", "ms")
                 + " where e.event_type='page_view' and " + eventBusinessDate("e") + " between ? and ?),"
-                + "count(distinct visitor_id),count(*),count(*) filter(where is_bounce),coalesce(sum(duration_ms),0) "
+                + "count(distinct identity_key),count(*),count(*) filter(where is_bounce),coalesce(sum(duration_ms),0) "
                 + "from matching_sessions";
         List<Object> after = List.of(context.timezone(), range.from(), range.to());
         return single(context, sql, after, row -> {
@@ -53,7 +53,7 @@ public class SegmentedAnalyticsQueryService {
         QueryContext context = context(siteId, range, segmentId);
         String sql = cte(context)
                 + ", session_days as (select (started_at at time zone ?)::date business_date,"
-                + "count(distinct visitor_id) visitors,count(*) sessions from matching_sessions group by business_date),"
+                + "count(distinct identity_key) visitors,count(*) sessions from matching_sessions group by business_date),"
                 + " page_days as (select " + eventBusinessDate("e") + " business_date,count(*) page_views "
                 + "from matching_sessions ms join raw_event e on " + eventScope("e", "ms")
                 + " where e.event_type='page_view' and " + eventBusinessDate("e")
@@ -323,7 +323,7 @@ public class SegmentedAnalyticsQueryService {
                 context.timezone(),
                 context.filter());
         String sql = cte(candidateSessions)
-                + ", search_events as (select e.client_visitor_id visitor_id,e.client_session_id session_id,"
+                + ", search_events as (select ms.identity_key visitor_id,e.client_session_id session_id,"
                 + "coalesce(nullif(btrim(e.event_data->'data'->>'keyword'),''),"
                 + "nullif(btrim(e.event_data->>'name'),'')) keyword,"
                 + "coalesce(nullif(btrim(e.event_data->'data'->>'searchCategory'),''),"
@@ -403,7 +403,7 @@ public class SegmentedAnalyticsQueryService {
         String contentName = "coalesce(nullif(btrim(e.event_data->'data'->>'contentName'),''),"
                 + "nullif(btrim(e.event_data->>'name'),''))";
         String sql = cte(candidateSessions)
-                + ", content_events as (select e.client_visitor_id visitor_id,e.client_session_id session_id,"
+                + ", content_events as (select ms.identity_key visitor_id,e.client_session_id session_id,"
                 + contentName + " content_name,"
                 + "nullif(btrim(e.event_data->'data'->>'contentPiece'),'') content_piece,"
                 + "nullif(btrim(regexp_replace(e.event_data->'data'->>'contentTarget','[?#].*$','')),'') content_target,"
@@ -471,7 +471,7 @@ public class SegmentedAnalyticsQueryService {
         String metricValue = "case when e.event_data->'data'->>'value' ~ '^[0-9]{1,10}(\\.[0-9]{1,6})?$' "
                 + "then (e.event_data->'data'->>'value')::double precision end";
         String sql = cte(candidateSessions)
-                + ", selected_events as (select e.client_visitor_id visitor_id,e.client_session_id session_id,"
+                + ", selected_events as (select ms.identity_key visitor_id,e.client_session_id session_id,"
                 + "e.page_path,nullif(btrim(e.event_data->'data'->>'metric'),'') metric,"
                 + "nullif(btrim(e.event_data->'data'->>'metricId'),'') metric_id," + metricValue + " metric_value,"
                 + EVENT_TIME + " event_time,e.received_at,e.ingest_id "
@@ -538,7 +538,7 @@ public class SegmentedAnalyticsQueryService {
             UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
         QueryContext context = context(siteId, range, segmentId);
         String sql = cte(context)
-                + " select count(distinct visitor_id),count(*),count(*) filter(where visitor_type='new'),"
+                + " select count(distinct identity_key),count(*),count(*) filter(where visitor_type='new'),"
                 + "count(*) filter(where visitor_type='returning'),count(*) filter(where is_bounce),coalesce(sum(duration_ms),0) "
                 + "from matching_sessions";
         return single(context, sql, List.of(), row -> {
@@ -949,7 +949,7 @@ public class SegmentedAnalyticsQueryService {
             UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
         QueryContext context = context(siteId, range, segmentId);
         String sql = cte(context)
-                + ", dimension_rows as (select ms.id,ms.visitor_id,d.dimension,d.value "
+                + ", dimension_rows as (select ms.id,ms.identity_key,d.dimension,d.value "
                 + "from matching_sessions ms cross join lateral (values "
                 + "('Browser',coalesce(nullif(ms.browser,''),'Unknown')),"
                 + "('Browser version',case when nullif(ms.browser,'') is null then 'Unknown' "
@@ -965,7 +965,7 @@ public class SegmentedAnalyticsQueryService {
                 + "then ms.viewport_width::text || ' × ' || ms.viewport_height::text || ' px' else 'Unknown' end),"
                 + "('Display scale',case when ms.pixel_ratio is not null "
                 + "then ms.pixel_ratio::text || '×' else 'Unknown' end)"
-                + ") d(dimension,value)) select dimension,value,count(*),count(distinct visitor_id) "
+                + ") d(dimension,value)) select dimension,value,count(*),count(distinct identity_key) "
                 + "from dimension_rows group by dimension,value order by case dimension "
                 + "when 'Browser' then 1 when 'Browser version' then 2 when 'Operating system' then 3 "
                 + "when 'OS version' then 4 when 'Device type' then 5 when 'Language' then 6 "
@@ -999,13 +999,13 @@ public class SegmentedAnalyticsQueryService {
         VisitorInterestTotals totals = single(
                 context,
                 cte(context)
-                        + " select count(distinct visitor_id),count(*),coalesce(sum(page_view_count),0),"
+                        + " select count(distinct identity_key),count(*),coalesce(sum(page_view_count),0),"
                         + "coalesce(sum(event_count),0),coalesce(avg(duration_ms),0) from matching_sessions",
                 List.of(),
                 row -> new VisitorInterestTotals(
                         row.getLong(1), row.getLong(2), row.getLong(3), row.getLong(4), row.getDouble(5)));
         String frequencySql = cte(context)
-                + ", visits_per_visitor as (select visitor_id,count(*) visits from matching_sessions group by visitor_id), "
+                + ", visits_per_visitor as (select identity_key,count(*) visits from matching_sessions group by identity_key), "
                 + "labeled_visitors as (select visits,case when visits=1 then '1' when visits=2 then '2' "
                 + "when visits=3 then '3' when visits between 4 and 5 then '4–5' "
                 + "when visits between 6 and 10 then '6–10' else '11+' end band, "
@@ -1066,17 +1066,17 @@ public class SegmentedAnalyticsQueryService {
                 + ", location_rows as ("
                 + "select 'country' level,country_code::text country_code,max(continent_code::text) continent_code,"
                 + "null::text region_code,null::text region,null::text city,null::text timezone,count(*) sessions,"
-                + "count(distinct visitor_id) visitors from matching_sessions where country_code is not null "
+                + "count(distinct identity_key) visitors from matching_sessions where country_code is not null "
                 + "group by country_code union all "
                 + "select 'continent',null::text,continent_code::text,null::text,null::text,null::text,null::text,"
-                + "count(*),count(distinct visitor_id) from matching_sessions where continent_code is not null "
+                + "count(*),count(distinct identity_key) from matching_sessions where continent_code is not null "
                 + "group by continent_code union all "
                 + "select 'region',country_code::text,max(continent_code::text),max(region_code::text),max(region_name),null::text,"
-                + "null::text,count(*),count(distinct visitor_id) from matching_sessions where country_code is not null "
+                + "null::text,count(*),count(distinct identity_key) from matching_sessions where country_code is not null "
                 + "and (region_code is not null or region_name is not null) "
                 + "group by country_code,coalesce(region_code::text,region_name) union all "
                 + "select 'city',country_code::text,max(continent_code::text),max(region_code::text),max(region_name),city,"
-                + "max(geo_timezone),count(*),count(distinct visitor_id) from matching_sessions where country_code is not null "
+                + "max(geo_timezone),count(*),count(distinct identity_key) from matching_sessions where country_code is not null "
                 + "and city is not null group by country_code,coalesce(region_code::text,region_name),city) "
                 + "select level,country_code,continent_code,region_code,region,city,timezone,sessions,visitors "
                 + "from location_rows order by case level when 'country' then 1 when 'continent' then 2 "
@@ -1150,7 +1150,7 @@ public class SegmentedAnalyticsQueryService {
                 + "s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,s.browser,s.browser_version,s.operating_system,"
                 + "s.operating_system_version,s.device_type,s.language,s.screen_width,s.screen_height,"
                 + "s.viewport_width,s.viewport_height,s.pixel_ratio,s.country_code,s.continent_code,s.region_code,"
-                + "s.region_name,s.city,s.geo_timezone,s.user_id_hash from analytics_session s "
+                + "s.region_name,s.city,s.geo_timezone,s.user_id_hash,s.identity_key from analytics_session s "
                 + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
                 + "where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
                 + context.filter().expression() + "))";

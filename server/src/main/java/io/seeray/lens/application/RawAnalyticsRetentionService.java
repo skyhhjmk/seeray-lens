@@ -78,6 +78,7 @@ public class RawAnalyticsRetentionService {
                 "analytics_event_daily",
                 "analytics_goal_daily",
                 "analytics_goal_conversion_daily",
+                "visitor_identity_day_fact",
                 "visitor_day_fact")) {
             deleted += deleteInBatches(
                     connection,

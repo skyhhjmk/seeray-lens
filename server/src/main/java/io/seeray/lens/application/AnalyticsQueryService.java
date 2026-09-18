@@ -211,14 +211,15 @@ public class AnalyticsQueryService {
                   order by max(received_at) desc limit ?
                 ), session_events as (
                   select e.client_visitor_id,e.client_session_id,e.ingest_id,e.received_at,e.event_type,
-                    e.page_path,e.page_title,e.event_data
+                    e.page_path,e.page_title,e.event_data,e.user_id_hash
                   from raw_event e join active_sessions a on a.client_visitor_id=e.client_visitor_id
                     and a.client_session_id=e.client_session_id
                   where e.site_id=?
                 ), session_summary as (
                   select client_visitor_id,client_session_id,min(received_at) started_at,max(received_at) last_activity_at,
                     count(*)::integer event_count,count(*) filter(where event_type='page_view')::integer page_views,
-                    (array_agg(page_path order by received_at,ingest_id) filter(where event_type='page_view'))[1] entry_page
+                    (array_agg(page_path order by received_at,ingest_id) filter(where event_type='page_view'))[1] entry_page,
+                    case when count(distinct user_id_hash)=1 then min(user_id_hash) end session_user_id_hash
                   from session_events group by client_visitor_id,client_session_id
                 ), latest_event as (
                   select distinct on (client_visitor_id,client_session_id) client_visitor_id,client_session_id,
@@ -237,12 +238,32 @@ public class AnalyticsQueryService {
                     event_data->'context' context
                   from session_events where event_type='page_view'
                   order by client_visitor_id,client_session_id,received_at,ingest_id
+                ), active_browser_ids as (
+                  select distinct client_visitor_id from active_sessions
+                ), browser_session_identities as (
+                  select e.client_visitor_id,e.client_session_id,
+                    case when count(distinct e.user_id_hash)=1 then min(e.user_id_hash) end user_id_hash,
+                    count(distinct e.user_id_hash)>1 has_conflict
+                  from raw_event e join active_browser_ids b using(client_visitor_id)
+                  where e.site_id=? group by e.client_visitor_id,e.client_session_id
+                ), browser_identity_stats as (
+                  select client_visitor_id,count(distinct user_id_hash) identity_count,min(user_id_hash) user_id_hash,
+                    coalesce(bool_or(has_conflict),false) has_conflict
+                  from browser_session_identities group by client_visitor_id
+                ), session_identity as (
+                  select s.*,case when s.session_user_id_hash is not null then 'user:'||s.session_user_id_hash
+                    when b.identity_count=1 and not b.has_conflict then 'user:'||b.user_id_hash
+                    else 'browser:'||s.client_visitor_id end identity_key
+                  from session_summary s join browser_identity_stats b using(client_visitor_id)
+                ), ranked_sessions as (
+                  select s.*,row_number() over(partition by identity_key order by last_activity_at desc,
+                    client_visitor_id,client_session_id) identity_rank from session_identity s
                 )
                 select s.client_visitor_id,s.client_session_id,s.started_at,s.last_activity_at,s.event_count,s.page_views,
                   s.entry_page,l.event_type,l.page_path,l.page_title,c.context->>'countryCode',c.context->>'region',
                   c.context->>'city',c.context->>'browser',c.context->>'operatingSystem',c.context->>'deviceType',
-                  c.context->>'language',coalesce(a.actions_json,'[]')
-                from session_summary s join latest_event l using(client_visitor_id,client_session_id)
+                  c.context->>'language',coalesce(a.actions_json,'[]'),s.identity_rank=1
+                from ranked_sessions s join latest_event l using(client_visitor_id,client_session_id)
                   left join visit_context c using(client_visitor_id,client_session_id)
                   left join actions a using(client_visitor_id,client_session_id)
                 order by s.last_activity_at desc,s.client_visitor_id
@@ -254,6 +275,7 @@ public class AnalyticsQueryService {
             statement.setInt(2, windowMinutes);
             statement.setInt(3, limit);
             statement.setObject(4, site);
+            statement.setObject(5, site);
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
                     Instant startedAt = rows.getTimestamp(3).toInstant();
@@ -283,7 +305,8 @@ public class AnalyticsQueryService {
                             rows.getString(16),
                             rows.getString(17),
                             Duration.between(startedAt, lastActivityAt).toMillis(),
-                            actions));
+                            actions,
+                            rows.getBoolean(19)));
                 }
             }
             return visitors;
@@ -309,7 +332,7 @@ public class AnalyticsQueryService {
 
     private long visitors(Connection c, UUID site, Range range) throws SQLException {
         try (PreparedStatement p = c.prepareStatement(
-                "select count(distinct visitor_id) from visitor_day_fact where site_id=? and business_date between ? and ?")) {
+                "select count(distinct identity_key) from visitor_identity_day_fact where site_id=? and business_date between ? and ?")) {
             p.setObject(1, site);
             p.setObject(2, range.from);
             p.setObject(3, range.to);
@@ -501,5 +524,6 @@ public class AnalyticsQueryService {
             String deviceType,
             String language,
             long durationMs,
-            List<LiveAction> actions) {}
+            List<LiveAction> actions,
+            boolean uniqueIdentity) {}
 }

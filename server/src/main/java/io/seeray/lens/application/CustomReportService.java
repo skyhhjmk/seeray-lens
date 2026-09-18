@@ -38,7 +38,7 @@ public class CustomReportService {
     private static final Set<String> EVENT_DIMENSIONS = Set.of("event_type");
     private static final Map<String, String> METRICS = Map.of(
             "sessions", "count(*)::double precision",
-            "unique_visitors", "count(distinct s.visitor_id)::double precision",
+            "unique_visitors", "count(distinct s.identity_key)::double precision",
             "page_views", "coalesce(sum(s.page_view_count),0)::double precision",
             "events", "coalesce(sum(s.event_count),0)::double precision",
             "bounced_sessions", "count(*) filter(where s.is_bounce)::double precision",
@@ -100,14 +100,16 @@ public class CustomReportService {
             return queryEventType(siteId, site, range, filter, request, metric);
         }
         String dimension = "coalesce(nullif(btrim(" + DIMENSIONS.get(request.dimension()) + "),''),'Unknown')";
-        String sql = "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.client_session_id,s.started_at,"
-                + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
-                + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
-                + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
-                + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
-                + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
-                + filter.expression() + ")) select " + dimension + " dimension_value," + metric + " metric_value "
-                + "from matching_sessions s group by 1 order by 2 desc,1 asc limit ?";
+        String sql =
+                "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,s.client_session_id,s.started_at,"
+                        + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
+                        + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
+                        + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
+                        + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
+                        + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+                        + filter.expression() + ")) select " + dimension + " dimension_value," + metric
+                        + " metric_value "
+                        + "from matching_sessions s group by 1 order by 2 desc,1 asc limit ?";
         List<Row> rows = new ArrayList<>();
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -196,16 +198,18 @@ public class CustomReportService {
                 List.of(request.dimension(), request.secondaryDimension(), request.tertiaryDimension()).stream()
                         .map(name -> "coalesce(nullif(btrim(" + DIMENSIONS.get(name) + "),''),'Unknown')")
                         .toList();
-        String sql = "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.client_session_id,s.started_at,"
-                + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
-                + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
-                + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
-                + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
-                + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
-                + filter.expression() + ")) select " + expressions.get(0) + " dimension_value,"
-                + expressions.get(1) + " secondary_dimension_value," + expressions.get(2)
-                + " tertiary_dimension_value," + metric + " metric_value from matching_sessions s group by 1,2,3 "
-                + "order by 4 desc,1 asc,2 asc,3 asc limit ?";
+        String sql =
+                "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,s.client_session_id,s.started_at,"
+                        + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
+                        + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
+                        + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
+                        + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
+                        + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+                        + filter.expression() + ")) select " + expressions.get(0) + " dimension_value,"
+                        + expressions.get(1) + " secondary_dimension_value," + expressions.get(2)
+                        + " tertiary_dimension_value," + metric
+                        + " metric_value from matching_sessions s group by 1,2,3 "
+                        + "order by 4 desc,1 asc,2 asc,3 asc limit ?";
         List<Row> rows = new ArrayList<>();
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -250,14 +254,14 @@ public class CustomReportService {
         }
         boolean containsEventType = names.stream().anyMatch(EVENT_DIMENSIONS::contains);
         String sql = customDimensionSessionsCte(filter)
-                + ", event_dimension_triples as (select s.id session_id,s.visitor_id,s.page_view_count,s.duration_ms,"
+                + ", event_dimension_triples as (select s.id session_id,s.visitor_id,s.identity_key,s.page_view_count,s.duration_ms,"
                 + "s.is_bounce," + expressions.get(0) + " dimension_value," + expressions.get(1)
                 + " secondary_dimension_value," + expressions.get(2)
                 + " tertiary_dimension_value,count(*)::integer event_count from matching_sessions s "
                 + "join raw_event e on " + eventScope("e", "s") + propertyJoins + " where "
                 + eventBusinessDate("e") + " between ? and ?"
                 + (containsEventType ? " and e.event_type<>'web_vital'" : "")
-                + " group by s.id,s.visitor_id,s.page_view_count,s.duration_ms,s.is_bounce,"
+                + " group by s.id,s.visitor_id,s.identity_key,s.page_view_count,s.duration_ms,s.is_bounce,"
                 + String.join(",", expressions)
                 + ") select s.dimension_value,s.secondary_dimension_value,s.tertiary_dimension_value," + metric
                 + " metric_value from event_dimension_triples s group by s.dimension_value,s.secondary_dimension_value,"
@@ -317,15 +321,16 @@ public class CustomReportService {
                 .map(name -> "coalesce(nullif(btrim(" + DIMENSIONS.get(name) + "),''),'Unknown')")
                 .toList();
         String projection = String.join(",", expressions);
-        String sql = "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.client_session_id,s.started_at,"
-                + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
-                + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
-                + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
-                + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
-                + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
-                + filter.expression() + ")) select " + projection
-                + "," + metric + " metric_value from matching_sessions s group by 1,2,3,4 "
-                + "order by 5 desc,1 asc,2 asc,3 asc,4 asc limit ?";
+        String sql =
+                "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,s.client_session_id,s.started_at,"
+                        + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
+                        + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
+                        + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
+                        + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
+                        + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+                        + filter.expression() + ")) select " + projection
+                        + "," + metric + " metric_value from matching_sessions s group by 1,2,3,4 "
+                        + "order by 5 desc,1 asc,2 asc,3 asc,4 asc limit ?";
         List<Row> rows = new ArrayList<>();
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -391,12 +396,13 @@ public class CustomReportService {
         String outerProjection = "s.dimension_value,s.secondary_dimension_value,s.tertiary_dimension_value,"
                 + "s.quaternary_dimension_value";
         String sql = customDimensionSessionsCte(filter)
-                + ", event_dimension_quadruples as (select s.id session_id,s.visitor_id,s.page_view_count,s.duration_ms,"
+                + ", event_dimension_quadruples as (select s.id session_id,s.visitor_id,s.identity_key,s.page_view_count,s.duration_ms,"
                 + "s.is_bounce," + eventProjection + ",count(*)::integer event_count from matching_sessions s "
                 + "join raw_event e on " + eventScope("e", "s") + propertyJoins + " where "
                 + eventBusinessDate("e") + " between ? and ?"
                 + (containsEventType ? " and e.event_type<>'web_vital'" : "")
-                + " group by s.id,s.visitor_id,s.page_view_count,s.duration_ms,s.is_bounce," + groupExpressions
+                + " group by s.id,s.visitor_id,s.identity_key,s.page_view_count,s.duration_ms,s.is_bounce,"
+                + groupExpressions
                 + ") select " + outerProjection + "," + metric
                 + " metric_value from event_dimension_quadruples s group by 1,2,3,4 "
                 + "order by 5 desc,1 asc,2 asc,3 asc,4 asc limit ?";
@@ -457,15 +463,17 @@ public class CustomReportService {
         String dimension = "coalesce(nullif(btrim(" + DIMENSIONS.get(request.dimension()) + "),''),'Unknown')";
         String secondaryDimension =
                 "coalesce(nullif(btrim(" + DIMENSIONS.get(request.secondaryDimension()) + "),''),'Unknown')";
-        String sql = "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.client_session_id,s.started_at,"
-                + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
-                + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
-                + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
-                + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
-                + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
-                + filter.expression() + ")) select " + dimension + " dimension_value," + secondaryDimension
-                + " secondary_dimension_value," + metric + " metric_value from matching_sessions s group by 1,2 "
-                + "order by 3 desc,1 asc,2 asc limit ?";
+        String sql =
+                "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,s.client_session_id,s.started_at,"
+                        + "s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,"
+                        + "s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,s.initial_referrer_host,"
+                        + "s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,"
+                        + "s.browser,s.operating_system,s.device_type,s.language,s.country_code,s.region_code,s.region_name,s.city "
+                        + "from analytics_session s where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+                        + filter.expression() + ")) select " + dimension + " dimension_value," + secondaryDimension
+                        + " secondary_dimension_value," + metric
+                        + " metric_value from matching_sessions s group by 1,2 "
+                        + "order by 3 desc,1 asc,2 asc limit ?";
         List<Row> rows = new ArrayList<>();
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -508,12 +516,13 @@ public class CustomReportService {
         boolean containsEventType = EVENT_DIMENSIONS.contains(request.dimension())
                 || EVENT_DIMENSIONS.contains(request.secondaryDimension());
         String sql = customDimensionSessionsCte(filter)
-                + ", event_dimension_pairs as (select s.id session_id,s.visitor_id,s.page_view_count,s.duration_ms,"
+                + ", event_dimension_pairs as (select s.id session_id,s.visitor_id,s.identity_key,s.page_view_count,s.duration_ms,"
                 + "s.is_bounce," + first + " dimension_value," + second + " secondary_dimension_value,"
                 + "count(*)::integer event_count from matching_sessions s join raw_event e on "
                 + eventScope("e", "s") + propertyJoins + " where " + eventBusinessDate("e") + " between ? and ?"
                 + (containsEventType ? " and e.event_type<>'web_vital'" : "")
-                + " group by s.id,s.visitor_id,s.page_view_count,s.duration_ms,s.is_bounce," + first + "," + second
+                + " group by s.id,s.visitor_id,s.identity_key,s.page_view_count,s.duration_ms,s.is_bounce," + first
+                + "," + second
                 + ") "
                 + "select s.dimension_value,s.secondary_dimension_value," + metric
                 + " metric_value from event_dimension_pairs s group by s.dimension_value,s.secondary_dimension_value "
@@ -580,11 +589,11 @@ public class CustomReportService {
             Query request,
             String metric) {
         String sql = customDimensionSessionsCte(filter)
-                + ", event_type_sessions as (select e.event_type,s.id session_id,s.visitor_id,s.page_view_count,"
+                + ", event_type_sessions as (select e.event_type,s.id session_id,s.visitor_id,s.identity_key,s.page_view_count,"
                 + "s.duration_ms,s.is_bounce,count(*)::integer event_count "
                 + "from matching_sessions s join raw_event e on " + eventScope("e", "s")
                 + " where e.event_type<>'web_vital' and " + eventBusinessDate("e") + " between ? and ? "
-                + "group by e.event_type,s.id,s.visitor_id,s.page_view_count,s.duration_ms,s.is_bounce) "
+                + "group by e.event_type,s.id,s.visitor_id,s.identity_key,s.page_view_count,s.duration_ms,s.is_bounce) "
                 + "select s.event_type dimension_value," + metric + " metric_value from event_type_sessions s "
                 + "group by s.event_type order by 2 desc,1 asc limit ?";
         List<Row> rows = new ArrayList<>();
@@ -686,7 +695,7 @@ public class CustomReportService {
     }
 
     private static String customDimensionSessionsCte(SegmentService.SessionFilter filter) {
-        return "with matching_sessions as (select s.id,s.site_id,s.visitor_id,v.client_visitor_id,"
+        return "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,v.client_visitor_id,"
                 + "s.client_session_id,s.started_at,s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,"
                 + "s.is_bounce,s.visitor_type,s.entry_page,s.exit_page,s.entry_page_title,s.exit_page_title,"
                 + "s.initial_referrer_host,s.initial_page_host,s.initial_utm_source,s.initial_utm_medium,"

@@ -26,9 +26,16 @@ public class FormAnalyticsService {
                 """
                 with form_events as (
                   select coalesce(nullif(e.event_data->'data'->>'formId',''), nullif(e.event_data->>'name','')) form_id,
-                    coalesce(e.page_path,'/') page_path,e.client_visitor_id visitor_id,e.client_session_id session_id,
+                    coalesce(e.page_path,'/') page_path,coalesce(s.identity_key,'browser:'||e.client_visitor_id) identity_key,
+                    e.client_session_id session_id,
                     e.event_type,e.duration_ms
-                  from raw_event e
+                  from raw_event e left join analytics_visitor v on v.site_id=e.site_id
+                    and v.client_visitor_id=e.client_visitor_id
+                  left join analytics_session s on s.site_id=e.site_id and s.visitor_id=v.id
+                    and s.client_session_id=e.client_session_id
+                    and (case when e.occurred_at < e.received_at - interval '24 hours'
+                      or e.occurred_at > e.received_at + interval '24 hours'
+                      then e.received_at else e.occurred_at end) between s.started_at and s.last_activity_at
                   where e.site_id=? and e.event_type in ('form_view','form_start','form_field','form_field_time',
                     'form_error','form_submit','form_success','form_failure')
                     and e.client_visitor_id is not null and e.client_session_id is not null
@@ -36,13 +43,13 @@ public class FormAnalyticsService {
                     and coalesce(nullif(e.event_data->'data'->>'formId',''), nullif(e.event_data->>'name',''))
                       ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
                 ), session_forms as (
-                  select form_id,page_path,visitor_id,session_id,
+                  select form_id,page_path,identity_key,session_id,
                     bool_or(event_type='form_view') viewed,bool_or(event_type='form_start') started,
                     bool_or(event_type='form_submit') submitted,bool_or(event_type='form_success') successful,
                     bool_or(event_type='form_failure') failed,
                     count(*) filter(where event_type='form_field')::bigint field_interactions,
                     count(*) filter(where event_type='form_error')::bigint validation_errors
-                  from form_events group by form_id,page_path,visitor_id,session_id
+                  from form_events group by form_id,page_path,identity_key,session_id
                 ), field_times as (
                   select form_id,page_path,avg(duration_ms)::bigint avg_field_time_ms
                   from form_events where event_type='form_field_time' and duration_ms is not null
@@ -56,7 +63,7 @@ public class FormAnalyticsService {
                     count(*) filter(where successful)::bigint successes,
                     count(*) filter(where failed)::bigint failures,
                     count(*) filter(where started and not submitted and not successful and not failed)::bigint abandonments,
-                    count(distinct visitor_id)::bigint unique_visitors
+                    count(distinct identity_key)::bigint unique_visitors
                   from session_forms group by form_id,page_path
                 )
                 select r.form_id,r.page_path,r.views,r.starts,r.field_interactions,r.validation_errors,r.submits,

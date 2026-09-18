@@ -137,13 +137,19 @@ public class CustomDimensionService {
             dimension = get(connection, siteId, dimensionId);
             if (!dimension.enabled()) return List.of();
             if (segmentId != null) return segmentedReport(siteId, site, dimension, range, requestedLimit, segmentId);
-            String sql =
-                    "select dimension_value.value,count(*),count(distinct e.client_session_id),count(distinct e.client_visitor_id) "
-                            + "from raw_event e cross join lateral (select e.event_data #>> ARRAY['data',cast(? as text)] as value, "
-                            + "e.event_data #> ARRAY['data',cast(? as text)] as raw_value) dimension_value "
-                            + "where e.site_id=? and e.occurred_at>=? and e.occurred_at<? "
-                            + "and jsonb_typeof(dimension_value.raw_value) in ('string','number','boolean') "
-                            + "group by dimension_value.value order by count(*) desc,dimension_value.value asc limit ?";
+            String eventTime = "(case when e.occurred_at < e.received_at - interval '24 hours' "
+                    + "or e.occurred_at > e.received_at + interval '24 hours' then e.received_at else e.occurred_at end)";
+            String sql = "select dimension_value.value,count(*),count(distinct e.client_session_id),"
+                    + "count(distinct coalesce(s.identity_key,'browser:'||e.client_visitor_id)) "
+                    + "from raw_event e cross join lateral (select e.event_data #>> ARRAY['data',cast(? as text)] as value, "
+                    + "e.event_data #> ARRAY['data',cast(? as text)] as raw_value) dimension_value "
+                    + "left join analytics_visitor v on v.site_id=e.site_id and v.client_visitor_id=e.client_visitor_id "
+                    + "left join analytics_session s on s.site_id=e.site_id and s.visitor_id=v.id "
+                    + "and s.client_session_id=e.client_session_id and " + eventTime
+                    + " between s.started_at and s.last_activity_at "
+                    + "where e.site_id=? and " + eventTime + ">=? and " + eventTime + "<? "
+                    + "and jsonb_typeof(dimension_value.raw_value) in ('string','number','boolean') "
+                    + "group by dimension_value.value order by count(*) desc,dimension_value.value asc limit ?";
             List<Value> result = new ArrayList<>();
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 statement.setString(1, dimension.key());
@@ -178,12 +184,12 @@ public class CustomDimensionService {
         String eventTime = "(case when e.occurred_at < e.received_at - interval '24 hours' "
                 + "or e.occurred_at > e.received_at + interval '24 hours' then e.received_at else e.occurred_at end)";
         String sql =
-                "with matching_sessions as (select s.id,s.site_id,s.visitor_id,v.client_visitor_id,s.client_session_id,"
+                "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,v.client_visitor_id,s.client_session_id,"
                         + "s.started_at,s.last_activity_at from analytics_session s "
                         + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
                         + "where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
                         + filter.expression() + ")) "
-                        + "select dimension_value.value,count(*),count(distinct ms.id),count(distinct ms.visitor_id) "
+                        + "select dimension_value.value,count(*),count(distinct ms.id),count(distinct ms.identity_key) "
                         + "from matching_sessions ms join raw_event e on e.site_id=ms.site_id "
                         + "and e.client_session_id=ms.client_session_id and e.client_visitor_id=ms.client_visitor_id "
                         + "and " + eventTime + " between ms.started_at and ms.last_activity_at "

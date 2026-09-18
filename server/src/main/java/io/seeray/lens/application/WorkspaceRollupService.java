@@ -132,7 +132,7 @@ public class WorkspaceRollupService {
     private static void loadSiteVisitors(
             Connection connection, List<UUID> ids, LocalDate from, LocalDate to, Map<UUID, MutableSiteMetric> metrics)
             throws SQLException {
-        String sql = "select site_id,count(distinct visitor_id) from visitor_day_fact where site_id in ("
+        String sql = "select site_id,count(distinct identity_key) from visitor_identity_day_fact where site_id in ("
                 + placeholders(ids.size()) + ") and business_date between ? and ? group by site_id";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             bindScope(statement, ids, from, to);
@@ -168,7 +168,7 @@ public class WorkspaceRollupService {
             Connection connection, List<UUID> ids, LocalDate from, LocalDate to, Map<LocalDate, MutableDaily> daily)
             throws SQLException {
         String sql = "select business_date,sum(site_visitors) from (select business_date,site_id,"
-                + "count(distinct visitor_id) site_visitors from visitor_day_fact where site_id in ("
+                + "count(distinct identity_key) site_visitors from visitor_identity_day_fact where site_id in ("
                 + placeholders(ids.size())
                 + ") and business_date between ? and ? group by business_date,site_id) visitors "
                 + "group by business_date";

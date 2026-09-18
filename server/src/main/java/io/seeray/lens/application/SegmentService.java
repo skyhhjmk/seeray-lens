@@ -159,7 +159,7 @@ public class SegmentService {
             long bounced;
             long duration;
             try (PreparedStatement statement = connection.prepareStatement(cte
-                    + " select count(*),count(distinct visitor_id),(select count(*) from matching_sessions m "
+                    + " select count(*),count(distinct identity_key),(select count(*) from matching_sessions m "
                     + "join raw_event e on " + eventSessionScope("e", "m")
                     + " where e.event_type='page_view' and (" + EVENT_TIME + " at time zone ?)::date between ? and ?),"
                     + "count(*) filter(where is_bounce),coalesce(sum(duration_ms),0) from matching_sessions")) {
@@ -300,7 +300,7 @@ public class SegmentService {
     }
 
     private String matchingSessions(Criteria criteria) {
-        return "with matching_sessions as (select s.id,s.site_id,s.visitor_id,v.client_visitor_id,s.client_session_id,s.started_at,s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,s.entry_page,s.exit_page,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,s.initial_referrer_host,s.initial_page_host from analytics_session s join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+        return "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,v.client_visitor_id,s.client_session_id,s.started_at,s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,s.entry_page,s.exit_page,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,s.initial_referrer_host,s.initial_page_host from analytics_session s join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
                 + criteria.expression() + "))";
     }
 

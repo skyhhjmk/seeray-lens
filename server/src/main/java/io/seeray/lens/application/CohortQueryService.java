@@ -133,9 +133,9 @@ public class CohortQueryService {
             String conversionBucket = periodBucket(GOAL_EVENT_TIMESTAMP, period, periodDays, periodAnchor);
             String conversionIndex = periodIndex("a.activity_period", "a.cohort_period", period, periodDays);
             String selectedGoalFilter = "goal_conversions".equals(metric) ? "and g.id=? " : "";
-            goalActivityCtes = "goal_events as (select c.cohort_period,c.visitor_id," + conversionBucket
+            goalActivityCtes = "goal_events as (select c.cohort_period,c.identity_key," + conversionBucket
                     + " activity_period,g.fixed_value from cohort_members c "
-                    + "join analytics_session s on s.site_id=? and s.visitor_id=c.visitor_id "
+                    + "join analytics_session s on s.site_id=? and s.identity_key=c.identity_key "
                     + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
                     + "join goal_definition g on g.site_id=s.site_id " + selectedGoalFilter + "and g.enabled "
                     + "join raw_event e on e.site_id=s.site_id and e.client_session_id=s.client_session_id "
@@ -144,7 +144,7 @@ public class CohortQueryService {
                     + " and " + GOAL_EVENT_TIMESTAMP + ">=c.cohort_at "
                     + "and (" + GOAL_EVENT_TIMESTAMP + " at time zone ?)::date<=?),"
                     + " goal_activity as (select a.cohort_period," + conversionIndex
-                    + " period_index,count(*)::bigint goal_conversions,count(distinct a.visitor_id)::bigint "
+                    + " period_index,count(*)::bigint goal_conversions,count(distinct a.identity_key)::bigint "
                     + "goal_converted_visitors,coalesce(sum(a.fixed_value),0)::numeric goal_value "
                     + "from goal_events a where a.activity_period>=a.cohort_period "
                     + "group by a.cohort_period,period_index)";
@@ -156,9 +156,9 @@ public class CohortQueryService {
         if ("visits".equals(metric)) {
             String visitBucket = periodBucket("s.started_at", period, periodDays, periodAnchor);
             String visitIndex = periodIndex("a.activity_period", "a.cohort_period", period, periodDays);
-            visitActivityCtes = "visit_events as (select c.cohort_period,c.visitor_id,s.id session_id," + visitBucket
+            visitActivityCtes = "visit_events as (select c.cohort_period,c.identity_key,s.id session_id," + visitBucket
                     + " activity_period from cohort_members c join eligible_sessions s "
-                    + "on s.visitor_id=c.visitor_id and s.started_at>=c.cohort_at "
+                    + "on s.identity_key=c.identity_key and s.started_at>=c.cohort_at "
                     + "where (s.started_at at time zone ?)::date<=?),"
                     + " visit_activity as (select a.cohort_period," + visitIndex
                     + " period_index,count(distinct a.session_id)::bigint visits from visit_events a "
@@ -188,20 +188,20 @@ public class CohortQueryService {
                 + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
                 + "where s.site_id=? and " + MEANINGFUL_ACTIVITY + "),"
                 + cohortCandidates
-                + " ranked_sessions as (select e.*,row_number() over(partition by visitor_id order by cohort_at,id) first_rank "
+                + " ranked_sessions as (select e.*,row_number() over(partition by identity_key order by cohort_at,id) first_rank "
                 + "from cohort_candidates e),"
-                + " cohort_members as (select s.visitor_id,s.cohort_at," + cohortBucket + " cohort_period "
+                + " cohort_members as (select s.identity_key,s.cohort_at," + cohortBucket + " cohort_period "
                 + "from ranked_sessions s where s.first_rank=1 and "
                 + "(s.cohort_at at time zone ?)::date between ? and ? and (" + filter.expression() + ")),"
-                + " cohort_sizes as (select cohort_period,count(distinct visitor_id)::bigint cohort_size "
+                + " cohort_sizes as (select cohort_period,count(distinct identity_key)::bigint cohort_size "
                 + "from cohort_members group by cohort_period),"
                 + goalActivityCtes + ","
                 + visitActivityCtes + ","
-                + " activity_periods as (select distinct s.visitor_id," + activityBucket + " activity_period "
+                + " activity_periods as (select distinct s.identity_key," + activityBucket + " activity_period "
                 + "from eligible_sessions s where (s.started_at at time zone ?)::date<=?),"
                 + " retained as (select c.cohort_period," + retentionIndex + " period_index,"
-                + "count(distinct c.visitor_id)::bigint retained_visitors from cohort_members c "
-                + "join activity_periods a on a.visitor_id=c.visitor_id and a.activity_period>=c.cohort_period "
+                + "count(distinct c.identity_key)::bigint retained_visitors from cohort_members c "
+                + "join activity_periods a on a.identity_key=c.identity_key and a.activity_period>=c.cohort_period "
                 + "group by c.cohort_period,period_index),"
                 + " ages as (select generate_series(0,?-1)::int period_index),"
                 + " cells as (select s.cohort_period,a.period_index,s.cohort_size,"

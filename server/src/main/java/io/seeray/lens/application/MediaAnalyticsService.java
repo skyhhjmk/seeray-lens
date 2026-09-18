@@ -27,13 +27,20 @@ public class MediaAnalyticsService {
                 with media_events as (
                   select coalesce(nullif(e.event_data->'data'->>'mediaId',''), nullif(e.event_data->>'name','')) media_id,
                     coalesce(nullif(e.event_data->'data'->>'mediaType',''),'video') media_type,
-                    coalesce(e.page_path,'/') page_path,e.client_visitor_id visitor_id,e.client_session_id session_id,
+                    coalesce(e.page_path,'/') page_path,coalesce(s.identity_key,'browser:'||e.client_visitor_id) identity_key,
+                    e.client_session_id session_id,
                     e.event_type,
                     case when e.event_data->'data'->>'progressPercent' in ('25','50','75','90')
                       then (e.event_data->'data'->>'progressPercent')::integer end progress_percent,
                     case when e.event_data->'data'->>'mediaDurationSeconds' ~ '^[0-9]{1,6}$'
                       then (e.event_data->'data'->>'mediaDurationSeconds')::integer end duration_seconds
-                  from raw_event e
+                  from raw_event e left join analytics_visitor v on v.site_id=e.site_id
+                    and v.client_visitor_id=e.client_visitor_id
+                  left join analytics_session s on s.site_id=e.site_id and s.visitor_id=v.id
+                    and s.client_session_id=e.client_session_id
+                    and (case when e.occurred_at < e.received_at - interval '24 hours'
+                      or e.occurred_at > e.received_at + interval '24 hours'
+                      then e.received_at else e.occurred_at end) between s.started_at and s.last_activity_at
                   where e.site_id=? and e.event_type in ('media_start','media_progress','media_complete')
                     and e.client_visitor_id is not null and e.client_session_id is not null
                     and (e.occurred_at at time zone ?)::date between ? and ?
@@ -41,14 +48,14 @@ public class MediaAnalyticsService {
                       ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
                     and coalesce(nullif(e.event_data->'data'->>'mediaType',''),'video') in ('audio','video')
                 ), session_media as (
-                  select media_id,media_type,page_path,visitor_id,session_id,
+                  select media_id,media_type,page_path,identity_key,session_id,
                     bool_or(event_type='media_start') started,
                     bool_or(event_type='media_complete') completed,
                     bool_or(event_type='media_progress' and progress_percent=25) reached_25,
                     bool_or(event_type='media_progress' and progress_percent=50) reached_50,
                     bool_or(event_type='media_progress' and progress_percent=75) reached_75,
                     bool_or(event_type='media_progress' and progress_percent=90) reached_90
-                  from media_events group by media_id,media_type,page_path,visitor_id,session_id
+                  from media_events group by media_id,media_type,page_path,identity_key,session_id
                 ), media_lengths as (
                   select media_id,media_type,page_path,avg(duration_seconds)::integer average_duration_seconds
                   from media_events where event_type='media_complete' and duration_seconds is not null
@@ -62,7 +69,7 @@ public class MediaAnalyticsService {
                     count(*) filter(where started and reached_90)::bigint reached_90,
                     count(*) filter(where started and completed)::bigint completions,
                     count(*) filter(where started and not completed)::bigint incomplete_sessions,
-                    count(distinct visitor_id) filter(where started)::bigint unique_visitors
+                    count(distinct identity_key) filter(where started)::bigint unique_visitors
                   from session_media group by media_id,media_type,page_path
                 )
                 select r.media_id,r.media_type,r.page_path,r.starts,r.reached_25,r.reached_50,r.reached_75,

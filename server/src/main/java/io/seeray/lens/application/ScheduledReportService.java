@@ -260,7 +260,7 @@ public class ScheduledReportService {
             }
             try (Connection connection = dataSource.getConnection();
                     PreparedStatement statement = connection.prepareStatement(
-                            "select count(distinct visitor_id) from visitor_day_fact where site_id=? and business_date between ? and ?")) {
+                            "select count(distinct identity_key) from visitor_identity_day_fact where site_id=? and business_date between ? and ?")) {
                 statement.setObject(1, siteId);
                 statement.setObject(2, period.from());
                 statement.setObject(3, period.to());

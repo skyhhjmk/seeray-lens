@@ -64,8 +64,10 @@ public class AnalyticsFactBuilder {
             deleteOverlappingSessions(c, siteId, from, to);
             Map<String, UUID> visitorIds = ensureVisitors(c, siteId, affected);
             insertSessions(c, siteId, affected, visitorIds, from, to);
+            refreshIdentityKeys(c, siteId, visitorIds.values());
             refreshVisitorStats(c, siteId, visitorIds.values());
             insertVisitorDays(c, siteId, visitors.values(), visitorIds);
+            refreshIdentityDays(c, siteId, zone.getId(), visitorIds.values());
         } catch (SQLException e) {
             throw new IllegalStateException("Could not rebuild analytics facts", e);
         }
@@ -170,7 +172,7 @@ public class AnalyticsFactBuilder {
             throws SQLException {
         Set<UUID> visitorsWithInsertedSessions = new HashSet<>();
         try (PreparedStatement p = c.prepareStatement(
-                "insert into analytics_session(id,site_id,visitor_id,client_session_id,started_at,last_activity_at,ended_at,entry_page,exit_page,page_view_count,event_count,duration_ms,is_bounce,visitor_type,initial_referrer_host,initial_page_host,initial_utm_source,initial_utm_medium,initial_utm_campaign,browser,browser_version,operating_system,operating_system_version,device_type,language,screen_width,screen_height,viewport_width,viewport_height,pixel_ratio,entry_page_title,exit_page_title,country_code,continent_code,region_code,region_name,city,geo_timezone,initial_utm_term,initial_utm_content,user_id_hash,user_id_conflict) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                "insert into analytics_session(id,site_id,visitor_id,client_session_id,started_at,last_activity_at,ended_at,entry_page,exit_page,page_view_count,event_count,duration_ms,is_bounce,visitor_type,initial_referrer_host,initial_page_host,initial_utm_source,initial_utm_medium,initial_utm_campaign,browser,browser_version,operating_system,operating_system_version,device_type,language,screen_width,screen_height,viewport_width,viewport_height,pixel_ratio,entry_page_title,exit_page_title,country_code,continent_code,region_code,region_name,city,geo_timezone,initial_utm_term,initial_utm_content,user_id_hash,user_id_conflict,identity_key) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             for (VisitorAcc v : values)
                 for (SessionAcc s : v.sessions) {
                     if (!s.startedAt.isBefore(to) || s.lastActivity.isBefore(from)) continue;
@@ -219,6 +221,7 @@ public class AnalyticsFactBuilder {
                     p.setString(40, s.utmContent);
                     p.setString(41, s.userIdHash);
                     p.setBoolean(42, s.conflictingUserIds);
+                    p.setString(43, s.userIdHash == null ? "browser:" + v.clientId : "user:" + s.userIdHash);
                     p.addBatch();
                     visitorsWithInsertedSessions.add(visitorId);
                 }
@@ -246,6 +249,88 @@ public class AnalyticsFactBuilder {
             p.setObject(1, site);
             p.setArray(2, c.createArrayOf("uuid", ids.toArray()));
             p.executeUpdate();
+        }
+    }
+
+    private static void refreshIdentityKeys(Connection connection, UUID siteId, Collection<UUID> visitorIds)
+            throws SQLException {
+        Set<String> affectedIdentityKeys = new HashSet<>();
+        for (UUID visitorId : visitorIds) {
+            collectIdentityKeys(connection, siteId, visitorId, affectedIdentityKeys);
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "with browser_identity as (select count(distinct user_id_hash) identity_count,"
+                            + "min(user_id_hash) user_id_hash,coalesce(bool_or(user_id_conflict),false) has_conflict "
+                            + "from analytics_session where site_id=? and visitor_id=?) "
+                            + "update analytics_session s set identity_key=case "
+                            + "when s.user_id_hash is not null then 'user:'||s.user_id_hash "
+                            + "when b.identity_count=1 and not b.has_conflict then 'user:'||b.user_id_hash "
+                            + "else 'browser:'||v.client_visitor_id end "
+                            + "from browser_identity b,analytics_visitor v "
+                            + "where s.site_id=? and s.visitor_id=? and v.id=s.visitor_id and v.site_id=s.site_id")) {
+                statement.setObject(1, siteId);
+                statement.setObject(2, visitorId);
+                statement.setObject(3, siteId);
+                statement.setObject(4, visitorId);
+                statement.executeUpdate();
+            }
+            collectIdentityKeys(connection, siteId, visitorId, affectedIdentityKeys);
+        }
+        try (PreparedStatement statement = connection.prepareStatement(
+                "with ranked_sessions as (select id,row_number() over(partition by identity_key order by started_at,id) identity_rank "
+                        + "from analytics_session where site_id=? and identity_key=?) "
+                        + "update analytics_session s set visitor_type=case when r.identity_rank=1 then 'new' else 'returning' end "
+                        + "from ranked_sessions r where s.id=r.id")) {
+            for (String identityKey : affectedIdentityKeys) {
+                statement.setObject(1, siteId);
+                statement.setString(2, identityKey);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private static void collectIdentityKeys(
+            Connection connection, UUID siteId, UUID visitorId, Set<String> identityKeys) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "select distinct identity_key from analytics_session where site_id=? and visitor_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, visitorId);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    String identityKey = rows.getString(1);
+                    if (identityKey != null) identityKeys.add(identityKey);
+                }
+            }
+        }
+    }
+
+    private static void refreshIdentityDays(
+            Connection connection, UUID siteId, String timezone, Collection<UUID> visitorIds) throws SQLException {
+        if (visitorIds.isEmpty()) return;
+        java.sql.Array ids = connection.createArrayOf("uuid", visitorIds.toArray());
+        try {
+            try (PreparedStatement delete = connection.prepareStatement(
+                    "delete from visitor_identity_day_fact where site_id=? and visitor_id=any (?)")) {
+                delete.setObject(1, siteId);
+                delete.setArray(2, ids);
+                delete.executeUpdate();
+            }
+            try (PreparedStatement insert = connection.prepareStatement(
+                    "insert into visitor_identity_day_fact(site_id,business_date,identity_key,visitor_id) "
+                            + "select distinct d.site_id,d.business_date,coalesce(s.identity_key,'browser:'||v.client_visitor_id),d.visitor_id "
+                            + "from visitor_day_fact d join analytics_visitor v on v.id=d.visitor_id and v.site_id=d.site_id "
+                            + "left join analytics_session s on s.site_id=d.site_id and s.visitor_id=d.visitor_id "
+                            + "and d.business_date between (s.started_at at time zone ?)::date "
+                            + "and (s.last_activity_at at time zone ?)::date "
+                            + "where d.site_id=? and d.visitor_id=any (?) on conflict do nothing")) {
+                insert.setString(1, timezone);
+                insert.setString(2, timezone);
+                insert.setObject(3, siteId);
+                insert.setArray(4, ids);
+                insert.executeUpdate();
+            }
+        } finally {
+            ids.free();
         }
     }
 

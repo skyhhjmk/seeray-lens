@@ -626,19 +626,28 @@ class ControlPlaneResourceTest {
                 .body("sourceConfigured", is(true))
                 .body("rows.find { it.level == 'country' }.label", is("United States"))
                 .body("rows.find { it.level == 'city' }.label", is("San Francisco · California · United States"));
+        insertRawWithIdentity(
+                siteUuid,
+                "00000000-0000-4000-8000-000000000003",
+                "00000000-0000-4000-8000-000000000004",
+                Instant.now(),
+                io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "opaque-user-01"),
+                "/mobile");
         given().header("Authorization", "Bearer " + tokens.access())
                 .get("/api/v1/sites/" + site.path("id") + "/analytics/realtime?windowMinutes=30&limit=100")
                 .then()
                 .statusCode(200)
-                .body("size()", is(1))
-                .body("[0].visitorId", is("00000000-0000-4000-8000-000000000001"))
-                .body("[0].currentTitle", is("Order confirmation"))
-                .body("[0].pageViews", is(1))
-                .body("[0].countryCode", is("US"))
-                .body("[0].city", is("San Francisco"))
-                .body("[0].actions[0].eventType", is("page_view"))
-                .body("[0].actions[0].path", is("/order"))
-                .body("[0].actions[0].at", notNullValue());
+                .body("size()", is(2))
+                .body("uniqueIdentity.sum { it ? 1 : 0 }", is(1))
+                .body("[1].visitorId", is("00000000-0000-4000-8000-000000000001"))
+                .body("[1].currentTitle", is("Order confirmation"))
+                .body("[1].pageViews", is(1))
+                .body("[1].countryCode", is("US"))
+                .body("[1].city", is("San Francisco"))
+                .body("[1].actions[0].eventType", is("page_view"))
+                .body("[1].actions[0].path", is("/order"))
+                .body("[1].actions[0].at", notNullValue())
+                .body("toString()", not(containsString("userIdHash")));
         given().header("Authorization", "Bearer " + tokens.access())
                 .get("/api/v1/sites/" + site.path("id") + "/analytics/page-titles?from=" + today + "&to=" + today)
                 .then()
@@ -3584,6 +3593,145 @@ class ControlPlaneResourceTest {
                 .body("linkedBrowserCount", is(1))
                 .body("lifetimeSessions", is(1))
                 .body("rangeSessions", is(1));
+    }
+
+    @Test
+    void authenticatedIdentityUnifiesCoreReportsSegmentsCustomReportsAndCohorts() throws Exception {
+        Tokens owner = register("identity-reports" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Identity reports\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+
+        UUID siteId = UUID.fromString(site);
+        LocalDate cohortWeek = LocalDate.now(ZoneId.of("UTC"))
+                .minusWeeks(12)
+                .with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+        Instant start = cohortWeek.plusDays(1).atTime(12, 0).toInstant(java.time.ZoneOffset.UTC);
+        String firstBrowser = UUID.randomUUID().toString();
+        String secondBrowser = UUID.randomUUID().toString();
+        String thirdBrowser = UUID.randomUUID().toString();
+        String ambiguousBrowser = UUID.randomUUID().toString();
+        String accountHash = io.seeray.lens.application.TrackingIdentityHasher.hash(siteId, "opaque-cross-device-user");
+        String accountAHash = io.seeray.lens.application.TrackingIdentityHasher.hash(siteId, "opaque-account-a");
+        String accountBHash = io.seeray.lens.application.TrackingIdentityHasher.hash(siteId, "opaque-account-b");
+        insertRaw(siteId, firstBrowser, "identity-legacy-session", "page_view", start, "/identity/first");
+        insertRawWithIdentity(
+                siteId,
+                firstBrowser,
+                "identity-login-session",
+                start.plusSeconds(86400),
+                accountHash,
+                "/identity/login");
+        insertRawWithIdentity(
+                siteId,
+                secondBrowser,
+                "identity-mobile-session",
+                start.plusSeconds(8 * 86400L),
+                accountHash,
+                "/identity/mobile");
+        insertRawWithIdentity(
+                siteId,
+                thirdBrowser,
+                "identity-tablet-session",
+                start.plusSeconds(9 * 86400L),
+                accountHash,
+                "/identity/tablet");
+        insertRaw(
+                siteId,
+                ambiguousBrowser,
+                "identity-ambiguous-anonymous",
+                "page_view",
+                start.plusSeconds(2 * 86400L),
+                "/identity/anonymous");
+        insertRawWithIdentity(
+                siteId,
+                ambiguousBrowser,
+                "identity-account-a-session",
+                start.plusSeconds(3 * 86400L),
+                accountAHash,
+                "/identity/account-a");
+        insertRawWithIdentity(
+                siteId,
+                ambiguousBrowser,
+                "identity-account-b-session",
+                start.plusSeconds(4 * 86400L),
+                accountBHash,
+                "/identity/account-b");
+        factBuilder.rebuild(
+                siteId,
+                cohortWeek.atStartOfDay(ZoneId.of("UTC")).toInstant(),
+                cohortWeek.plusDays(11).atStartOfDay(ZoneId.of("UTC")).toInstant());
+        aggregation.rebuild(siteId, cohortWeek, cohortWeek.plusDays(10));
+
+        String analytics = "/api/v1/sites/" + site + "/analytics";
+        String range = "?from=" + cohortWeek + "&to=" + cohortWeek.plusDays(10);
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(analytics + "/overview" + range)
+                .then()
+                .statusCode(200)
+                .body("uniqueVisitors", is(4))
+                .body("sessions", is(7));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(analytics + "/visitors" + range)
+                .then()
+                .statusCode(200)
+                .body("uniqueVisitors", is(4))
+                .body("newSessions", is(4))
+                .body("returningSessions", is(3));
+        var timeSeries = given().header("Authorization", "Bearer " + owner.access())
+                .get(analytics + "/timeseries" + range)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList("uniqueVisitors", Integer.class);
+        assertEquals(7, timeSeries.stream().mapToInt(Integer::intValue).sum());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Cross-device visitors\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"entry_page\",\"operator\":\"contains\",\"value\":\"/identity/\"}]}")
+                .post("/api/v1/sites/" + site + "/segments/preview" + range)
+                .then()
+                .statusCode(200)
+                .body("sessions", is(7))
+                .body("visitors", is(4));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"dimension\":\"event_type\",\"metric\":\"unique_visitors\","
+                        + "\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post(analytics + "/custom-report/query" + range)
+                .then()
+                .statusCode(200)
+                .body("rows.size()", is(1))
+                .body("rows[0].dimensionValue", is("page_view"))
+                .body("rows[0].metricValue", is(4.0f));
+
+        List<java.util.Map<String, Object>> cohortCells = given().header("Authorization", "Bearer " + owner.access())
+                .get(analytics + "/cohorts" + range + "&period=week&periods=4")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var weekZero = cohortCells.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(4, weekZero.get("cohortSize"));
+        var weekOne = cohortCells.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(1, weekOne.get("retainedVisitors"));
     }
 
     @Test

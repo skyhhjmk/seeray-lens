@@ -318,7 +318,7 @@ public class AnalyticsAlertService {
         if ("visitors".equals(metric)) {
             try (Connection connection = dataSource.getConnection();
                     PreparedStatement statement = connection.prepareStatement(
-                            "select count(distinct visitor_id) from visitor_day_fact where site_id=? and business_date=?")) {
+                            "select count(distinct identity_key) from visitor_identity_day_fact where site_id=? and business_date=?")) {
                 statement.setObject(1, siteId);
                 statement.setObject(2, date);
                 try (ResultSet result = statement.executeQuery()) {
