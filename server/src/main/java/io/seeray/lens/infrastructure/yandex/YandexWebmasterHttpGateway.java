@@ -69,10 +69,7 @@ public class YandexWebmasterHttpGateway implements YandexWebmasterGateway {
             String deviceType,
             int offset,
             int limit) {
-        String url = API_ROOT + "/user/" + encodePath(userId) + "/hosts/" + encodePath(hostId)
-                + "/search-queries/popular?order_by=TOTAL_SHOWS&device_type_indicator=" + encode(deviceType)
-                + "&date_from=" + encode(from.toString()) + "&date_to=" + encode(to.toString())
-                + "&offset=" + offset + "&limit=" + limit;
+        String url = popularQueriesUrl(userId, hostId, from, to, deviceType, offset, limit);
         Map<String, Object> response = get(oauthToken, url);
         List<YandexWebmasterGateway.SearchQuery> queries = new ArrayList<>();
         if (response.get("queries") instanceof List<?> values) {
@@ -89,6 +86,16 @@ public class YandexWebmasterHttpGateway implements YandexWebmasterGateway {
             }
         }
         return new QueryPage(List.copyOf(queries), integer(response.get("count")));
+    }
+
+    static String popularQueriesUrl(
+            String userId, String hostId, LocalDate from, LocalDate to, String deviceType, int offset, int limit) {
+        return API_ROOT + "/user/" + encodePath(userId) + "/hosts/" + encodePath(hostId)
+                + "/search-queries/popular?order_by=TOTAL_SHOWS&query_indicator=TOTAL_SHOWS"
+                + "&query_indicator=TOTAL_CLICKS&query_indicator=AVG_SHOW_POSITION"
+                + "&device_type_indicator=" + encode(deviceType)
+                + "&date_from=" + encode(from.toString()) + "&date_to=" + encode(to.toString())
+                + "&offset=" + offset + "&limit=" + limit;
     }
 
     private Map<String, Object> get(String oauthToken, String url) {
