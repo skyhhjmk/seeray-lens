@@ -57,8 +57,30 @@ class WorkspacePage extends ConsumerWidget {
               (workspace) => Card(
                 child: ListTile(
                   title: Text(workspace.name),
-                  subtitle: Text(workspace.role),
-                  trailing: const Icon(Icons.chevron_right),
+                  subtitle: Text(_workspaceRole(context, workspace.role)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (workspace.role == 'owner' ||
+                          workspace.role == 'admin')
+                        IconButton(
+                          tooltip: context.tr(
+                            workspace.role == 'owner'
+                                ? 'Manage members'
+                                : 'View members',
+                            workspace.role == 'owner' ? '管理成员' : '查看成员',
+                          ),
+                          onPressed: () {
+                            ref
+                                .read(workspaceProvider.notifier)
+                                .select(workspace);
+                            context.go('/workspaces/${workspace.id}/members');
+                          },
+                          icon: const Icon(Icons.group_outlined),
+                        ),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
                   onTap: () {
                     ref.read(workspaceProvider.notifier).select(workspace);
                     context.go('/sites');
@@ -90,6 +112,12 @@ class WorkspacePage extends ConsumerWidget {
     }
   }
 }
+
+String _workspaceRole(BuildContext context, String role) => switch (role) {
+  'owner' => context.tr('Owner', '所有者'),
+  'admin' => context.tr('Admin', '管理员'),
+  _ => context.tr('Viewer', '只读成员'),
+};
 
 class _CreateWorkspaceDialog extends StatefulWidget {
   const _CreateWorkspaceDialog();

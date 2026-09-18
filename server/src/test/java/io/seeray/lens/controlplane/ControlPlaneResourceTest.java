@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -277,6 +278,106 @@ class ControlPlaneResourceTest {
                 .body("name", is("Product team"))
                 .body("role", is("owner"));
         workspace(tokens.access()).statusCode(200).body("size()", is(2));
+    }
+
+    @Test
+    void workspaceOwnerManagesMembersAndCanTransferOwnershipSafely() {
+        String ownerEmail = "member-owner" + System.nanoTime() + "@example.test";
+        String firstMemberEmail = "member-first" + System.nanoTime() + "@example.test";
+        String secondMemberEmail = "member-second" + System.nanoTime() + "@example.test";
+        Tokens owner = register(ownerEmail);
+        Tokens firstMember = register(firstMemberEmail);
+        Tokens secondMember = register(secondMemberEmail);
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String path = "/api/v1/workspaces/" + workspaceId + "/members";
+
+        var first = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + firstMemberEmail.toUpperCase(Locale.ROOT) + "\",\"role\":\"viewer\"}")
+                .post(path)
+                .then()
+                .statusCode(201)
+                .body("email", is(firstMemberEmail))
+                .body("role", is("viewer"))
+                .body("currentUser", is(false))
+                .extract();
+        String firstMemberId = first.path("userId");
+
+        given().header("Authorization", "Bearer " + firstMember.access())
+                .get(path)
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + firstMemberEmail + "\",\"role\":\"viewer\"}")
+                .post(path)
+                .then()
+                .statusCode(409);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"not-registered@example.test\",\"role\":\"viewer\"}")
+                .post(path)
+                .then()
+                .statusCode(404);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + secondMemberEmail + "\",\"role\":\"owner\"}")
+                .post(path)
+                .then()
+                .statusCode(400);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"role\":\"admin\"}")
+                .patch(path + "/" + firstMemberId)
+                .then()
+                .statusCode(200)
+                .body("role", is("admin"));
+
+        String secondMemberId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + secondMemberEmail + "\",\"role\":\"viewer\"}")
+                .post(path)
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("userId");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{}")
+                .post(path + "/" + firstMemberId + "/transfer-ownership")
+                .then()
+                .statusCode(200)
+                .body("role", is("owner"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/workspaces/" + workspaceId)
+                .then()
+                .statusCode(200)
+                .body("role", is("admin"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"role\":\"viewer\"}")
+                .patch(path + "/" + secondMemberId)
+                .then()
+                .statusCode(403);
+
+        given().header("Authorization", "Bearer " + firstMember.access())
+                .get(path)
+                .then()
+                .statusCode(200)
+                .body("size()", is(3))
+                .body("find { it.currentUser }.role", is("owner"));
+        given().header("Authorization", "Bearer " + firstMember.access())
+                .delete(path + "/" + secondMemberId)
+                .then()
+                .statusCode(204);
+        given().header("Authorization", "Bearer " + firstMember.access())
+                .delete(path + "/" + firstMemberId)
+                .then()
+                .statusCode(409);
+        given().header("Authorization", "Bearer " + secondMember.access())
+                .get("/api/v1/workspaces/" + workspaceId)
+                .then()
+                .statusCode(404);
     }
 
     @Test
