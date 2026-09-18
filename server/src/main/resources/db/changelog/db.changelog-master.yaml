@@ -426,3 +426,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0061-bing-webmaster-property.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0062-yandex-webmaster-property
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0062-yandex-webmaster-property.sql
+            relativeToChangelogFile: false

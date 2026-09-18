@@ -134,4 +134,13 @@ class SiteAuditLogFilterTest {
         assertEquals("bing-webmaster", update.resource());
         assertNull(SiteAuditLogFilter.classify("POST", "/api/v1/sites/" + siteId + "/bing-webmaster/validate"));
     }
+
+    @Test
+    void auditsYandexWebmasterCredentialChangesButNotConnectionChecks() {
+        var update = SiteAuditLogFilter.classify("PUT", "/api/v1/sites/" + siteId + "/yandex-webmaster/property");
+        assertNotNull(update);
+        assertEquals("UPDATE", update.action());
+        assertEquals("yandex-webmaster", update.resource());
+        assertNull(SiteAuditLogFilter.classify("POST", "/api/v1/sites/" + siteId + "/yandex-webmaster/validate"));
+    }
 }

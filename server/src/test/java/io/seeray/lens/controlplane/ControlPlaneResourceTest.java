@@ -15,6 +15,7 @@ import io.seeray.lens.application.GoogleAdsDataManagerGateway;
 import io.seeray.lens.application.HeatmapAggregationService;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
 import io.seeray.lens.application.SearchConsoleGateway;
+import io.seeray.lens.application.YandexWebmasterGateway;
 import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.auth.AuthSession;
 import io.seeray.lens.domain.auth.UserStatus;
@@ -6037,6 +6038,126 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("entries.find { it.resource == 'bing-webmaster' }.action", is("UPDATE"));
+    }
+
+    @Test
+    void configuresAndReportsYandexWebmasterWithoutExposingItsOAuthToken() throws Exception {
+        String secret = "private-yandex-oauth-" + System.nanoTime();
+        String siteUrl = "https://www.example.com/";
+        LocalDate day = LocalDate.now(ZoneId.of("UTC"));
+        AtomicReference<String> receivedToken = new AtomicReference<>();
+        AtomicReference<String> queriedDevice = new AtomicReference<>();
+        QuarkusMock.installMockForType(
+                new YandexWebmasterGateway() {
+                    @Override
+                    public User user(String oauthToken) {
+                        receivedToken.set(oauthToken);
+                        return new User("431122");
+                    }
+
+                    @Override
+                    public List<Host> hosts(String oauthToken, String userId) {
+                        receivedToken.set(oauthToken);
+                        assertEquals("431122", userId);
+                        return List.of(new Host("https:example.com:443", siteUrl, true));
+                    }
+
+                    @Override
+                    public QueryPage popularQueries(
+                            String oauthToken,
+                            String userId,
+                            String hostId,
+                            LocalDate from,
+                            LocalDate to,
+                            String deviceType,
+                            int offset,
+                            int limit) {
+                        receivedToken.set(oauthToken);
+                        queriedDevice.set(deviceType);
+                        assertEquals("431122", userId);
+                        assertEquals("https:example.com:443", hostId);
+                        assertEquals(day, from);
+                        assertEquals(day, to);
+                        assertEquals(0, offset);
+                        return new QueryPage(
+                                List.of(
+                                        new SearchQuery("privacy analytics", 6, 60, 2.0),
+                                        new SearchQuery("web analytics", 4, 40, 6.0)),
+                                2);
+                    }
+                },
+                YandexWebmasterGateway.class);
+
+        Tokens owner = register("yandex-webmaster" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Yandex Webmaster site");
+        String endpoint = "/api/v1/sites/" + siteId + "/yandex-webmaster";
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/property")
+                .then()
+                .statusCode(200)
+                .body("configured", is(false))
+                .body("credentialConfigured", is(false));
+
+        String propertyResponse = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(Map.of("siteUrl", siteUrl, "oauthToken", secret))
+                .put(endpoint + "/property")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("credentialConfigured", is(true))
+                .extract()
+                .asString();
+        assertFalse(propertyResponse.contains(secret));
+        assertFalse(propertyResponse.contains("oauthToken"));
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select oauth_token_ciphertext from yandex_webmaster_property where site_id=?")) {
+            statement.setObject(1, UUID.fromString(siteId));
+            try (var rows = statement.executeQuery()) {
+                assertTrue(rows.next());
+                assertFalse(new String(rows.getBytes(1), StandardCharsets.UTF_8).contains(secret));
+            }
+        }
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .post(endpoint + "/validate")
+                .then()
+                .statusCode(200)
+                .body("accessible", is(true))
+                .body("verified", is(true));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/report?from=" + day + "&to=" + day + "&deviceType=DESKTOP")
+                .then()
+                .statusCode(200)
+                .body("siteUrl", is(siteUrl))
+                .body("deviceType", is("DESKTOP"))
+                .body("clicks", is(10.0f))
+                .body("impressions", is(100.0f))
+                .body("ctr", is(0.1f))
+                .body("averagePosition", is(3.6f))
+                .body("totalQueries", is(2))
+                .body("rows.size()", is(2))
+                .body("rows[0].query", is("privacy analytics"))
+                .body("dataLimitNote", containsString("top 3,000"));
+        assertEquals(secret, receivedToken.get());
+        assertEquals("DESKTOP", queriedDevice.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(Map.of("siteUrl", "https://example.com/?unsafe=yes", "oauthToken", secret))
+                .put(endpoint + "/property")
+                .then()
+                .statusCode(400);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/audit-log?from=" + day + "&to=" + day)
+                .then()
+                .statusCode(200)
+                .body("entries.find { it.resource == 'yandex-webmaster' }.action", is("UPDATE"));
     }
 
     private static Tokens register(String email) {

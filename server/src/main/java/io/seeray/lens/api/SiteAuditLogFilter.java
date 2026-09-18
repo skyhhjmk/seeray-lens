@@ -37,7 +37,8 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
             "annotations",
             "offline-conversions",
             "search-console",
-            "bing-webmaster");
+            "bing-webmaster",
+            "yandex-webmaster");
 
     @Inject
     DataSource dataSource;
