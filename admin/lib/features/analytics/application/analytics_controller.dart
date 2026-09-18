@@ -781,16 +781,19 @@ class CustomReportRow {
     this.dimensionValue,
     this.metricValue, {
     this.secondaryDimensionValue,
+    this.tertiaryDimensionValue,
   });
   final String dimensionValue;
   final double metricValue;
   final String? secondaryDimensionValue;
+  final String? tertiaryDimensionValue;
 
   factory CustomReportRow.fromJson(Map<String, dynamic> json) =>
       CustomReportRow(
         json['dimensionValue'] as String? ?? 'Unknown',
         (json['metricValue'] as num?)?.toDouble() ?? 0,
         secondaryDimensionValue: json['secondaryDimensionValue'] as String?,
+        tertiaryDimensionValue: json['tertiaryDimensionValue'] as String?,
       );
 }
 
@@ -799,13 +802,17 @@ class CustomReportData {
     this.rows, {
     this.customDimensionName,
     this.secondaryDimension,
+    this.tertiaryDimension,
     this.secondaryCustomDimensionName,
+    this.tertiaryCustomDimensionName,
     this.formulaName,
   });
   final List<CustomReportRow> rows;
   final String? customDimensionName;
   final String? secondaryDimension;
+  final String? tertiaryDimension;
   final String? secondaryCustomDimensionName;
+  final String? tertiaryCustomDimensionName;
   final String? formulaName;
 }
 
@@ -861,6 +868,7 @@ class CustomReportQuery {
     required this.range,
     required this.dimension,
     this.secondaryDimension,
+    this.tertiaryDimension,
     required this.metric,
     required this.limit,
     required this.matchMode,
@@ -873,6 +881,7 @@ class CustomReportQuery {
   final AnalyticsDateRange range;
   final String dimension;
   final String? secondaryDimension;
+  final String? tertiaryDimension;
   final String metric;
   final int limit;
   final String matchMode;
@@ -891,6 +900,7 @@ class CustomReportQuery {
       other.range.toQuery == range.toQuery &&
       other.dimension == dimension &&
       other.secondaryDimension == secondaryDimension &&
+      other.tertiaryDimension == tertiaryDimension &&
       other.metric == metric &&
       other._formulaKey == _formulaKey &&
       other.limit == limit &&
@@ -905,6 +915,7 @@ class CustomReportQuery {
     range.toQuery,
     dimension,
     secondaryDimension,
+    tertiaryDimension,
     metric,
     _formulaKey,
     limit,
@@ -938,6 +949,8 @@ final customReportProvider =
                       'dimension': query.dimension,
                       if (query.secondaryDimension != null)
                         'secondaryDimension': query.secondaryDimension,
+                      if (query.tertiaryDimension != null)
+                        'tertiaryDimension': query.tertiaryDimension,
                       'metric': query.metric,
                       if (query.formula != null)
                         'formula': query.formula!.toJson(),
@@ -957,8 +970,11 @@ final customReportProvider =
             .toList(growable: false),
         customDimensionName: result['customDimensionName'] as String?,
         secondaryDimension: result['secondaryDimension'] as String?,
+        tertiaryDimension: result['tertiaryDimension'] as String?,
         secondaryCustomDimensionName:
             result['secondaryCustomDimensionName'] as String?,
+        tertiaryCustomDimensionName:
+            result['tertiaryCustomDimensionName'] as String?,
         formulaName: result['formulaName'] as String?,
       );
     });

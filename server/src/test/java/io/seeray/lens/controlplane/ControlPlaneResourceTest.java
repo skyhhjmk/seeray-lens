@@ -1582,6 +1582,39 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("secondaryDimension", is("browser"))
                 .body("rows.dimensionValue", hasItem("page_view"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"dimension\":\"event_type\",\"secondaryDimension\":\"" + customDimension
+                        + "\",\"tertiaryDimension\":\"entry_page\",\"metric\":\"events\","
+                        + "\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("dimension", is("event_type"))
+                .body("tertiaryDimension", is("entry_page"))
+                .body("tertiaryCustomDimensionName", nullValue())
+                .body(
+                        "rows.find { it.dimensionValue == 'product_interaction' && it.secondaryDimensionValue == 'pro' && it.tertiaryDimensionValue == '/pricing' }.metricValue",
+                        is(2.0f));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"dimension\":\"entry_page\",\"secondaryDimension\":\"exit_page\","
+                        + "\"tertiaryDimension\":\"visitor_type\",\"metric\":\"sessions\","
+                        + "\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("tertiaryDimension", is("visitor_type"))
+                .body("rows.size()", is(2))
+                .body("rows.tertiaryDimensionValue", everyItem(is("new")));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"dimension\":\"event_type\",\"secondaryDimension\":\"browser\","
+                        + "\"tertiaryDimension\":\"event_type\",\"metric\":\"sessions\","
+                        + "\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(400);
 
         String dashboardPath = "/api/v1/sites/" + site + "/dashboards";
         given().header("Authorization", "Bearer " + owner.access())
@@ -1606,7 +1639,11 @@ class ControlPlaneResourceTest {
                         + "{\"id\":\"event-custom\",\"type\":\"custom_report\","
                         + "\"title\":\"Event plans\",\"dimension\":\"event_type\","
                         + "\"secondaryDimension\":\"" + customDimension
-                        + "\",\"metric\":\"events\",\"limit\":10,\"chartType\":\"table\"}]}")
+                        + "\",\"metric\":\"events\",\"limit\":10,\"chartType\":\"table\"},"
+                        + "{\"id\":\"three\",\"type\":\"custom_report\","
+                        + "\"title\":\"Three dimensions\",\"dimension\":\"event_type\","
+                        + "\"secondaryDimension\":\"browser\",\"tertiaryDimension\":\"country\","
+                        + "\"metric\":\"sessions\",\"limit\":10,\"chartType\":\"table\"}]}")
                 .post(dashboardPath)
                 .then()
                 .statusCode(200)
@@ -1614,7 +1651,18 @@ class ControlPlaneResourceTest {
                 .body("widgets[1].formula.name", is("Events per visit"))
                 .body("widgets[2].dimension", is("event_type"))
                 .body("widgets[3].secondaryDimension", is("exit_page"))
-                .body("widgets[4].secondaryDimension", is(customDimension));
+                .body("widgets[4].secondaryDimension", is(customDimension))
+                .body("widgets[5].tertiaryDimension", is("country"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Duplicate pivot\",\"widgets\":[{\"id\":\"bad\","
+                        + "\"type\":\"custom_report\",\"title\":\"Bad report\","
+                        + "\"dimension\":\"event_type\",\"secondaryDimension\":\"browser\","
+                        + "\"tertiaryDimension\":\"event_type\",\"metric\":\"sessions\","
+                        + "\"limit\":10,\"chartType\":\"table\"}]}")
+                .post(dashboardPath)
+                .then()
+                .statusCode(400);
 
         given().header("Authorization", "Bearer " + owner.access())
                 .get(dimensionsPath + "/" + dimensionId + "/report?from=" + today + "&to=" + today)

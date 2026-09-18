@@ -285,6 +285,7 @@ public class DashboardService {
             String chartType = widget.chartType();
             String dimension = widget.dimension();
             String secondaryDimension = widget.secondaryDimension();
+            String tertiaryDimension = widget.tertiaryDimension();
             String locationLevel = widget.locationLevel();
             String matchMode = widget.matchMode();
             List<SegmentService.Rule> filters = widget.filters();
@@ -293,7 +294,15 @@ public class DashboardService {
                     if (metric == null || !TREND_METRICS.contains(metric)) throw invalid("Choose a trend metric");
                     if (chartType == null || !Set.of("line", "bar").contains(chartType))
                         throw invalid("Choose a line or bar trend chart");
-                    requireNull(limit, dimension, secondaryDimension, locationLevel, matchMode, filters, formula);
+                    requireNull(
+                            limit,
+                            dimension,
+                            secondaryDimension,
+                            tertiaryDimension,
+                            locationLevel,
+                            matchMode,
+                            filters,
+                            formula);
                 }
                 case "top_pages", "traffic_channels", "events", "goals", "live_visitors" -> {
                     if (limit == null || !Set.of(5, 10, 20).contains(limit)) throw invalid("Choose 5, 10, or 20 rows");
@@ -302,6 +311,7 @@ public class DashboardService {
                             chartType,
                             dimension,
                             secondaryDimension,
+                            tertiaryDimension,
                             locationLevel,
                             matchMode,
                             filters,
@@ -311,13 +321,29 @@ public class DashboardService {
                     if (dimension == null || !TECHNOLOGY_DIMENSIONS.contains(dimension))
                         throw invalid("Choose a supported technology dimension");
                     if (limit == null || !Set.of(5, 10, 20).contains(limit)) throw invalid("Choose 5, 10, or 20 rows");
-                    requireNull(metric, chartType, secondaryDimension, locationLevel, matchMode, filters, formula);
+                    requireNull(
+                            metric,
+                            chartType,
+                            secondaryDimension,
+                            tertiaryDimension,
+                            locationLevel,
+                            matchMode,
+                            filters,
+                            formula);
                 }
                 case "locations" -> {
                     if (locationLevel == null || !LOCATION_LEVELS.contains(locationLevel))
                         throw invalid("Choose a location level");
                     if (limit == null || !Set.of(5, 10, 20).contains(limit)) throw invalid("Choose 5, 10, or 20 rows");
-                    requireNull(metric, chartType, dimension, secondaryDimension, matchMode, filters, formula);
+                    requireNull(
+                            metric,
+                            chartType,
+                            dimension,
+                            secondaryDimension,
+                            tertiaryDimension,
+                            matchMode,
+                            filters,
+                            formula);
                 }
                 case "custom_report" -> {
                     if (!supportedReportDimension(dimension))
@@ -334,6 +360,12 @@ public class DashboardService {
                             && (!supportedReportDimension(secondaryDimension)
                                     || dimension.equalsIgnoreCase(secondaryDimension)))
                         throw invalid("Choose two different supported dimensions for a cross-breakdown");
+                    if (tertiaryDimension != null
+                            && (!supportedReportDimension(tertiaryDimension)
+                                    || secondaryDimension == null
+                                    || dimension.equalsIgnoreCase(tertiaryDimension)
+                                    || secondaryDimension.equalsIgnoreCase(tertiaryDimension)))
+                        throw invalid("Choose up to three different supported dimensions for a cross-breakdown");
                     if (locationLevel != null || filters != null && filters.size() > 5)
                         throw invalid("Custom report options are invalid");
                     if (filters != null && !filters.isEmpty()) {
@@ -350,6 +382,7 @@ public class DashboardService {
                         chartType,
                         dimension,
                         secondaryDimension,
+                        tertiaryDimension,
                         locationLevel,
                         matchMode,
                         filters,
@@ -364,6 +397,7 @@ public class DashboardService {
                     chartType,
                     dimension,
                     secondaryDimension,
+                    tertiaryDimension,
                     formula,
                     locationLevel,
                     matchMode,
@@ -492,6 +526,7 @@ public class DashboardService {
             String chartType,
             String dimension,
             String secondaryDimension,
+            String tertiaryDimension,
             CustomReportService.Formula formula,
             String locationLevel,
             String matchMode,

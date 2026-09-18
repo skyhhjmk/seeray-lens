@@ -1045,6 +1045,8 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
   late String _reportDimension = widget.widgetDefinition.dimension ?? 'browser';
   late String? _reportSecondaryDimension =
       widget.widgetDefinition.secondaryDimension;
+  late String? _reportTertiaryDimension =
+      widget.widgetDefinition.tertiaryDimension;
   late String _reportMetric = widget.widgetDefinition.metric ?? 'sessions';
   late String _formulaLeftMetric =
       widget.widgetDefinition.formula?.leftMetric ?? 'events';
@@ -1122,14 +1124,25 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
     final secondaryDimensionOptions = reportDimensionOptions
         .where((item) => item.value != _reportDimension)
         .toList();
+    final tertiaryDimensionOptions = reportDimensionOptions
+        .where(
+          (item) =>
+              item.value != _reportDimension &&
+              item.value != _reportSecondaryDimension,
+        )
+        .toList();
     final canAddSecondaryDimension =
         reportDimensionOptions.any((item) => item.value == _reportDimension) &&
         secondaryDimensionOptions.isNotEmpty;
-    final eventDimensionPair =
-        _reportDimension == 'event_type' ||
-        _reportDimension.startsWith('custom:') ||
-        _reportSecondaryDimension == 'event_type' ||
-        (_reportSecondaryDimension?.startsWith('custom:') ?? false);
+    final selectedReportDimensions = [
+      _reportDimension,
+      _reportSecondaryDimension,
+      _reportTertiaryDimension,
+    ].whereType<String>();
+    final eventDimensionPair = selectedReportDimensions.any(
+      (dimension) =>
+          dimension == 'event_type' || dimension.startsWith('custom:'),
+    );
     if (!reportDimensionOptions.any((item) => item.value == _reportDimension)) {
       reportDimensionOptions.add(
         DropdownMenuItem(
@@ -1150,6 +1163,22 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
       secondaryDimensionOptions.add(
         DropdownMenuItem(
           value: _reportSecondaryDimension,
+          child: Text(
+            context.tr(
+              'Unavailable dimension — remove or choose another',
+              '维度不可用，请移除或重新选择',
+            ),
+          ),
+        ),
+      );
+    }
+    if (_reportTertiaryDimension != null &&
+        !tertiaryDimensionOptions.any(
+          (item) => item.value == _reportTertiaryDimension,
+        )) {
+      tertiaryDimensionOptions.add(
+        DropdownMenuItem(
+          value: _reportTertiaryDimension,
           child: Text(
             context.tr(
               'Unavailable dimension — remove or choose another',
@@ -1304,6 +1333,10 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                         _reportDimension = value;
                         if (value == _reportSecondaryDimension) {
                           _reportSecondaryDimension = null;
+                          _reportTertiaryDimension = null;
+                        }
+                        if (value == _reportTertiaryDimension) {
+                          _reportTertiaryDimension = null;
                         }
                       });
                     }
@@ -1317,6 +1350,7 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       onPressed: () => setState(() {
                         if (_reportSecondaryDimension != null) {
                           _reportSecondaryDimension = null;
+                          _reportTertiaryDimension = null;
                         } else {
                           final suggested = _reportDimension == 'country'
                               ? 'region'
@@ -1353,6 +1387,57 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       },
                     ),
                   ),
+                if (_reportSecondaryDimension != null &&
+                    (tertiaryDimensionOptions.isNotEmpty ||
+                        _reportTertiaryDimension != null))
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => setState(() {
+                        if (_reportTertiaryDimension != null) {
+                          _reportTertiaryDimension = null;
+                        } else {
+                          final options = tertiaryDimensionOptions
+                              .map((item) => item.value)
+                              .whereType<String>()
+                              .toList();
+                          if (options.isNotEmpty) {
+                            _reportTertiaryDimension =
+                                options.contains('device_type')
+                                ? 'device_type'
+                                : options.first;
+                          }
+                        }
+                      }),
+                      icon: Icon(
+                        _reportTertiaryDimension == null
+                            ? Icons.add
+                            : Icons.remove,
+                      ),
+                      label: Text(
+                        _reportTertiaryDimension == null
+                            ? context.tr('Add a third breakdown', '添加第三分析维度')
+                            : context.tr('Remove third breakdown', '移除第三分析维度'),
+                      ),
+                    ),
+                  ),
+                if (_reportTertiaryDimension != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      initialValue: _reportTertiaryDimension,
+                      decoration: InputDecoration(
+                        labelText: context.tr('And then by', '再进一步按以下维度细分'),
+                      ),
+                      items: tertiaryDimensionOptions,
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _reportTertiaryDimension = value);
+                        }
+                      },
+                    ),
+                  ),
                 if (_reportSecondaryDimension != null)
                   Align(
                     alignment: Alignment.centerLeft,
@@ -1361,11 +1446,11 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       child: Text(
                         context.tr(
                           eventDimensionPair
-                              ? 'Rows show the intersection of both dimensions. Event and custom-property values are paired from the same event; visits and visitors can recur across combinations, so row totals are not additive.'
-                              : 'Rows show the intersection of both dimensions. Visitors can recur across combinations, so do not add unique-visitor totals across rows.',
+                              ? 'Rows show intersections of the selected dimensions. Event and custom-property values are paired from the same event; visits and visitors can recur across combinations, so rows are not additive.'
+                              : 'Rows show intersections of the selected dimensions. Visitors can recur across combinations, so do not add unique-visitor totals across rows.',
                           eventDimensionPair
-                              ? '每行表示两个维度的交叉组合。事件类型与自定义属性按同一事件匹配；访问和访客可能出现在多个组合中，因此各行不可直接相加。'
-                              : '每行表示两个维度的交叉组合。同一访客可能出现在多个组合中，请勿将各行独立访客数相加。',
+                              ? '每行表示所选维度的交叉组合。事件类型与注册自定义属性按同一事件匹配；同一访问和访客可能出现在多个组合中，因此各行不可直接相加。'
+                              : '每行表示所选维度的交叉组合。同一访客可能出现在多个组合中，请勿将各行独立访客数相加。',
                         ),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
@@ -1404,7 +1489,9 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       ),
                     ),
                   ),
-                if (_reportDimension.startsWith('custom:'))
+                if (selectedReportDimensions.any(
+                  (dimension) => dimension.startsWith('custom:'),
+                ))
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Row(
@@ -1424,7 +1511,7 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       ],
                     ),
                   ),
-                if (_reportDimension == 'event_type')
+                if (selectedReportDimensions.contains('event_type'))
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Row(
@@ -1769,6 +1856,10 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       clearSecondaryDimension:
                           type == 'custom_report' &&
                           _reportSecondaryDimension == null,
+                      tertiaryDimension: _reportTertiaryDimension,
+                      clearTertiaryDimension:
+                          type == 'custom_report' &&
+                          _reportTertiaryDimension == null,
                       locationLevel: type == 'locations'
                           ? _locationLevel
                           : null,
@@ -2719,6 +2810,7 @@ class _DashboardWidgetContent extends ConsumerWidget {
               segmentId: query.segmentId,
               dimension: item.dimension ?? 'browser',
               secondaryDimension: item.secondaryDimension,
+              tertiaryDimension: item.tertiaryDimension,
               metric: item.metric ?? 'sessions',
               formula: item.formula,
               limit: limit,
@@ -2752,12 +2844,17 @@ class _DashboardWidgetContent extends ConsumerWidget {
                         context,
                         result.secondaryDimension!,
                       );
+            final tertiaryDimensionLabel = result.tertiaryDimension == null
+                ? null
+                : result.tertiaryCustomDimensionName ??
+                      _reportDimensionLabel(context, result.tertiaryDimension!);
             if (result.rows.isEmpty) {
               return _Panel(
                 title: item.title,
                 exportColumns: [
                   dimensionLabel,
                   ?secondaryDimensionLabel,
+                  ?tertiaryDimensionLabel,
                   metricLabel,
                 ],
                 exportRows: const [],
@@ -2776,6 +2873,7 @@ class _DashboardWidgetContent extends ConsumerWidget {
               exportColumns: [
                 dimensionLabel,
                 ?secondaryDimensionLabel,
+                ?tertiaryDimensionLabel,
                 metricLabel,
               ],
               exportRows: result.rows
@@ -2784,6 +2882,8 @@ class _DashboardWidgetContent extends ConsumerWidget {
                       row.dimensionValue,
                       if (secondaryDimensionLabel != null)
                         row.secondaryDimensionValue ?? 'Unknown',
+                      if (tertiaryDimensionLabel != null)
+                        row.tertiaryDimensionValue ?? 'Unknown',
                       row.metricValue,
                     ],
                   )
@@ -2792,10 +2892,13 @@ class _DashboardWidgetContent extends ConsumerWidget {
               child: item.chartType == 'bars'
                   ? Column(
                       children: result.rows.map((row) {
-                        final rowLabel = secondaryDimensionLabel == null
-                            ? row.dimensionValue
-                            : '$dimensionLabel: ${row.dimensionValue} · '
-                                  '$secondaryDimensionLabel: ${row.secondaryDimensionValue ?? 'Unknown'}';
+                        final rowLabel = [
+                          '$dimensionLabel: ${row.dimensionValue}',
+                          if (secondaryDimensionLabel != null)
+                            '$secondaryDimensionLabel: ${row.secondaryDimensionValue ?? 'Unknown'}',
+                          if (tertiaryDimensionLabel != null)
+                            '$tertiaryDimensionLabel: ${row.tertiaryDimensionValue ?? 'Unknown'}',
+                        ].join(' · ');
                         return _CustomReportBarRow(
                           label: rowLabel,
                           value: _customReportValue(
@@ -2808,6 +2911,16 @@ class _DashboardWidgetContent extends ConsumerWidget {
                               : row.metricValue / maximum,
                         );
                       }).toList(),
+                    )
+                  : tertiaryDimensionLabel != null
+                  ? _CustomReportTripleTable(
+                      dimensionLabel: dimensionLabel,
+                      secondaryDimensionLabel: secondaryDimensionLabel!,
+                      tertiaryDimensionLabel: tertiaryDimensionLabel,
+                      metricLabel: metricLabel,
+                      metric: item.metric ?? 'sessions',
+                      formulaFormat: item.formula?.format,
+                      rows: result.rows,
                     )
                   : secondaryDimensionLabel == null
                   ? Column(
@@ -2864,6 +2977,8 @@ Map<String, Object?> _dashboardWidgetExportMetadata(
   if (widget.dimension != null) 'dimension': widget.dimension!,
   if (widget.secondaryDimension != null)
     'secondaryDimension': widget.secondaryDimension!,
+  if (widget.tertiaryDimension != null)
+    'tertiaryDimension': widget.tertiaryDimension!,
   if (widget.metric != null) 'metric': widget.metric!,
   if (widget.formula != null) 'formula': widget.formula!.toJson(),
   if (widget.limit != null) 'limit': widget.limit!,
@@ -2979,6 +3094,96 @@ class _CustomReportCrossTable extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(flex: 2, child: value),
       ],
+    ),
+  );
+}
+
+class _CustomReportTripleTable extends StatelessWidget {
+  const _CustomReportTripleTable({
+    required this.dimensionLabel,
+    required this.secondaryDimensionLabel,
+    required this.tertiaryDimensionLabel,
+    required this.metricLabel,
+    required this.metric,
+    required this.rows,
+    this.formulaFormat,
+  });
+
+  final String dimensionLabel;
+  final String secondaryDimensionLabel;
+  final String tertiaryDimensionLabel;
+  final String metricLabel;
+  final String metric;
+  final String? formulaFormat;
+  final List<CustomReportRow> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final headerStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+      fontWeight: FontWeight.w700,
+    );
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                context.tr('Breakdown combination', '交叉维度组合'),
+                style: headerStyle,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(metricLabel, style: headerStyle, textAlign: TextAlign.end),
+          ],
+        ),
+        const Divider(height: 18),
+        for (final row in rows)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _dimensionValue(dimensionLabel, row.dimensionValue),
+                      _dimensionValue(
+                        secondaryDimensionLabel,
+                        row.secondaryDimensionValue ?? 'Unknown',
+                      ),
+                      _dimensionValue(
+                        tertiaryDimensionLabel,
+                        row.tertiaryDimensionValue ?? 'Unknown',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  _customReportValue(
+                    metric,
+                    row.metricValue,
+                    formulaFormat: formulaFormat,
+                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.end,
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _dimensionValue(String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 2),
+    child: Text(
+      '$label: $value',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 12),
     ),
   );
 }

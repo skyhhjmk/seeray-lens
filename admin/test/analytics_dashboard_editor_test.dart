@@ -42,6 +42,44 @@ void main() {
     expect(report.rows.single.secondaryDimensionValue, '/pricing');
   });
 
+  test('queries and parses a three-dimension custom report', () async {
+    final api = _DashboardApi();
+    final container = ProviderContainer(
+      overrides: [apiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    final report = await container.read(
+      customReportProvider(
+        CustomReportQuery(
+          siteId: 'site-1',
+          range: AnalyticsDateRange(
+            DateTime.utc(2026, 9, 17),
+            DateTime.utc(2026, 9, 17),
+          ),
+          dimension: 'event_type',
+          secondaryDimension: 'country',
+          tertiaryDimension: 'custom:11111111-1111-4111-8111-111111111111',
+          metric: 'events',
+          limit: 10,
+          matchMode: 'all',
+          filters: const [],
+        ),
+      ).future,
+    );
+
+    expect(
+      api.customReportBody!['tertiaryDimension'],
+      'custom:11111111-1111-4111-8111-111111111111',
+    );
+    expect(
+      report.tertiaryDimension,
+      'custom:11111111-1111-4111-8111-111111111111',
+    );
+    expect(report.tertiaryCustomDimensionName, 'Plan');
+    expect(report.rows.single.tertiaryDimensionValue, 'pro');
+  });
+
   test('parses the name for a custom secondary dimension', () async {
     final api = _DashboardApi();
     final container = ProviderContainer(
@@ -189,6 +227,10 @@ void main() {
     await tester.tap(find.text('Add a second breakdown'));
     await tester.pumpAndSettle();
     expect(find.text('Then break down by'), findsOneWidget);
+    await tester.ensureVisible(find.text('Add a third breakdown'));
+    await tester.tap(find.text('Add a third breakdown'));
+    await tester.pumpAndSettle();
+    expect(find.text('And then by'), findsOneWidget);
     await tester.ensureVisible(find.text('Apply'));
     await tester.tap(find.text('Apply'));
     await tester.pumpAndSettle();
@@ -200,6 +242,9 @@ void main() {
     );
     expect(widget['dimension'], 'browser');
     expect(widget['secondaryDimension'], 'country');
+    expect(widget['tertiaryDimension'], 'device_type');
+    expect(find.text('Breakdown combination'), findsOneWidget);
+    expect(find.textContaining('Device type: pro'), findsOneWidget);
   });
 
   testWidgets('adds a registered event dimension as a second breakdown', (
@@ -591,12 +636,20 @@ class _DashboardApi extends SeeRayApi {
       return {
         'dimension': customReportBody!['dimension'],
         'secondaryDimension': customReportBody!['secondaryDimension'],
+        'tertiaryDimension': customReportBody!['tertiaryDimension'],
         'secondaryCustomDimensionName':
             (customReportBody!['secondaryDimension'] as String?)?.startsWith(
                   'custom:',
                 ) ==
                 true
             ? 'Subscription plan'
+            : null,
+        'tertiaryCustomDimensionName':
+            (customReportBody!['tertiaryDimension'] as String?)?.startsWith(
+                  'custom:',
+                ) ==
+                true
+            ? 'Plan'
             : null,
         'metric': customReportBody!['metric'],
         'formulaName': (customReportBody!['formula'] as Map?)?['name'],
@@ -605,6 +658,8 @@ class _DashboardApi extends SeeRayApi {
           {
             'dimensionValue': hasSecondary ? '/pricing' : 'Chrome',
             if (hasSecondary) 'secondaryDimensionValue': '/pricing',
+            if (customReportBody!.containsKey('tertiaryDimension'))
+              'tertiaryDimensionValue': 'pro',
             'metricValue': 8,
           },
         ],
