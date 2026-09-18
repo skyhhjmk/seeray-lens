@@ -27,6 +27,7 @@ import 'features/analytics/presentation/analytics_annotations_page.dart';
 import 'features/analytics/presentation/visitor_profile_page.dart';
 import 'features/analytics/presentation/form_analytics_page.dart';
 import 'features/analytics/presentation/media_analytics_page.dart';
+import 'features/analytics/presentation/crash_analytics_page.dart';
 import 'features/landing/presentation/landing_page.dart';
 import 'features/integration/presentation/integration_page.dart';
 import 'features/domains/presentation/domains_page.dart';
@@ -245,6 +246,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
               state,
               _Authenticated(
                 child: MediaAnalyticsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/behaviour/crashes',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: CrashAnalyticsPage(
                   siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),

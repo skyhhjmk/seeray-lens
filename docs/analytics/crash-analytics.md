@@ -1,0 +1,9 @@
+# JavaScript crash analytics
+
+Crash collection is opt-in and disabled unless the tracker snippet has `data-track-errors`. It requires the ordinary consent policy and respects Do Not Track. The browser listener captures uncaught JavaScript exceptions and unhandled promise rejections, not script/image/network resource failures.
+
+The event is anonymous: visitor and session IDs are omitted even when the visitor has granted analytics consent. The browser sends only a bounded error name, redacted message, script pathname, and positive line/column numbers. It never sends a stack trace, document title, referrer, query string, or raw script URL. The current page path is reduced by replacing common email, UUID, long-token, and numeric-ID segments. The server repeats the allowlist/redaction, computes the stable issue fingerprint, drops unrecognized fields, and discards the page title/referrer and any supplied visitor/session IDs.
+
+The report at `/sites/:siteId/behaviour/crashes` aggregates occurrences by fingerprint for the selected site and date range. It shows error summaries, source location, affected page count, browser families, and first/last occurrence; it does not expose event IDs, visitor IDs, session IDs, or stack frames. Setup instructions are available from the report and from the site's Integration → Crash analytics tab.
+
+This is browser JavaScript crash analytics only. Native iOS/Android crash SDKs, source-map symbolication, browser acceptance, and production acceptance remain separate work. Error messages can still contain application-specific sensitive text that generic redaction cannot recognize, so enable this only after reviewing the site's privacy notice and consent requirements; do not enable it on sensitive pages or for applications that put secrets into error messages.

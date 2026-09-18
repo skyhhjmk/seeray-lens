@@ -10,6 +10,7 @@ import '../application/analytics_annotations.dart';
 import '../application/analytics_range.dart';
 import '../application/form_analytics.dart';
 import '../application/media_analytics.dart';
+import '../application/crash_analytics.dart';
 import '../application/realtime_controller.dart';
 import 'segment_filter_selector.dart';
 
@@ -42,6 +43,8 @@ class SiteTabShell extends ConsumerWidget {
         ? SiteTopTab.forms
         : path.endsWith('/behaviour/media')
         ? SiteTopTab.media
+        : path.endsWith('/behaviour/crashes')
+        ? SiteTopTab.crashes
         : path.endsWith('/behaviour/heatmaps')
         ? SiteTopTab.heatmaps
         : path.endsWith('/behaviour/recordings')
@@ -115,6 +118,7 @@ class SiteTabShell extends ConsumerWidget {
                 ref.invalidate(analyticsAnnotationsProvider);
                 ref.invalidate(formAnalyticsProvider);
                 ref.invalidate(mediaAnalyticsProvider);
+                ref.invalidate(crashAnalyticsProvider);
               }
             : null,
       ),

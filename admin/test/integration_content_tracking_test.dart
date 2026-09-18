@@ -97,6 +97,30 @@ void main() {
     expect(pixelSnippet.data, contains('Pixel fallback is disabled'));
     expect(pixelSnippet.data, isNot(contains('<img src=')));
   });
+
+  testWidgets('provides an explicit opt-in browser crash setup', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [sitesProvider.overrideWith(_SitesController.new)],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Crash analytics'));
+    await tester.tap(find.text('Crash analytics'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Measure browser JavaScript crashes'), findsOneWidget);
+    final snippet = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(snippet.data, contains('data-track-errors'));
+    expect(snippet.data, contains('data-require-consent="true"'));
+    expect(find.textContaining('never sends stack traces'), findsOneWidget);
+  });
 }
 
 class _SitesController extends SitesController {
