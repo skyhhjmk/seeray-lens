@@ -31,6 +31,7 @@ void main() {
       ),
       'Campaign launch',
     );
+    await tester.pump();
     await tester.tap(find.text('Save note'));
     await tester.pumpAndSettle();
     expect(find.text('Campaign launch'), findsOneWidget);
@@ -48,6 +49,7 @@ void main() {
       ),
       'Campaign launch moved',
     );
+    await tester.pump();
     await tester.tap(find.text('Save note'));
     await tester.pumpAndSettle();
     expect(find.text('Campaign launch moved'), findsOneWidget);
@@ -96,14 +98,15 @@ class _AnnotationsApi extends SeeRayApi {
             .toList(growable: false),
       };
     }
-    final values = Map<String, dynamic>.from(body! as Map);
     if (method == 'POST') {
+      final values = Map<String, dynamic>.from(body! as Map);
       final note = {'id': 'annotation-${++_nextId}', ...values};
       notes.add(note);
       return note;
     }
     final id = uri.pathSegments.last;
     if (method == 'PUT') {
+      final values = Map<String, dynamic>.from(body! as Map);
       final index = notes.indexWhere((note) => note['id'] == id);
       notes[index] = {'id': id, ...values};
       return notes[index];

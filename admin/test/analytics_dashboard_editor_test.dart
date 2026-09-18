@@ -648,7 +648,12 @@ void main() {
       find.textContaining('${api.annotationDate} · 1 note'),
       findsOneWidget,
     );
-    await tester.tap(find.textContaining('${api.annotationDate} · 1 note'));
+    final annotationMarker = find.textContaining(
+      '${api.annotationDate} · 1 note',
+    );
+    await tester.ensureVisible(annotationMarker);
+    await tester.pumpAndSettle();
+    await tester.tap(annotationMarker);
     await tester.pumpAndSettle();
     expect(find.text('Campaign launch'), findsOneWidget);
   });
