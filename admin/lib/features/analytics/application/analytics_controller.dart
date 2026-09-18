@@ -858,11 +858,13 @@ class CustomReportRow {
     this.metricValue, {
     this.secondaryDimensionValue,
     this.tertiaryDimensionValue,
+    this.quaternaryDimensionValue,
   });
   final String dimensionValue;
   final double metricValue;
   final String? secondaryDimensionValue;
   final String? tertiaryDimensionValue;
+  final String? quaternaryDimensionValue;
 
   factory CustomReportRow.fromJson(Map<String, dynamic> json) =>
       CustomReportRow(
@@ -870,6 +872,7 @@ class CustomReportRow {
         (json['metricValue'] as num?)?.toDouble() ?? 0,
         secondaryDimensionValue: json['secondaryDimensionValue'] as String?,
         tertiaryDimensionValue: json['tertiaryDimensionValue'] as String?,
+        quaternaryDimensionValue: json['quaternaryDimensionValue'] as String?,
       );
 }
 
@@ -879,16 +882,20 @@ class CustomReportData {
     this.customDimensionName,
     this.secondaryDimension,
     this.tertiaryDimension,
+    this.quaternaryDimension,
     this.secondaryCustomDimensionName,
     this.tertiaryCustomDimensionName,
+    this.quaternaryCustomDimensionName,
     this.formulaName,
   });
   final List<CustomReportRow> rows;
   final String? customDimensionName;
   final String? secondaryDimension;
   final String? tertiaryDimension;
+  final String? quaternaryDimension;
   final String? secondaryCustomDimensionName;
   final String? tertiaryCustomDimensionName;
+  final String? quaternaryCustomDimensionName;
   final String? formulaName;
 }
 
@@ -945,6 +952,7 @@ class CustomReportQuery {
     required this.dimension,
     this.secondaryDimension,
     this.tertiaryDimension,
+    this.quaternaryDimension,
     required this.metric,
     required this.limit,
     required this.matchMode,
@@ -958,6 +966,7 @@ class CustomReportQuery {
   final String dimension;
   final String? secondaryDimension;
   final String? tertiaryDimension;
+  final String? quaternaryDimension;
   final String metric;
   final int limit;
   final String matchMode;
@@ -977,6 +986,7 @@ class CustomReportQuery {
       other.dimension == dimension &&
       other.secondaryDimension == secondaryDimension &&
       other.tertiaryDimension == tertiaryDimension &&
+      other.quaternaryDimension == quaternaryDimension &&
       other.metric == metric &&
       other._formulaKey == _formulaKey &&
       other.limit == limit &&
@@ -992,6 +1002,7 @@ class CustomReportQuery {
     dimension,
     secondaryDimension,
     tertiaryDimension,
+    quaternaryDimension,
     metric,
     _formulaKey,
     limit,
@@ -1027,6 +1038,8 @@ final customReportProvider =
                         'secondaryDimension': query.secondaryDimension,
                       if (query.tertiaryDimension != null)
                         'tertiaryDimension': query.tertiaryDimension,
+                      if (query.quaternaryDimension != null)
+                        'quaternaryDimension': query.quaternaryDimension,
                       'metric': query.metric,
                       if (query.formula != null)
                         'formula': query.formula!.toJson(),
@@ -1047,10 +1060,13 @@ final customReportProvider =
         customDimensionName: result['customDimensionName'] as String?,
         secondaryDimension: result['secondaryDimension'] as String?,
         tertiaryDimension: result['tertiaryDimension'] as String?,
+        quaternaryDimension: result['quaternaryDimension'] as String?,
         secondaryCustomDimensionName:
             result['secondaryCustomDimensionName'] as String?,
         tertiaryCustomDimensionName:
             result['tertiaryCustomDimensionName'] as String?,
+        quaternaryCustomDimensionName:
+            result['quaternaryCustomDimensionName'] as String?,
         formulaName: result['formulaName'] as String?,
       );
     });

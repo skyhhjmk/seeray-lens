@@ -80,6 +80,38 @@ void main() {
     expect(report.rows.single.tertiaryDimensionValue, 'pro');
   });
 
+  test('queries and parses a four-dimension custom report', () async {
+    final api = _DashboardApi();
+    final container = ProviderContainer(
+      overrides: [apiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    final report = await container.read(
+      customReportProvider(
+        CustomReportQuery(
+          siteId: 'site-1',
+          range: AnalyticsDateRange(
+            DateTime.utc(2026, 9, 17),
+            DateTime.utc(2026, 9, 17),
+          ),
+          dimension: 'event_type',
+          secondaryDimension: 'country',
+          tertiaryDimension: 'custom:11111111-1111-4111-8111-111111111111',
+          quaternaryDimension: 'browser',
+          metric: 'events',
+          limit: 10,
+          matchMode: 'all',
+          filters: const [],
+        ),
+      ).future,
+    );
+
+    expect(api.customReportBody!['quaternaryDimension'], 'browser');
+    expect(report.quaternaryDimension, 'browser');
+    expect(report.rows.single.quaternaryDimensionValue, 'Chrome');
+  });
+
   test('parses the name for a custom secondary dimension', () async {
     final api = _DashboardApi();
     final container = ProviderContainer(
@@ -231,6 +263,10 @@ void main() {
     await tester.tap(find.text('Add a third breakdown'));
     await tester.pumpAndSettle();
     expect(find.text('And then by'), findsOneWidget);
+    await tester.ensureVisible(find.text('Add a fourth breakdown'));
+    await tester.tap(find.text('Add a fourth breakdown'));
+    await tester.pumpAndSettle();
+    expect(find.text('And finally by'), findsOneWidget);
     await tester.ensureVisible(find.text('Apply'));
     await tester.tap(find.text('Apply'));
     await tester.pumpAndSettle();
@@ -243,6 +279,7 @@ void main() {
     expect(widget['dimension'], 'browser');
     expect(widget['secondaryDimension'], 'country');
     expect(widget['tertiaryDimension'], 'device_type');
+    expect(widget['quaternaryDimension'], 'entry_page');
     expect(find.text('Breakdown combination'), findsOneWidget);
     expect(find.textContaining('Device type: pro'), findsOneWidget);
   });
@@ -637,6 +674,7 @@ class _DashboardApi extends SeeRayApi {
         'dimension': customReportBody!['dimension'],
         'secondaryDimension': customReportBody!['secondaryDimension'],
         'tertiaryDimension': customReportBody!['tertiaryDimension'],
+        'quaternaryDimension': customReportBody!['quaternaryDimension'],
         'secondaryCustomDimensionName':
             (customReportBody!['secondaryDimension'] as String?)?.startsWith(
                   'custom:',
@@ -651,6 +689,7 @@ class _DashboardApi extends SeeRayApi {
                 true
             ? 'Plan'
             : null,
+        'quaternaryCustomDimensionName': null,
         'metric': customReportBody!['metric'],
         'formulaName': (customReportBody!['formula'] as Map?)?['name'],
         'customDimensionName': null,
@@ -660,6 +699,8 @@ class _DashboardApi extends SeeRayApi {
             if (hasSecondary) 'secondaryDimensionValue': '/pricing',
             if (customReportBody!.containsKey('tertiaryDimension'))
               'tertiaryDimensionValue': 'pro',
+            if (customReportBody!.containsKey('quaternaryDimension'))
+              'quaternaryDimensionValue': 'Chrome',
             'metricValue': 8,
           },
         ],

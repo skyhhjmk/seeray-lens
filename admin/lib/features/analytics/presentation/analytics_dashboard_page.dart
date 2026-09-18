@@ -1047,6 +1047,8 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
       widget.widgetDefinition.secondaryDimension;
   late String? _reportTertiaryDimension =
       widget.widgetDefinition.tertiaryDimension;
+  late String? _reportQuaternaryDimension =
+      widget.widgetDefinition.quaternaryDimension;
   late String _reportMetric = widget.widgetDefinition.metric ?? 'sessions';
   late String _formulaLeftMetric =
       widget.widgetDefinition.formula?.leftMetric ?? 'events';
@@ -1131,6 +1133,14 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
               item.value != _reportSecondaryDimension,
         )
         .toList();
+    final quaternaryDimensionOptions = reportDimensionOptions
+        .where(
+          (item) =>
+              item.value != _reportDimension &&
+              item.value != _reportSecondaryDimension &&
+              item.value != _reportTertiaryDimension,
+        )
+        .toList();
     final canAddSecondaryDimension =
         reportDimensionOptions.any((item) => item.value == _reportDimension) &&
         secondaryDimensionOptions.isNotEmpty;
@@ -1138,6 +1148,7 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
       _reportDimension,
       _reportSecondaryDimension,
       _reportTertiaryDimension,
+      _reportQuaternaryDimension,
     ].whereType<String>();
     final eventDimensionPair = selectedReportDimensions.any(
       (dimension) =>
@@ -1179,6 +1190,22 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
       tertiaryDimensionOptions.add(
         DropdownMenuItem(
           value: _reportTertiaryDimension,
+          child: Text(
+            context.tr(
+              'Unavailable dimension — remove or choose another',
+              '维度不可用，请移除或重新选择',
+            ),
+          ),
+        ),
+      );
+    }
+    if (_reportQuaternaryDimension != null &&
+        !quaternaryDimensionOptions.any(
+          (item) => item.value == _reportQuaternaryDimension,
+        )) {
+      quaternaryDimensionOptions.add(
+        DropdownMenuItem(
+          value: _reportQuaternaryDimension,
           child: Text(
             context.tr(
               'Unavailable dimension — remove or choose another',
@@ -1334,9 +1361,14 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                         if (value == _reportSecondaryDimension) {
                           _reportSecondaryDimension = null;
                           _reportTertiaryDimension = null;
+                          _reportQuaternaryDimension = null;
                         }
                         if (value == _reportTertiaryDimension) {
                           _reportTertiaryDimension = null;
+                          _reportQuaternaryDimension = null;
+                        }
+                        if (value == _reportQuaternaryDimension) {
+                          _reportQuaternaryDimension = null;
                         }
                       });
                     }
@@ -1351,6 +1383,7 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                         if (_reportSecondaryDimension != null) {
                           _reportSecondaryDimension = null;
                           _reportTertiaryDimension = null;
+                          _reportQuaternaryDimension = null;
                         } else {
                           final suggested = _reportDimension == 'country'
                               ? 'region'
@@ -1382,7 +1415,16 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       items: secondaryDimensionOptions,
                       onChanged: (value) {
                         if (value != null) {
-                          setState(() => _reportSecondaryDimension = value);
+                          setState(() {
+                            _reportSecondaryDimension = value;
+                            if (value == _reportTertiaryDimension) {
+                              _reportTertiaryDimension = null;
+                              _reportQuaternaryDimension = null;
+                            }
+                            if (value == _reportQuaternaryDimension) {
+                              _reportQuaternaryDimension = null;
+                            }
+                          });
                         }
                       },
                     ),
@@ -1396,6 +1438,7 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       onPressed: () => setState(() {
                         if (_reportTertiaryDimension != null) {
                           _reportTertiaryDimension = null;
+                          _reportQuaternaryDimension = null;
                         } else {
                           final options = tertiaryDimensionOptions
                               .map((item) => item.value)
@@ -1433,7 +1476,63 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       items: tertiaryDimensionOptions,
                       onChanged: (value) {
                         if (value != null) {
-                          setState(() => _reportTertiaryDimension = value);
+                          setState(() {
+                            _reportTertiaryDimension = value;
+                            if (value == _reportQuaternaryDimension) {
+                              _reportQuaternaryDimension = null;
+                            }
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                if (_reportTertiaryDimension != null &&
+                    (quaternaryDimensionOptions.isNotEmpty ||
+                        _reportQuaternaryDimension != null))
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => setState(() {
+                        if (_reportQuaternaryDimension != null) {
+                          _reportQuaternaryDimension = null;
+                        } else {
+                          final options = quaternaryDimensionOptions
+                              .map((item) => item.value)
+                              .whereType<String>()
+                              .toList();
+                          if (options.isNotEmpty) {
+                            _reportQuaternaryDimension =
+                                options.contains('entry_page')
+                                ? 'entry_page'
+                                : options.first;
+                          }
+                        }
+                      }),
+                      icon: Icon(
+                        _reportQuaternaryDimension == null
+                            ? Icons.add
+                            : Icons.remove,
+                      ),
+                      label: Text(
+                        _reportQuaternaryDimension == null
+                            ? context.tr('Add a fourth breakdown', '添加第四分析维度')
+                            : context.tr('Remove fourth breakdown', '移除第四分析维度'),
+                      ),
+                    ),
+                  ),
+                if (_reportQuaternaryDimension != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      initialValue: _reportQuaternaryDimension,
+                      decoration: InputDecoration(
+                        labelText: context.tr('And finally by', '最后按以下维度细分'),
+                      ),
+                      items: quaternaryDimensionOptions,
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _reportQuaternaryDimension = value);
                         }
                       },
                     ),
@@ -1860,6 +1959,10 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       clearTertiaryDimension:
                           type == 'custom_report' &&
                           _reportTertiaryDimension == null,
+                      quaternaryDimension: _reportQuaternaryDimension,
+                      clearQuaternaryDimension:
+                          type == 'custom_report' &&
+                          _reportQuaternaryDimension == null,
                       locationLevel: type == 'locations'
                           ? _locationLevel
                           : null,
@@ -2811,6 +2914,7 @@ class _DashboardWidgetContent extends ConsumerWidget {
               dimension: item.dimension ?? 'browser',
               secondaryDimension: item.secondaryDimension,
               tertiaryDimension: item.tertiaryDimension,
+              quaternaryDimension: item.quaternaryDimension,
               metric: item.metric ?? 'sessions',
               formula: item.formula,
               limit: limit,
@@ -2848,6 +2952,13 @@ class _DashboardWidgetContent extends ConsumerWidget {
                 ? null
                 : result.tertiaryCustomDimensionName ??
                       _reportDimensionLabel(context, result.tertiaryDimension!);
+            final quaternaryDimensionLabel = result.quaternaryDimension == null
+                ? null
+                : result.quaternaryCustomDimensionName ??
+                      _reportDimensionLabel(
+                        context,
+                        result.quaternaryDimension!,
+                      );
             if (result.rows.isEmpty) {
               return _Panel(
                 title: item.title,
@@ -2855,6 +2966,7 @@ class _DashboardWidgetContent extends ConsumerWidget {
                   dimensionLabel,
                   ?secondaryDimensionLabel,
                   ?tertiaryDimensionLabel,
+                  ?quaternaryDimensionLabel,
                   metricLabel,
                 ],
                 exportRows: const [],
@@ -2874,6 +2986,7 @@ class _DashboardWidgetContent extends ConsumerWidget {
                 dimensionLabel,
                 ?secondaryDimensionLabel,
                 ?tertiaryDimensionLabel,
+                ?quaternaryDimensionLabel,
                 metricLabel,
               ],
               exportRows: result.rows
@@ -2884,6 +2997,8 @@ class _DashboardWidgetContent extends ConsumerWidget {
                         row.secondaryDimensionValue ?? 'Unknown',
                       if (tertiaryDimensionLabel != null)
                         row.tertiaryDimensionValue ?? 'Unknown',
+                      if (quaternaryDimensionLabel != null)
+                        row.quaternaryDimensionValue ?? 'Unknown',
                       row.metricValue,
                     ],
                   )
@@ -2898,6 +3013,8 @@ class _DashboardWidgetContent extends ConsumerWidget {
                             '$secondaryDimensionLabel: ${row.secondaryDimensionValue ?? 'Unknown'}',
                           if (tertiaryDimensionLabel != null)
                             '$tertiaryDimensionLabel: ${row.tertiaryDimensionValue ?? 'Unknown'}',
+                          if (quaternaryDimensionLabel != null)
+                            '$quaternaryDimensionLabel: ${row.quaternaryDimensionValue ?? 'Unknown'}',
                         ].join(' · ');
                         return _CustomReportBarRow(
                           label: rowLabel,
@@ -2917,6 +3034,7 @@ class _DashboardWidgetContent extends ConsumerWidget {
                       dimensionLabel: dimensionLabel,
                       secondaryDimensionLabel: secondaryDimensionLabel!,
                       tertiaryDimensionLabel: tertiaryDimensionLabel,
+                      quaternaryDimensionLabel: quaternaryDimensionLabel,
                       metricLabel: metricLabel,
                       metric: item.metric ?? 'sessions',
                       formulaFormat: item.formula?.format,
@@ -2979,6 +3097,8 @@ Map<String, Object?> _dashboardWidgetExportMetadata(
     'secondaryDimension': widget.secondaryDimension!,
   if (widget.tertiaryDimension != null)
     'tertiaryDimension': widget.tertiaryDimension!,
+  if (widget.quaternaryDimension != null)
+    'quaternaryDimension': widget.quaternaryDimension!,
   if (widget.metric != null) 'metric': widget.metric!,
   if (widget.formula != null) 'formula': widget.formula!.toJson(),
   if (widget.limit != null) 'limit': widget.limit!,
@@ -3103,6 +3223,7 @@ class _CustomReportTripleTable extends StatelessWidget {
     required this.dimensionLabel,
     required this.secondaryDimensionLabel,
     required this.tertiaryDimensionLabel,
+    this.quaternaryDimensionLabel,
     required this.metricLabel,
     required this.metric,
     required this.rows,
@@ -3112,6 +3233,7 @@ class _CustomReportTripleTable extends StatelessWidget {
   final String dimensionLabel;
   final String secondaryDimensionLabel;
   final String tertiaryDimensionLabel;
+  final String? quaternaryDimensionLabel;
   final String metricLabel;
   final String metric;
   final String? formulaFormat;
@@ -3157,6 +3279,11 @@ class _CustomReportTripleTable extends StatelessWidget {
                         tertiaryDimensionLabel,
                         row.tertiaryDimensionValue ?? 'Unknown',
                       ),
+                      if (quaternaryDimensionLabel != null)
+                        _dimensionValue(
+                          quaternaryDimensionLabel!,
+                          row.quaternaryDimensionValue ?? 'Unknown',
+                        ),
                     ],
                   ),
                 ),

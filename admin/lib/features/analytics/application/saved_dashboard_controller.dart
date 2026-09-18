@@ -16,6 +16,7 @@ class SavedDashboardWidget {
     this.dimension,
     this.secondaryDimension,
     this.tertiaryDimension,
+    this.quaternaryDimension,
     this.formula,
     this.locationLevel,
     this.matchMode,
@@ -31,6 +32,7 @@ class SavedDashboardWidget {
   final String? dimension;
   final String? secondaryDimension;
   final String? tertiaryDimension;
+  final String? quaternaryDimension;
   final CustomReportFormula? formula;
   final String? locationLevel;
   final String? matchMode;
@@ -47,6 +49,7 @@ class SavedDashboardWidget {
         dimension: json['dimension'] as String?,
         secondaryDimension: json['secondaryDimension'] as String?,
         tertiaryDimension: json['tertiaryDimension'] as String?,
+        quaternaryDimension: json['quaternaryDimension'] as String?,
         formula: json['formula'] is Map
             ? CustomReportFormula.fromJson(
                 Map<String, dynamic>.from(json['formula'] as Map),
@@ -160,6 +163,8 @@ class SavedDashboardWidget {
     bool clearSecondaryDimension = false,
     String? tertiaryDimension,
     bool clearTertiaryDimension = false,
+    String? quaternaryDimension,
+    bool clearQuaternaryDimension = false,
     CustomReportFormula? formula,
     bool clearFormula = false,
     String? locationLevel,
@@ -179,6 +184,9 @@ class SavedDashboardWidget {
     tertiaryDimension: clearTertiaryDimension
         ? null
         : tertiaryDimension ?? this.tertiaryDimension,
+    quaternaryDimension: clearQuaternaryDimension
+        ? null
+        : quaternaryDimension ?? this.quaternaryDimension,
     formula: clearFormula ? null : formula ?? this.formula,
     locationLevel: locationLevel ?? this.locationLevel,
     matchMode: matchMode ?? this.matchMode,
@@ -196,6 +204,9 @@ class SavedDashboardWidget {
     }
     if (tertiaryDimension != null) {
       result['tertiaryDimension'] = tertiaryDimension!;
+    }
+    if (quaternaryDimension != null) {
+      result['quaternaryDimension'] = quaternaryDimension!;
     }
     if (formula != null) result['formula'] = formula!.toJson();
     if (locationLevel != null) result['locationLevel'] = locationLevel!;
