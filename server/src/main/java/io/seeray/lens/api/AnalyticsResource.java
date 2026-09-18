@@ -2,6 +2,11 @@ package io.seeray.lens.api;
 
 import io.quarkus.security.Authenticated;
 import io.seeray.lens.application.AnalyticsQueryService;
+import io.seeray.lens.application.AttributionQueryService;
+import io.seeray.lens.application.CohortQueryService;
+import io.seeray.lens.application.CustomReportService;
+import io.seeray.lens.application.GeoLocationResolver;
+import io.seeray.lens.application.SegmentedAnalyticsQueryService;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import java.util.*;
@@ -11,57 +16,163 @@ import java.util.*;
 @Produces(MediaType.APPLICATION_JSON)
 public class AnalyticsResource {
     private final AnalyticsQueryService analytics;
+    private final SegmentedAnalyticsQueryService segmented;
+    private final GeoLocationResolver geoLocationResolver;
+    private final CustomReportService customReports;
+    private final CohortQueryService cohorts;
+    private final AttributionQueryService attribution;
 
-    public AnalyticsResource(AnalyticsQueryService analytics) {
+    public AnalyticsResource(
+            AnalyticsQueryService analytics,
+            SegmentedAnalyticsQueryService segmented,
+            GeoLocationResolver geoLocationResolver,
+            CustomReportService customReports,
+            CohortQueryService cohorts,
+            AttributionQueryService attribution) {
         this.analytics = analytics;
+        this.segmented = segmented;
+        this.geoLocationResolver = geoLocationResolver;
+        this.customReports = customReports;
+        this.cohorts = cohorts;
+        this.attribution = attribution;
     }
 
     @GET
     @Path("/overview")
     public AnalyticsQueryService.Overview overview(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
-        return analytics.overview(site, range);
+        return segmentId == null ? analytics.overview(site, range) : segmented.overview(site, range, segmentId);
+    }
+
+    @GET
+    @Path("/cohorts")
+    public List<CohortQueryService.RetentionCell> cohorts(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("weeks") @DefaultValue("8") int weeks,
+            @QueryParam("segmentId") UUID segmentId) {
+        return cohorts.report(site, analytics.range(site, from, to), segmentId, weeks);
     }
 
     @GET
     @Path("/timeseries")
     public List<AnalyticsQueryService.Daily> timeseries(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
-        return analytics.timeseries(site, range);
+        return segmentId == null ? analytics.timeseries(site, range) : segmented.timeseries(site, range, segmentId);
     }
 
     @GET
     @Path("/pages")
     public List<AnalyticsQueryService.Page> pages(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
-        return analytics.pages(site, range);
+        return segmentId == null ? analytics.pages(site, range) : segmented.pages(site, range, segmentId);
+    }
+
+    @GET
+    @Path("/page-titles")
+    public List<AnalyticsQueryService.PageTitle> pageTitles(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        var range = analytics.range(site, from, to);
+        return segmentId == null ? analytics.pageTitles(site, range) : segmented.pageTitles(site, range, segmentId);
+    }
+
+    @GET
+    @Path("/entry-exit")
+    public List<AnalyticsQueryService.PageFlow> entryExit(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return segmented.entryExit(site, analytics.range(site, from, to), segmentId);
+    }
+
+    @GET
+    @Path("/user-flow")
+    public List<AnalyticsQueryService.PageTransition> userFlow(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return segmented.userFlow(site, analytics.range(site, from, to), segmentId);
     }
 
     @GET
     @Path("/traffic")
     public List<AnalyticsQueryService.Traffic> traffic(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
-        return analytics.traffic(site, range);
+        return segmentId == null ? analytics.traffic(site, range) : segmented.traffic(site, range, segmentId);
     }
 
     @GET
     @Path("/events")
     public List<AnalyticsQueryService.Event> events(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
-        return analytics.events(site, range);
+        return segmentId == null ? analytics.events(site, range) : segmented.events(site, range, segmentId);
+    }
+
+    @GET
+    @Path("/site-search")
+    public SegmentedAnalyticsQueryService.SiteSearchReport siteSearch(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return segmented.siteSearch(site, analytics.range(site, from, to), segmentId);
+    }
+
+    @GET
+    @Path("/content")
+    public SegmentedAnalyticsQueryService.ContentReport content(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return segmented.content(site, analytics.range(site, from, to), segmentId);
+    }
+
+    @GET
+    @Path("/web-vitals")
+    public SegmentedAnalyticsQueryService.WebVitalsReport webVitals(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return segmented.webVitals(site, analytics.range(site, from, to), segmentId);
     }
 
     @GET
     @Path("/visitors")
     public AnalyticsQueryService.VisitorOverview visitors(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
-        return analytics.visitors(site, range);
+        return segmentId == null ? analytics.visitors(site, range) : segmented.visitors(site, range, segmentId);
     }
 
     @GET
@@ -70,15 +181,81 @@ public class AnalyticsResource {
             @PathParam("siteId") UUID site,
             @QueryParam("from") String from,
             @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId,
             @DefaultValue("50") @QueryParam("limit") int limit) {
-        return analytics.visitorLog(site, analytics.range(site, from, to), limit);
+        var range = analytics.range(site, from, to);
+        return segmentId == null
+                ? analytics.visitorLog(site, range, limit)
+                : segmented.visitorLog(site, range, segmentId, limit);
     }
 
     @GET
     @Path("/goals")
     public List<AnalyticsQueryService.Goal> goals(
-            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
-        return analytics.goals(site, range);
+        return segmentId == null ? analytics.goals(site, range) : segmented.goals(site, range, segmentId);
     }
+
+    @GET
+    @Path("/attribution")
+    public AttributionQueryService.Report attribution(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId,
+            @QueryParam("goalId") UUID goalId,
+            @DefaultValue("last_touch") @QueryParam("model") String model,
+            @DefaultValue("30") @QueryParam("lookbackDays") int lookbackDays) {
+        return attribution.report(site, analytics.range(site, from, to), segmentId, goalId, model, lookbackDays);
+    }
+
+    @GET
+    @Path("/technology")
+    public List<AnalyticsQueryService.Technology> technology(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return segmented.technology(site, analytics.range(site, from, to), segmentId);
+    }
+
+    @GET
+    @Path("/locations")
+    public LocationReport locations(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return new LocationReport(
+                geoLocationResolver.configured(),
+                segmented.locations(site, analytics.range(site, from, to), segmentId));
+    }
+
+    @POST
+    @Path("/custom-report/query")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public CustomReportService.Result customReport(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId,
+            CustomReportService.Query request) {
+        return customReports.query(site, from, to, segmentId, request);
+    }
+
+    @GET
+    @Path("/realtime")
+    public List<AnalyticsQueryService.LiveVisitor> realtime(
+            @PathParam("siteId") UUID site,
+            @DefaultValue("30") @QueryParam("windowMinutes") int windowMinutes,
+            @DefaultValue("100") @QueryParam("limit") int limit) {
+        analytics.range(site, null, null); // preserves site/workspace authorization for this non-date-based report
+        return analytics.realtime(site, windowMinutes, limit);
+    }
+
+    public record LocationReport(boolean sourceConfigured, List<AnalyticsQueryService.Location> rows) {}
 }

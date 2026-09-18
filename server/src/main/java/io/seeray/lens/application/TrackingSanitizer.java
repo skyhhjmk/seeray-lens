@@ -14,8 +14,13 @@ public final class TrackingSanitizer {
     private TrackingSanitizer() {}
 
     public static CleanUrl url(String value, ObjectMapper mapper) {
+        return url(value, mapper, null);
+    }
+
+    public static CleanUrl url(String value, ObjectMapper mapper, String title) {
+        String cleanTitle = cleanTitle(title);
         if (value == null || value.isBlank())
-            return new CleanUrl(null, null, null, null, null, null, null, null, null, null, null);
+            return new CleanUrl(null, null, null, null, null, null, null, null, cleanTitle, null, null);
         try {
             URI uri = URI.create(value.trim());
             if (uri.getScheme() == null || uri.getHost() == null || uri.getUserInfo() != null)
@@ -38,12 +43,18 @@ public final class TrackingSanitizer {
                     utm.get("utm_campaign"),
                     utm.get("utm_term"),
                     utm.get("utm_content"),
-                    null,
+                    cleanTitle,
                     null,
                     null);
         } catch (Exception e) {
             throw new ControlPlaneException(400, "INVALID_EVENT_URL", "Event URL is invalid");
         }
+    }
+
+    private static String cleanTitle(String value) {
+        if (value == null || value.isBlank()) return null;
+        String cleaned = value.strip().replaceAll("[\\p{Cc}]", "");
+        return cleaned.isBlank() ? null : limit(cleaned, 512);
     }
 
     public static String json(Object value, ObjectMapper mapper) {

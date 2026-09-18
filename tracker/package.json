@@ -6,7 +6,9 @@
   "main": "./dist/index.global.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "npm run build:tracker && npm run build:recorder && npm run build:replayer && npm run size",
     "build:tracker": "tsup src/index.ts --format esm,iife --global-name SeeRayLens --dts --minify --sourcemap",
@@ -20,11 +22,14 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/node": "^22.0.0",
-    "rrweb": "2.1.4",
     "eslint": "^9.0.0",
+    "rrweb": "2.1.4",
+    "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.0.0",
-    "tsup": "^8.0.0",
     "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "web-vitals": "6.2.2"
   }
 }

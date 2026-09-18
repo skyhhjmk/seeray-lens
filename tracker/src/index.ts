@@ -1,14 +1,24 @@
-export const TRACKER_VERSION = '0.5.0';
+import { onCLS, onINP, onLCP, type Metric } from 'web-vitals';
+
+export const TRACKER_VERSION = '0.8.0';
 
 export interface HeatmapOptions { enabled?: boolean; sampleRate?: number; navigationMode?: 'auto' | 'manual'; layoutVersion?: string; }
 export interface PageReadyOptions { url?: string; layoutVersion?: string; }
 export interface ScrollContainerOptions { id: string; element: HTMLElement; }
-export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; tagManager?: boolean; experiments?: boolean; heatmap?: HeatmapOptions; }
+export interface TagManagerPreviewOptions { sessionId: string; token: string; }
+export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
 export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; }
-interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId: string; sessionId: string; }
+export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
+export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
+interface ClientContext { browser: string; browserVersion?: string; operatingSystem: string; operatingSystemVersion?: string; deviceType: string; language?: string; screenWidth?: number; screenHeight?: number; viewportWidth?: number; viewportHeight?: number; pixelRatio?: number; }
+interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId: string; sessionId: string; context: ClientContext; }
 interface HeatmapConfig { enabled: boolean; sampleRate: number; version?: number; autoSnapshotEnabled: boolean; recordingEnabled: boolean; recordingSampleRate: number; }
 interface TagDefinition { type?: unknown; trigger?: unknown; triggers?: unknown; eventType?: unknown; category?: unknown; action?: unknown; name?: unknown; code?: unknown; properties?: unknown; }
-interface ExperimentDefinition { name?: unknown; variants?: unknown; }
+interface TagPreviewEvent { tagIndex: number; triggerEvent: string; outcome: 'fired' | 'no_match' | 'blocked'; pagePath: string; }
+interface ExperimentDefinition { name?: unknown; variants?: unknown; targeting?: unknown; }
+interface ExperimentTargeting { pathPrefixes: string[]; deviceTypes: string[]; }
+interface LoadedExperiment { variants: string[]; targeting: ExperimentTargeting; }
+const EXPERIMENT_DEVICE_TYPES = new Set(['desktop', 'mobile', 'tablet', 'other']);
 interface HeatmapEvent { type: 'start' | 'click' | 'move' | 'scroll'; instanceId: string; url: string; layoutVersion: string; targetId: string; viewportWidth: number; viewportHeight: number; contentWidth: number; contentHeight: number; x?: number; y?: number; scrollBins?: number[]; truncated?: boolean; dropped?: number; }
 interface ContainerRegistration { element: HTMLElement; remove: () => void; }
 interface HeatmapBatch { clientBatchId: string; events: HeatmapEvent[]; }
@@ -19,6 +29,19 @@ const doNotTrack = (): boolean => ['1', 'yes'].includes(globalThis.navigator?.do
 const storageId = (storage: Storage | undefined, key: string): string => { try { const old = storage?.getItem(key); if (old) return old; const value = uuid(); storage?.setItem(key, value); return value; } catch { return uuid(); } };
 const rate = (value: number | undefined): number => Math.max(0, Math.min(100, value ?? 10));
 const text = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+const stripControls = (value: string): string => Array.from(value)
+  .filter(character => {
+    const code = character.codePointAt(0)!;
+    return code >= 32 && !(code >= 0x7f && code <= 0x9f);
+  })
+  .join('');
+const boundedText = (value: unknown, max: number): string | undefined => typeof value === 'string'
+  ? stripControls(value).trim().replace(/\s+/g, ' ').slice(0, max) || undefined
+  : undefined;
+const contentTarget = (value: unknown): string | undefined => {
+  const target = boundedText(value, 2048);
+  return target?.split(/[?#]/, 1)[0].trim() || undefined;
+};
 const isProperties = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const absoluteApiUrl = (path: string, base?: string): string => {
   try {
@@ -41,47 +64,376 @@ export const resolveApiOrigin = (scriptSrc?: string): string | undefined => {
 };
 const ignored = (target: EventTarget | null): boolean => target instanceof Element && !!target.closest('[data-seeray-heatmap-ignore]');
 const fixed = (target: EventTarget | null): boolean => { for (let e = target instanceof Element ? target : null; e; e = e.parentElement) { const p = globalThis.getComputedStyle?.(e).position; if (p === 'fixed' || p === 'sticky') return true; } return false; };
+const majorVersion = (ua: string, expression: RegExp): string | undefined => expression.exec(ua)?.[1];
+const clientContext = (): ClientContext => {
+  const nav = globalThis.navigator;
+  const ua = nav?.userAgent ?? '';
+  let browser = 'Other';
+  let browserVersion: string | undefined;
+  if (/SamsungBrowser\//.test(ua)) { browser = 'Samsung Internet'; browserVersion = majorVersion(ua, /SamsungBrowser\/(\d+)/); }
+  else if (/Edg(?:A|iOS)?\//.test(ua)) { browser = 'Edge'; browserVersion = majorVersion(ua, /Edg(?:A|iOS)?\/(\d+)/); }
+  else if (/OPR\//.test(ua) || /Opera\//.test(ua) || /OPiOS\//.test(ua)) { browser = 'Opera'; browserVersion = majorVersion(ua, /(?:OPR|Opera|OPiOS)\/(\d+)/); }
+  else if (/Firefox\//.test(ua) || /FxiOS\//.test(ua)) { browser = 'Firefox'; browserVersion = majorVersion(ua, /(?:Firefox|FxiOS)\/(\d+)/); }
+  else if ((/Chrome\//.test(ua) || /CriOS\//.test(ua)) && !/Chromium\//.test(ua)) { browser = 'Chrome'; browserVersion = majorVersion(ua, /(?:Chrome|CriOS)\/(\d+)/); }
+  else if (/Safari\//.test(ua)) { browser = 'Safari'; browserVersion = majorVersion(ua, /Version\/(\d+)/); }
+  let operatingSystem = 'Other';
+  let operatingSystemVersion: string | undefined;
+  if (/Android/.test(ua)) { operatingSystem = 'Android'; operatingSystemVersion = majorVersion(ua, /Android ([\d.]+)/); }
+  else if (/iPhone|iPad|iPod/.test(ua) || nav?.platform === 'MacIntel' && nav.maxTouchPoints > 1) { operatingSystem = 'iOS'; operatingSystemVersion = majorVersion(ua, /OS ([\d_]+)/)?.replaceAll('_', '.'); }
+  else if (/Windows NT/.test(ua)) { operatingSystem = 'Windows'; operatingSystemVersion = majorVersion(ua, /Windows NT ([\d.]+)/); }
+  else if (/Mac OS X/.test(ua)) { operatingSystem = 'macOS'; operatingSystemVersion = majorVersion(ua, /Mac OS X ([\d_]+)/)?.replaceAll('_', '.'); }
+  else if (/CrOS/.test(ua)) { operatingSystem = 'ChromeOS'; operatingSystemVersion = majorVersion(ua, /CrOS [^ ]+ ([\d.]+)/); }
+  else if (/Linux/.test(ua)) operatingSystem = 'Linux';
+  const isTablet = /iPad|Tablet|Android(?!.*Mobile)/i.test(ua) || nav?.platform === 'MacIntel' && nav.maxTouchPoints > 1;
+  const deviceType = isTablet ? 'tablet' : /Mobile|iPhone|iPod|Android/i.test(ua) ? 'mobile' : ua ? 'desktop' : 'other';
+  const screen = globalThis.screen;
+  const width = (value: number | undefined): number | undefined => Number.isFinite(value) && value! > 0 && value! <= 10000 ? Math.round(value!) : undefined;
+  return {
+    browser,
+    browserVersion,
+    operatingSystem,
+    operatingSystemVersion,
+    deviceType,
+    language: text(nav?.language)?.slice(0, 35),
+    screenWidth: width(screen?.width),
+    screenHeight: width(screen?.height),
+    viewportWidth: width(globalThis.innerWidth),
+    viewportHeight: width(globalThis.innerHeight),
+    pixelRatio: Number.isFinite(globalThis.devicePixelRatio) && globalThis.devicePixelRatio > 0 ? Math.min(8, globalThis.devicePixelRatio) : undefined,
+  };
+};
 
 export class Tracker {
   private readonly endpoint: string; private readonly heatmapEndpoint: string; private readonly heatmapConfigEndpoint: string; private readonly tagManagerEndpoint: string; private readonly experimentsEndpoint: string; private readonly snapshotPlanEndpoint: string; private readonly snapshotEndpoint: string; private readonly recordingEndpoint: string; private readonly recorderEndpoint: string; private readonly maxBatchSize: number; private readonly flushInterval: number; private readonly visitorId: string; private readonly sessionId: string; private readonly recordingId: string;
+  private readonly tagManagerPreviewEndpoint?: string;
+  private readonly tagManagerPreviewEventsEndpoint?: string;
+  private readonly tagManagerPreviewToken?: string;
   private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false;
   private heatmapConfig: HeatmapConfig | undefined; private heatmapQueue: HeatmapEvent[] = []; private heatmapTimer: ReturnType<typeof setTimeout> | undefined; private heatmapInstance: string | undefined; private heatmapUrl = ''; private heatmapLayoutVersion = 'unversioned'; private heatmapSelected = false; private heatmapNavigating = false;
-  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private recordingSelected = false; private recorderStop: (() => void) | undefined;
+  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
   private readonly containers = new Map<string, ContainerRegistration>(); private readonly scrollBins = new Map<string, Set<number>>(); private readonly lastScroll = new Map<string, number>();
   private readonly layoutSegments = new Map<string, string>();
   private tagDefinitions: TagDefinition[] = [];
-  private readonly experimentDefinitions = new Map<string, string[]>();
+  private previewExecuteCustomCode = false;
+  private readonly experimentDefinitions = new Map<string, LoadedExperiment>();
   private readyPromise: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: TrackerOptions) {
     const apiBase = options.apiOrigin ?? options.endpoint;
-    this.endpoint = options.endpoint ?? absoluteApiUrl('/api/v1/collect', apiBase); this.heatmapEndpoint = absoluteApiUrl('/api/v1/collect/heatmaps', apiBase); this.heatmapConfigEndpoint = absoluteApiUrl(`/api/v1/heatmap-config/${encodeURIComponent(options.siteId)}`, apiBase); this.tagManagerEndpoint = absoluteApiUrl(`/api/v1/tag-manager/${encodeURIComponent(options.siteId)}/container`, apiBase); this.experimentsEndpoint = absoluteApiUrl(`/api/v1/experiments/${encodeURIComponent(options.siteId)}/definitions`, apiBase); this.snapshotPlanEndpoint = absoluteApiUrl(`/api/v1/collect/dom-snapshots/plan/${encodeURIComponent(options.siteId)}`, apiBase); this.snapshotEndpoint = absoluteApiUrl(`/api/v1/collect/dom-snapshots/${encodeURIComponent(options.siteId)}`, apiBase); this.recordingEndpoint = absoluteApiUrl(`/api/v1/collect/recordings/${encodeURIComponent(options.siteId)}`, apiBase); this.recorderEndpoint = absoluteApiUrl('/recorder.js', apiBase); this.maxBatchSize = Math.max(1, Math.min(options.maxBatchSize ?? 10, 100)); this.flushInterval = Math.max(100, options.flushInterval ?? 2000); this.visitorId = storageId(globalThis.localStorage, `seeray:${options.siteId}:visitor_id`); this.sessionId = storageId(globalThis.sessionStorage, `seeray:${options.siteId}:session_id`); this.recordingId = storageId(globalThis.sessionStorage, `seeray:${options.siteId}:recording_id`);
+    this.endpoint = options.endpoint ?? absoluteApiUrl('/api/v1/collect', apiBase); this.heatmapEndpoint = absoluteApiUrl('/api/v1/collect/heatmaps', apiBase); this.heatmapConfigEndpoint = absoluteApiUrl(`/api/v1/heatmap-config/${encodeURIComponent(options.siteId)}`, apiBase); const requestedTagEnvironment = options.tagManagerEnvironment ?? 'production'; const tagEnvironment = ['development', 'staging', 'production'].includes(requestedTagEnvironment) ? requestedTagEnvironment : 'production'; this.tagManagerEndpoint = `${absoluteApiUrl(`/api/v1/tag-manager/${encodeURIComponent(options.siteId)}/container`, apiBase)}?environment=${encodeURIComponent(tagEnvironment)}`; this.experimentsEndpoint = absoluteApiUrl(`/api/v1/experiments/${encodeURIComponent(options.siteId)}/definitions`, apiBase); this.snapshotPlanEndpoint = absoluteApiUrl(`/api/v1/collect/dom-snapshots/plan/${encodeURIComponent(options.siteId)}`, apiBase); this.snapshotEndpoint = absoluteApiUrl(`/api/v1/collect/dom-snapshots/${encodeURIComponent(options.siteId)}`, apiBase); this.recordingEndpoint = absoluteApiUrl(`/api/v1/collect/recordings/${encodeURIComponent(options.siteId)}`, apiBase); this.recorderEndpoint = absoluteApiUrl('/recorder.js', apiBase); this.maxBatchSize = Math.max(1, Math.min(options.maxBatchSize ?? 10, 100)); this.flushInterval = Math.max(100, options.flushInterval ?? 2000); this.visitorId = storageId(globalThis.localStorage, `seeray:${options.siteId}:visitor_id`); this.sessionId = storageId(globalThis.sessionStorage, `seeray:${options.siteId}:session_id`); this.recordingId = storageId(globalThis.sessionStorage, `seeray:${options.siteId}:recording_id`);
+    const preview = options.tagManagerPreview;
+    if (preview?.sessionId && preview.token) {
+      const previewPath = `/api/v1/tag-manager/${encodeURIComponent(options.siteId)}/preview/${encodeURIComponent(preview.sessionId)}`;
+      this.tagManagerPreviewEndpoint = absoluteApiUrl(previewPath, apiBase);
+      this.tagManagerPreviewEventsEndpoint = absoluteApiUrl(`${previewPath}/events`, apiBase);
+      this.tagManagerPreviewToken = preview.token;
+    }
+    // Register metric listeners before the unload flush listeners so final CLS/INP
+    // callbacks can enqueue their sample before the collector sends its last batch.
+    this.startWebVitals();
     globalThis.addEventListener?.('pagehide', () => { void this.flush(true); void this.flushHeatmap(true); this.stopRecorder(); }); globalThis.addEventListener?.('visibilitychange', () => { if (globalThis.document?.visibilityState === 'hidden') { void this.flush(true); void this.flushHeatmap(true); } else this.refreshHeatmapLayout(); });
+    this.installSiteSearchListener();
+    this.installContentTracking();
+    this.refreshContentTracking();
     if (options.trackDownloads !== false || options.trackOutlinks !== false) this.installBehaviourListener();
     this.readyPromise = this.loadConfigured();
   }
   hasConsent(): boolean { return !this.options.requireConsent || globalThis.localStorage?.getItem(this.consentKey()) === 'granted'; }
-  setConsent(granted: boolean): void { try { globalThis.localStorage?.setItem(this.consentKey(), granted ? 'granted' : 'denied'); } catch { /* Storage may be unavailable in restrictive browser contexts. */ } if (!granted) { this.queue = []; this.heatmapQueue = []; this.heatmapRetry = undefined; this.tagDefinitions = []; this.experimentDefinitions.clear(); this.stopRecorder(); } else this.readyPromise = this.loadConfigured(); }
+  setConsent(granted: boolean): void { try { globalThis.localStorage?.setItem(this.consentKey(), granted ? 'granted' : 'denied'); } catch { /* Storage may be unavailable in restrictive browser contexts. */ } if (!granted) { this.queue = []; this.heatmapQueue = []; this.heatmapRetry = undefined; this.tagDefinitions = []; this.experimentDefinitions.clear(); this.contentObserver?.disconnect(); this.stopRecorder(); } else { this.startWebVitals(); this.readyPromise = this.loadConfigured(); this.refreshContentTracking(true); } }
   optOut(): void { this.setConsent(false); }
   ready(): Promise<void> { return this.readyPromise; }
-  assignExperiment(experiment: string, variations?: string[]): string | undefined { const name = experiment.trim(); const configured = name ? this.experimentDefinitions.get(name) : undefined; const choices = (variations?.length ? variations : configured ?? []).filter(value => value.trim()); if (!this.collectionAllowed() || !name || !choices.length) return undefined; const key = `seeray:${this.options.siteId}:experiment:${name}`; let selected: string | null = null; try { selected = globalThis.localStorage?.getItem(key) ?? null; if (!selected || !choices.includes(selected)) { selected = choices[Math.floor(Math.random() * choices.length)]; globalThis.localStorage?.setItem(key, selected); } } catch { selected = choices[Math.floor(Math.random() * choices.length)]; } this.track('experiment_exposure', { category: 'experiment', action: name, name: selected }); return selected; }
+  assignExperiment(experiment: string, variations?: string[]): string | undefined { const name = experiment.trim(); const configured = name ? this.experimentDefinitions.get(name) : undefined; const choices = (variations?.length ? variations : configured?.variants ?? []).filter(value => value.trim()); if (!this.collectionAllowed() || !name || !choices.length || this.options.experiments && !configured || configured && !this.matchesExperimentTarget(configured.targeting)) return undefined; const key = `seeray:${this.options.siteId}:experiment:${name}`; let selected: string | null = null; try { selected = globalThis.localStorage?.getItem(key) ?? null; if (!selected || !choices.includes(selected)) { selected = choices[Math.floor(Math.random() * choices.length)]; globalThis.localStorage?.setItem(key, selected); } } catch { selected = choices[Math.floor(Math.random() * choices.length)]; } this.track('experiment_exposure', { category: 'experiment', action: name, name: selected }); return selected; }
   trackPageView(options: TrackOptions = {}): void { if (!this.collectionAllowed() || this.pageViewRecorded) return; this.pageViewRecorded = true; const durationMs = this.currentPageStartedAt === undefined ? options.durationMs : Math.max(0, Date.now() - this.currentPageStartedAt); this.currentPageStartedAt = Date.now(); this.track('page_view', { ...options, durationMs }); this.fireTagTriggers({ event: 'page_view', ...options }); }
   trackGoal(name: string, options: Omit<TrackOptions, 'name'> = {}): void { if (name.trim()) this.track('goal', { ...options, name: name.trim() }); }
-  push(data: DataLayerEvent): void { if (!data?.event) return; this.track(data.event, { category: data.eventCategory, action: data.eventAction, name: data.eventName, properties: data.properties }); this.fireTagTriggers(data); }
-  track(type: string, options: TrackOptions = {}): void { if (!this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title ?? globalThis.document?.title, referrer: options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: this.visitorId, sessionId: this.sessionId }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
+  trackSiteSearch(keyword: string, options: SiteSearchOptions = {}): void {
+    const normalized = stripControls(keyword).trim().replace(/\s+/g, ' ').slice(0, 256);
+    if (!normalized) return;
+    const category = text(options.category) ? stripControls(options.category!.trim()).slice(0, 120) : undefined;
+    const resultsCount = Number.isSafeInteger(options.resultsCount) && options.resultsCount! >= 0 && options.resultsCount! <= 1_000_000_000
+      ? options.resultsCount
+      : undefined;
+    const properties: Record<string, unknown> = { keyword: normalized };
+    if (category) properties.searchCategory = category;
+    if (resultsCount !== undefined) properties.resultsCount = resultsCount;
+    this.track('site_search', {
+      url: options.url,
+      title: options.title,
+      referrer: options.referrer,
+      category: 'site_search',
+      action: category,
+      name: normalized,
+      properties,
+    });
+  }
+  trackContentImpression(contentName: string, options: ContentTrackingOptions = {}): void {
+    this.trackContentEvent('content_impression', contentName, 'impression', options);
+  }
+  trackContentInteraction(contentName: string, options: ContentTrackingOptions = {}): void {
+    this.trackContentEvent('content_interaction', contentName, boundedText(options.interaction, 120) ?? 'click', options);
+  }
+  push(data: DataLayerEvent): void { if (!data?.event) return; this.track(data.event, { url: data.url, title: data.title, referrer: data.referrer, category: data.eventCategory, action: data.eventAction, name: data.eventName, properties: data.properties }); this.fireTagTriggers(data); }
+  track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title ?? globalThis.document?.title, referrer: options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: this.visitorId, sessionId: this.sessionId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
   async flush(unload = false): Promise<void> { if (this.timer) clearTimeout(this.timer); this.timer = undefined; if (!this.queue.length || !this.collectionAllowed()) return; const events = this.queue.splice(0, this.maxBatchSize); const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events }); if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return; try { const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok) throw new Error(`collector returned ${response.status}`); } catch { this.queue.unshift(...events); this.schedule(); } }
 
-  beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); } this.pageViewRecorded = false; }
-  cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); }
-  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); } if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
+  beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); } this.pageViewRecorded = false; }
+  cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); this.refreshContentTracking(true); }
+  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); this.refreshContentTracking(true); } if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
   registerScrollContainer(options: ScrollContainerOptions): () => void { if (!options.id.trim() || this.containers.has(options.id)) return () => undefined; const listener = () => this.recordScroll(options.id); options.element.addEventListener('scroll', listener, { passive: true }); this.containers.set(options.id, { element: options.element, remove: () => options.element.removeEventListener('scroll', listener) }); this.resizeObserver?.observe(options.element); if (this.heatmapInstance && this.heatmapSelected) this.captureTargetStart(options.id, options.element, true); return () => { const entry = this.containers.get(options.id); entry?.remove(); this.resizeObserver?.unobserve(options.element); this.containers.delete(options.id); this.scrollBins.delete(options.id); this.lastScroll.delete(options.id); this.layoutSegments.delete(options.id); }; }
   refreshHeatmapLayout(): void { if (!this.heatmapInstance || !this.heatmapSelected) return; if (this.layoutTimer) clearTimeout(this.layoutTimer); this.layoutTimer = setTimeout(() => this.captureStart(), 200); }
   private collectionAllowed(): boolean { return !doNotTrack() && this.hasConsent(); }
   private consentKey(): string { return `seeray:${this.options.siteId}:consent`; }
-  private async loadConfigured(): Promise<void> { if (!this.collectionAllowed()) return; const tasks: Promise<void>[] = []; if (this.options.tagManager) tasks.push(this.loadTagManager()); if (this.options.experiments) tasks.push(this.loadExperiments()); if (this.options.heatmap?.enabled) tasks.push(this.loadHeatmapConfig()); await Promise.all(tasks); }
-  private async loadTagManager(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.tagManagerEndpoint); if (!response.ok) return; const tags = await response.json(); if (Array.isArray(tags)) this.tagDefinitions = tags.filter((tag): tag is TagDefinition => !!tag && typeof tag === 'object').slice(0, 100); } catch { /* Tag execution is optional and must not affect ordinary tracking. */ } }
-  private async loadExperiments(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.experimentsEndpoint); if (!response.ok) return; const definitions = await response.json(); if (!Array.isArray(definitions)) return; this.experimentDefinitions.clear(); for (const definition of definitions as ExperimentDefinition[]) { const name = text(definition.name); const variants = Array.isArray(definition.variants) ? definition.variants.filter((variant): variant is string => typeof variant === 'string' && !!variant.trim()) : []; if (name && variants.length >= 2) this.experimentDefinitions.set(name, variants); } } catch { /* Experiment configuration is optional and must not affect ordinary tracking. */ } }
-  private fireTagTriggers(data: DataLayerEvent | TrackOptions): void { if (!this.collectionAllowed()) return; const event = typeof (data as DataLayerEvent).event === 'string' ? (data as DataLayerEvent).event : undefined; if (!event) return; for (const tag of this.tagDefinitions) { const type = text(tag.type); if (type !== 'event' && type !== 'page_view' && type !== 'custom_html') continue; if (!this.tagMatches(tag, event, data)) continue; if (type === 'custom_html') { this.executeCustomHtml(tag); continue; } const eventType = text(tag.eventType) ?? text(tag.name); if (!eventType) continue; const properties = { ...(data as DataLayerEvent).properties, ...(isProperties(tag.properties) ? tag.properties : {}) }; this.track(eventType, { category: text(tag.category), action: text(tag.action), name: text(tag.name), properties: Object.keys(properties).length ? properties : undefined }); } }
+  private installSiteSearchListener(): void {
+    if (this.siteSearchListenerInstalled) return;
+    this.siteSearchListenerInstalled = true;
+    globalThis.document?.addEventListener?.('submit', event => {
+      const candidate = event.target as (HTMLFormElement & Element) | null;
+      const form = candidate?.tagName === 'FORM'
+        ? candidate
+        : candidate?.closest?.('form[data-seeray-search]') as HTMLFormElement | null;
+      if (!form?.hasAttribute('data-seeray-search') || form.closest('[data-seeray-no-track]')) return;
+      const input = form.querySelector<HTMLInputElement>(
+        'input[data-seeray-search-term],input[type="search"],input[name="q"],input[name="query"],input[name="search"]',
+      );
+      if (!input) return;
+      this.trackSiteSearch(input.value, {
+        category: form.getAttribute('data-seeray-search-category') ?? undefined,
+      });
+    }, true);
+  }
+
+  private trackContentEvent(type: 'content_impression' | 'content_interaction', contentName: string, interaction: string, options: ContentTrackingOptions): void {
+    const name = boundedText(contentName, 256);
+    if (!name) return;
+    const piece = boundedText(options.piece, 256);
+    const target = contentTarget(options.target);
+    const properties: Record<string, string> = { contentName: name };
+    if (piece) properties.contentPiece = piece;
+    if (target) properties.contentTarget = target;
+    if (type === 'content_interaction') properties.interaction = interaction;
+    this.track(type, {
+      url: options.url,
+      title: options.title,
+      referrer: options.referrer,
+      category: 'content',
+      action: interaction,
+      name,
+      properties,
+    });
+  }
+
+  private installContentTracking(): void {
+    if (this.contentListenerInstalled) return;
+    this.contentListenerInstalled = true;
+    globalThis.document?.addEventListener?.('click', event => {
+      const actionElement = event.target instanceof Element
+        ? event.target.closest<HTMLElement>('[data-seeray-content-action]')
+        : null;
+      if (!actionElement || actionElement.closest('[data-seeray-no-track]')) return;
+      const content = actionElement.closest<HTMLElement>('[data-seeray-content-name]');
+      const name = content?.getAttribute('data-seeray-content-name');
+      if (!content || !name) return;
+      this.trackContentInteraction(name, {
+        piece: content.getAttribute('data-seeray-content-piece') ?? undefined,
+        target: content.getAttribute('data-seeray-content-target') || actionElement.getAttribute('href') || undefined,
+        interaction: actionElement.getAttribute('data-seeray-content-action') ?? 'click',
+      });
+    }, { passive: true });
+    globalThis.document?.addEventListener?.('DOMContentLoaded', () => this.refreshContentTracking(), { once: true });
+  }
+
+  refreshContentTracking(reset = false): void {
+    const document = globalThis.document;
+    if (!document || !this.collectionAllowed()) {
+      if (!this.collectionAllowed()) this.contentObserver?.disconnect();
+      return;
+    }
+    if (reset) {
+      this.contentObserver?.disconnect();
+      this.contentSeen = new WeakSet<Element>();
+      this.contentObserved = new WeakSet<Element>();
+    }
+    const elements = document.querySelectorAll?.('[data-seeray-content-name]') as NodeListOf<HTMLElement> | undefined;
+    if (!elements?.length) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      elements.forEach(element => this.recordContentImpression(element));
+      return;
+    }
+    if (!this.contentObserver) {
+      this.contentObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          const element = entry.target as HTMLElement;
+          if (!entry.isIntersecting || entry.intersectionRatio < 0.1 || this.contentSeen.has(element)) continue;
+          this.recordContentImpression(element);
+        }
+      }, { threshold: [0.1] });
+    }
+    elements.forEach(element => {
+      if (this.contentObserved.has(element)) return;
+      this.contentObserved.add(element);
+      this.contentObserver?.observe(element);
+    });
+  }
+
+  private recordContentImpression(element: HTMLElement): void {
+    if (this.contentSeen.has(element)) return;
+    const name = element.getAttribute('data-seeray-content-name');
+    if (!name || element.closest('[data-seeray-no-track]')) return;
+    this.contentSeen.add(element);
+    this.trackContentImpression(name, {
+      piece: element.getAttribute('data-seeray-content-piece') ?? undefined,
+      target: element.getAttribute('data-seeray-content-target') ?? undefined,
+    });
+  }
+  private async loadConfigured(): Promise<void> {
+    if (!this.collectionAllowed()) return;
+    if (this.options.tagManagerPreview) {
+      await this.loadTagManager();
+      return;
+    }
+    const tasks: Promise<void>[] = [];
+    if (this.options.tagManager) tasks.push(this.loadTagManager());
+    if (this.options.experiments) tasks.push(this.loadExperiments());
+    if (this.options.heatmap?.enabled) tasks.push(this.loadHeatmapConfig());
+    await Promise.all(tasks);
+  }
+  private async loadTagManager(): Promise<void> {
+    if (!this.collectionAllowed()) return;
+    try {
+      if (this.options.tagManagerPreview) {
+        if (!this.tagManagerPreviewEndpoint || !this.tagManagerPreviewToken) return;
+        const response = await fetch(this.tagManagerPreviewEndpoint, {
+          headers: { Authorization: `Bearer ${this.tagManagerPreviewToken}` },
+        });
+        if (!response.ok) return;
+        const bundle = await response.json() as { tags?: unknown; executeCustomCode?: unknown };
+        if (!Array.isArray(bundle.tags)) return;
+        this.tagDefinitions = bundle.tags.filter((tag): tag is TagDefinition => !!tag && typeof tag === 'object').slice(0, 100);
+        this.previewExecuteCustomCode = bundle.executeCustomCode === true;
+        return;
+      }
+      const response = await fetch(this.tagManagerEndpoint);
+      if (!response.ok) return;
+      const tags = await response.json();
+      if (Array.isArray(tags)) this.tagDefinitions = tags.filter((tag): tag is TagDefinition => !!tag && typeof tag === 'object').slice(0, 100);
+    } catch { /* Tag execution is optional and must not affect ordinary tracking. */ }
+  }
+  private async loadExperiments(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.experimentsEndpoint); if (!response.ok) return; const definitions = await response.json(); if (!Array.isArray(definitions)) return; this.experimentDefinitions.clear(); for (const definition of definitions as ExperimentDefinition[]) { const name = text(definition.name); const variants = Array.isArray(definition.variants) ? definition.variants.filter((variant): variant is string => typeof variant === 'string' && !!variant.trim()) : []; if (!name || variants.length < 2) continue; const rawTargeting = isProperties(definition.targeting) ? definition.targeting : {}; const rawPaths = rawTargeting.pathPrefixes ?? []; const rawDevices = rawTargeting.deviceTypes ?? []; if (!Array.isArray(rawPaths) || !Array.isArray(rawDevices)) continue; const pathPrefixes = rawPaths.filter((path): path is string => typeof path === 'string' && path.startsWith('/') && !path.includes('?') && !path.includes('#') && path.length <= 512); const deviceTypes = rawDevices.filter((device): device is string => typeof device === 'string' && EXPERIMENT_DEVICE_TYPES.has(device)); if (pathPrefixes.length !== rawPaths.length || deviceTypes.length !== rawDevices.length || new Set(pathPrefixes).size !== pathPrefixes.length || new Set(deviceTypes).size !== deviceTypes.length) continue; this.experimentDefinitions.set(name, { variants, targeting: { pathPrefixes, deviceTypes } }); } } catch { /* Experiment configuration is optional and must not affect ordinary tracking. */ } }
+  private matchesExperimentTarget(targeting: ExperimentTargeting): boolean { if (targeting.pathPrefixes.length) { let pathname: string; try { pathname = new URL(globalThis.location?.href ?? '').pathname; } catch { return false; } if (!targeting.pathPrefixes.some(prefix => prefix === '/' || pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`))) return false; } if (targeting.deviceTypes.length && !targeting.deviceTypes.includes(clientContext().deviceType)) return false; return true; }
+  private fireTagTriggers(data: DataLayerEvent | TrackOptions): void {
+    if (!this.collectionAllowed()) return;
+    const event = typeof (data as DataLayerEvent).event === 'string' ? (data as DataLayerEvent).event : undefined;
+    if (!event) return;
+    if (this.options.tagManagerPreview) {
+      this.firePreviewTagTriggers(event, data);
+      return;
+    }
+    for (const tag of this.tagDefinitions) {
+      const type = text(tag.type);
+      if (type !== 'event' && type !== 'page_view' && type !== 'custom_html') continue;
+      if (!this.tagMatches(tag, event, data)) continue;
+      if (type === 'custom_html') { this.executeCustomHtml(tag); continue; }
+      const eventType = text(tag.eventType) ?? text(tag.name);
+      if (!eventType) continue;
+      const properties = { ...(isProperties((data as DataLayerEvent).properties) ? (data as DataLayerEvent).properties : {}), ...this.resolveTagProperties(tag.properties, data) };
+      this.track(eventType, { category: text(tag.category), action: text(tag.action), name: text(tag.name), properties: Object.keys(properties).length ? properties : undefined });
+    }
+  }
+  private firePreviewTagTriggers(event: string, data: DataLayerEvent | TrackOptions): void {
+    const logs: TagPreviewEvent[] = [];
+    for (let tagIndex = 0; tagIndex < this.tagDefinitions.length; tagIndex++) {
+      const tag = this.tagDefinitions[tagIndex];
+      const type = text(tag.type);
+      if (type !== 'event' && type !== 'page_view' && type !== 'custom_html') continue;
+      const triggers = Array.isArray(tag.triggers) ? tag.triggers : [];
+      const hasCustomJavaScript = triggers.some(trigger => !!trigger && typeof trigger === 'object' && text((trigger as { type?: unknown }).type) === 'custom_js');
+      let matched = false;
+      let blockedByCustomJavaScript = false;
+      if (hasCustomJavaScript && !this.previewExecuteCustomCode) {
+        const withoutCode = { ...tag, triggers: triggers.filter(trigger => !trigger || typeof trigger !== 'object' || text((trigger as { type?: unknown }).type) !== 'custom_js') };
+        matched = this.tagMatches(withoutCode, event, data);
+        blockedByCustomJavaScript = !matched;
+      } else {
+        matched = this.tagMatches(tag, event, data);
+      }
+      let outcome: TagPreviewEvent['outcome'];
+      if (blockedByCustomJavaScript) {
+        outcome = 'blocked';
+      } else if (!matched) {
+        outcome = 'no_match';
+      } else if (type === 'custom_html' && !this.previewExecuteCustomCode) {
+        outcome = 'blocked';
+      } else {
+        if (type === 'custom_html') this.executeCustomHtml(tag);
+        outcome = 'fired';
+      }
+      logs.push({ tagIndex, triggerEvent: event.slice(0, 64), outcome, pagePath: this.previewPagePath(data) });
+    }
+    if (logs.length) void this.recordPreviewEvents(logs);
+  }
+  private previewPagePath(data: DataLayerEvent | TrackOptions): string {
+    try {
+      const rawUrl = (data as TrackOptions).url ?? globalThis.location?.href ?? '/';
+      return new URL(rawUrl, globalThis.location?.href).pathname.slice(0, 512) || '/';
+    } catch {
+      return '/';
+    }
+  }
+  private async recordPreviewEvents(events: TagPreviewEvent[]): Promise<void> {
+    if (!this.tagManagerPreviewEventsEndpoint || !this.tagManagerPreviewToken) return;
+    try {
+      await fetch(this.tagManagerPreviewEventsEndpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.tagManagerPreviewToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(events),
+      });
+    } catch { /* Debug logging must never disrupt the site under test. */ }
+  }
+  private resolveTagProperties(value: unknown, data: DataLayerEvent | TrackOptions): Record<string, unknown> {
+    if (!isProperties(value)) return {};
+    const properties: Record<string, unknown> = {};
+    for (const [key, configuredValue] of Object.entries(value)) {
+      if (typeof configuredValue !== 'string') { properties[key] = configuredValue; continue; }
+      properties[key] = configuredValue.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (token, variable: string) => {
+        const resolved = this.resolveTagVariable(variable.trim(), data);
+        return resolved === undefined ? token : this.variableText(resolved);
+      });
+    }
+    return properties;
+  }
+  private resolveTagVariable(name: string, data: DataLayerEvent | TrackOptions): unknown {
+    const event = data as DataLayerEvent;
+    const context = clientContext();
+    const known: Record<string, unknown> = {
+      'Page URL': event.url ?? globalThis.location?.href,
+      'Page Title': event.title ?? globalThis.document?.title,
+      Referrer: event.referrer ?? globalThis.document?.referrer,
+      Event: event.event,
+      'Event Name': event.eventName ?? event.name,
+      'Event Category': event.eventCategory ?? event.category,
+      'Event Action': event.eventAction ?? event.action,
+      Browser: context.browser,
+      'Operating System': context.operatingSystem,
+      'Device Type': context.deviceType,
+      Language: context.language,
+      'Screen Width': context.screenWidth,
+      'Screen Height': context.screenHeight,
+      'Viewport Width': context.viewportWidth,
+      'Viewport Height': context.viewportHeight,
+    };
+    if (Object.prototype.hasOwnProperty.call(known, name)) return known[name];
+    const propertyMatch = /^Event Property:\s*(.+)$/.exec(name);
+    const eventProperties = isProperties(event.properties) ? event.properties : undefined;
+    if (propertyMatch && eventProperties && Object.prototype.hasOwnProperty.call(eventProperties, propertyMatch[1])) return eventProperties[propertyMatch[1]];
+    return undefined;
+  }
+  private variableText(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    try { return JSON.stringify(value) ?? ''; } catch { return ''; }
+  }
   private tagMatches(tag: TagDefinition, event: string, data: DataLayerEvent | TrackOptions): boolean {
     const triggers = Array.isArray(tag.triggers) ? tag.triggers : [];
     if (triggers.length) return triggers.some(trigger => this.triggerMatches(trigger, event, data));
@@ -92,9 +444,35 @@ export class Tracker {
   private triggerMatches(trigger: unknown, event: string, data: DataLayerEvent | TrackOptions): boolean {
     if (typeof trigger === 'string') return trigger.trim() === event;
     if (!trigger || typeof trigger !== 'object') return false;
-    const value = trigger as { type?: unknown; event?: unknown; functionName?: unknown; code?: unknown };
+    const value = trigger as { type?: unknown; event?: unknown; functionName?: unknown; code?: unknown; conditions?: unknown };
     if (text(value.type) === 'custom_js') return this.runCustomTrigger(value, data);
-    return text(value.event) === event;
+    return text(value.event) === event && this.eventConditionsMatch(value.conditions, data);
+  }
+  private eventConditionsMatch(conditions: unknown, data: DataLayerEvent | TrackOptions): boolean {
+    if (conditions === undefined || conditions === null) return true;
+    if (!Array.isArray(conditions) || conditions.length > 20) return false;
+    const eventProperties = (data as DataLayerEvent).properties;
+    const properties = isProperties(eventProperties) ? eventProperties : {};
+    return conditions.every(condition => {
+      if (!isProperties(condition)) return false;
+      const property = text(condition.property);
+      const operator = text(condition.operator);
+      if (!property || !operator) return false;
+      const exists = Object.prototype.hasOwnProperty.call(properties, property) && properties[property] !== undefined && properties[property] !== null;
+      if (operator === 'exists') return exists;
+      if (!exists || typeof condition.value !== 'string') return false;
+      const actual = properties[property];
+      const actualText = typeof actual === 'string' ? actual : typeof actual === 'number' || typeof actual === 'boolean' ? String(actual) : undefined;
+      if (actualText === undefined) return false;
+      switch (operator) {
+        case 'equals': return actualText === condition.value;
+        case 'not_equals': return actualText !== condition.value;
+        case 'contains': return actualText.includes(condition.value);
+        case 'starts_with': return actualText.startsWith(condition.value);
+        case 'ends_with': return actualText.endsWith(condition.value);
+        default: return false;
+      }
+    });
   }
   private runCustomTrigger(trigger: { functionName?: unknown; code?: unknown }, data: DataLayerEvent | TrackOptions): boolean {
     const functionName = text(trigger.functionName);
@@ -149,6 +527,34 @@ export class Tracker {
       // A CSP or malformed snippet must not disable ordinary analytics.
     }
   }
+  private startWebVitals(): void {
+    if (!this.options.webVitals || this.webVitalsStarted || !this.collectionAllowed()
+      || !globalThis.document || typeof globalThis.PerformanceObserver === 'undefined') return;
+    this.webVitalsStarted = true;
+    const record = (metric: Metric): void => this.recordWebVital(metric);
+    onCLS(record);
+    onINP(record);
+    onLCP(record);
+  }
+  private recordWebVital(metric: Metric): void {
+    const supportedMetric = metric.name === 'LCP' || metric.name === 'INP' || metric.name === 'CLS';
+    if (!this.options.webVitals || !this.collectionAllowed() || !supportedMetric
+      || typeof metric.id !== 'string' || metric.id.length < 1 || metric.id.length > 128
+      || !Number.isFinite(metric.value) || metric.value < 0) return;
+    this.track('web_vital', {
+      category: 'performance',
+      action: metric.name,
+      name: metric.name,
+      properties: {
+        metric: metric.name,
+        metricId: metric.id,
+        value: Math.min(metric.value, 1_000_000_000),
+      },
+    });
+    // Final CLS/INP values are commonly emitted as the page becomes hidden.
+    // Send that just-created sample immediately because timers may be suspended.
+    if (globalThis.document?.visibilityState === 'hidden') void this.flush(true);
+  }
   private heatmapEnabled(): boolean { return !!this.heatmapConfig?.enabled && this.heatmapConfig.sampleRate > 0 && this.collectionAllowed(); }
   private captureEnabled(): boolean { return (this.heatmapEnabled() || !!this.heatmapConfig?.recordingEnabled && this.heatmapConfig.recordingSampleRate > 0) && this.collectionAllowed(); }
   private async loadHeatmapConfig(): Promise<void> { if (!this.collectionAllowed()) return; try { const response = await fetch(this.heatmapConfigEndpoint); if (!response.ok) return; const config = await response.json() as Partial<HeatmapConfig>; const configuredRate = rate(config.sampleRate); const clientRate = this.options.heatmap?.sampleRate; this.heatmapConfig = { enabled: config.enabled === true, sampleRate: clientRate === undefined ? configuredRate : Math.min(configuredRate, rate(clientRate)), version: config.version, autoSnapshotEnabled: config.autoSnapshotEnabled !== false, recordingEnabled: config.recordingEnabled === true, recordingSampleRate: rate(config.recordingSampleRate ?? 1) }; if (this.options.heatmap?.navigationMode !== 'manual') this.installHistory(); this.pageReady(); } catch { /* Capture failure never disables ordinary tracking. */ } }
@@ -176,7 +582,7 @@ export class Tracker {
   private schedule(): void { if (!this.timer) this.timer = setTimeout(() => void this.flush(), this.flushInterval); }
 }
 
-export interface DataLayerEvent { event: string; eventCategory?: string; eventAction?: string; eventName?: string; properties?: Record<string, unknown>; }
+export interface DataLayerEvent extends TrackOptions { event: string; eventCategory?: string; eventAction?: string; eventName?: string; }
 const trackers = new Map<string, Tracker>();
-export const SeeRay = { init(options: TrackerOptions): Tracker { const old = trackers.get(options.siteId); if (old) return old; const tracker = new Tracker(options); trackers.set(options.siteId, tracker); return tracker; }, ready(): Promise<void> { return Promise.all([...trackers.values()].map(t => t.ready())).then(() => undefined); }, trackPageView(options?: TrackOptions): void { trackers.forEach(t => t.trackPageView(options)); }, track(type: string, options?: TrackOptions): void { trackers.forEach(t => t.track(type, options)); }, push(data: DataLayerEvent): void { if (!data || !data.event) return; trackers.forEach(t => t.push(data)); }, assignExperiment(experiment: string, variations?: string[]): string | undefined { return [...trackers.values()][0]?.assignExperiment(experiment, variations); }, trackExperiment(experiment: string, variation: string): void { if (experiment.trim() && variation.trim()) trackers.forEach(t => t.track('experiment_exposure', { category: 'experiment', action: experiment.trim(), name: variation.trim() })); }, trackGoal(name: string, options?: Omit<TrackOptions, 'name'>): void { trackers.forEach(t => t.trackGoal(name, options)); }, setConsent(granted: boolean): void { trackers.forEach(t => t.setConsent(granted)); }, optOut(): void { trackers.forEach(t => t.optOut()); }, beginNavigation(): void { trackers.forEach(t => t.beginNavigation()); }, cancelNavigation(): void { trackers.forEach(t => t.cancelNavigation()); }, pageReady(options?: PageReadyOptions): void { trackers.forEach(t => t.pageReady(options)); }, captureHeatmapSnapshot(): void { trackers.forEach(t => t.captureHeatmapSnapshot()); }, registerScrollContainer(options: ScrollContainerOptions): () => void { const unregister = [...trackers.values()].map(t => t.registerScrollContainer(options)); return () => unregister.forEach(remove => remove()); }, refreshHeatmapLayout(): void { trackers.forEach(t => t.refreshHeatmapLayout()); }, flush(): Promise<void> { return Promise.all([...trackers.values()].map(t => t.flush())).then(() => undefined); } };
+export const SeeRay = { init(options: TrackerOptions): Tracker { const old = trackers.get(options.siteId); if (old) return old; const tracker = new Tracker(options); trackers.set(options.siteId, tracker); return tracker; }, ready(): Promise<void> { return Promise.all([...trackers.values()].map(t => t.ready())).then(() => undefined); }, trackPageView(options?: TrackOptions): void { trackers.forEach(t => t.trackPageView(options)); }, track(type: string, options?: TrackOptions): void { trackers.forEach(t => t.track(type, options)); }, push(data: DataLayerEvent): void { if (!data || !data.event) return; trackers.forEach(t => t.push(data)); }, assignExperiment(experiment: string, variations?: string[]): string | undefined { return [...trackers.values()][0]?.assignExperiment(experiment, variations); }, trackExperiment(experiment: string, variation: string): void { if (experiment.trim() && variation.trim()) trackers.forEach(t => t.track('experiment_exposure', { category: 'experiment', action: experiment.trim(), name: variation.trim() })); }, trackGoal(name: string, options?: Omit<TrackOptions, 'name'>): void { trackers.forEach(t => t.trackGoal(name, options)); }, trackSiteSearch(keyword: string, options?: SiteSearchOptions): void { trackers.forEach(t => t.trackSiteSearch(keyword, options)); }, trackContentImpression(name: string, options?: ContentTrackingOptions): void { trackers.forEach(t => t.trackContentImpression(name, options)); }, trackContentInteraction(name: string, options?: ContentTrackingOptions): void { trackers.forEach(t => t.trackContentInteraction(name, options)); }, refreshContentTracking(): void { trackers.forEach(t => t.refreshContentTracking()); }, setConsent(granted: boolean): void { trackers.forEach(t => t.setConsent(granted)); }, optOut(): void { trackers.forEach(t => t.optOut()); }, beginNavigation(): void { trackers.forEach(t => t.beginNavigation()); }, cancelNavigation(): void { trackers.forEach(t => t.cancelNavigation()); }, pageReady(options?: PageReadyOptions): void { trackers.forEach(t => t.pageReady(options)); }, captureHeatmapSnapshot(): void { trackers.forEach(t => t.captureHeatmapSnapshot()); }, registerScrollContainer(options: ScrollContainerOptions): () => void { const unregister = [...trackers.values()].map(t => t.registerScrollContainer(options)); return () => unregister.forEach(remove => remove()); }, refreshHeatmapLayout(): void { trackers.forEach(t => t.refreshHeatmapLayout()); }, flush(): Promise<void> { return Promise.all([...trackers.values()].map(t => t.flush())).then(() => undefined); } };
 export const init = (options: TrackerOptions): Tracker => SeeRay.init(options);

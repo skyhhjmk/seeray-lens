@@ -1,5 +1,7 @@
 package io.seeray.lens.application;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seeray.lens.domain.site.Site;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -14,12 +16,19 @@ public class AnalyticsQueryService {
     private final DataSource dataSource;
     private final SiteService sites;
     private final WorkspaceAccess access;
+    private final ObjectMapper mapper;
 
     @Inject
-    public AnalyticsQueryService(DataSource dataSource, SiteService sites, WorkspaceAccess access) {
+    public AnalyticsQueryService(
+            DataSource dataSource, SiteService sites, WorkspaceAccess access, ObjectMapper mapper) {
         this.dataSource = dataSource;
         this.sites = sites;
         this.access = access;
+        this.mapper = mapper;
+    }
+
+    public AnalyticsQueryService(DataSource dataSource, SiteService sites, WorkspaceAccess access) {
+        this(dataSource, sites, access, new ObjectMapper());
     }
 
     public Range range(UUID siteId, String fromValue, String toValue) {
@@ -88,19 +97,34 @@ public class AnalyticsQueryService {
                 r -> new Page(r.getString(1), r.getLong(2)));
     }
 
+    public List<PageTitle> pageTitles(UUID site, Range range) {
+        return list(
+                site,
+                range,
+                "select path,nullif(title,''),sum(page_view_count) from analytics_page_title_daily where site_id=? and business_date between ? and ? group by path,title order by sum(page_view_count) desc,path,title limit 100",
+                r -> new PageTitle(r.getString(1), r.getString(2), r.getLong(3)));
+    }
+
     public List<Traffic> traffic(UUID site, Range range) {
         return list(
                 site,
                 range,
-                "select channel,nullif(source,''),nullif(medium,''),nullif(campaign,''),sum(session_count) n from analytics_traffic_daily where site_id=? and business_date between ? and ? group by channel,source,medium,campaign order by n desc,channel asc",
-                r -> new Traffic(r.getString(1), r.getString(2), r.getString(3), r.getString(4), r.getLong(5)));
+                "select channel,nullif(source,''),nullif(medium,''),nullif(campaign,''),nullif(term,''),nullif(content,''),sum(session_count) n from analytics_traffic_daily where site_id=? and business_date between ? and ? group by channel,source,medium,campaign,term,content order by n desc,channel asc",
+                r -> new Traffic(
+                        r.getString(1),
+                        r.getString(2),
+                        r.getString(3),
+                        r.getString(4),
+                        r.getString(5),
+                        r.getString(6),
+                        r.getLong(7)));
     }
 
     public List<Event> events(UUID site, Range range) {
         return list(
                 site,
                 range,
-                "select event_type,sum(event_count) n from analytics_event_daily where site_id=? and business_date between ? and ? group by event_type order by n desc,event_type asc",
+                "select event_type,sum(event_count) n from analytics_event_daily where site_id=? and event_type<>'web_vital' and business_date between ? and ? group by event_type order by n desc,event_type asc",
                 r -> new Event(r.getString(1), r.getLong(2)));
     }
 
@@ -163,6 +187,102 @@ public class AnalyticsQueryService {
             return out;
         } catch (SQLException e) {
             throw new IllegalStateException("Could not query visitor log", e);
+        }
+    }
+
+    /** Reads current visit facts from the durable event stream, not the delayed aggregate tables. */
+    public List<LiveVisitor> realtime(UUID site, int requestedWindowMinutes, int requestedLimit) {
+        int windowMinutes = Math.max(1, Math.min(requestedWindowMinutes, 60));
+        int limit = Math.max(1, Math.min(requestedLimit, 100));
+        String sql =
+                """
+                with active_sessions as (
+                  select client_visitor_id,client_session_id,max(received_at) last_activity_at
+                  from raw_event
+                  where site_id=? and received_at >= now() - (? * interval '1 minute')
+                    and nullif(client_visitor_id,'') is not null and nullif(client_session_id,'') is not null
+                  group by client_visitor_id,client_session_id
+                  order by max(received_at) desc limit ?
+                ), session_events as (
+                  select e.client_visitor_id,e.client_session_id,e.ingest_id,e.received_at,e.event_type,
+                    e.page_path,e.page_title,e.event_data
+                  from raw_event e join active_sessions a on a.client_visitor_id=e.client_visitor_id
+                    and a.client_session_id=e.client_session_id
+                  where e.site_id=?
+                ), session_summary as (
+                  select client_visitor_id,client_session_id,min(received_at) started_at,max(received_at) last_activity_at,
+                    count(*)::integer event_count,count(*) filter(where event_type='page_view')::integer page_views,
+                    (array_agg(page_path order by received_at,ingest_id) filter(where event_type='page_view'))[1] entry_page
+                  from session_events group by client_visitor_id,client_session_id
+                ), latest_event as (
+                  select distinct on (client_visitor_id,client_session_id) client_visitor_id,client_session_id,
+                    event_type,page_path,page_title
+                  from session_events order by client_visitor_id,client_session_id,received_at desc,ingest_id desc
+                ), ranked_actions as (
+                  select *,row_number() over(partition by client_visitor_id,client_session_id
+                    order by received_at desc,ingest_id desc) action_rank from session_events
+                ), actions as (
+                  select client_visitor_id,client_session_id,
+                    jsonb_agg(jsonb_build_object('at',received_at,'eventType',event_type,'path',page_path,'title',page_title)
+                      order by received_at desc,ingest_id desc)::text actions_json
+                  from ranked_actions where action_rank<=20 group by client_visitor_id,client_session_id
+                ), visit_context as (
+                  select distinct on (client_visitor_id,client_session_id) client_visitor_id,client_session_id,
+                    event_data->'context' context
+                  from session_events where event_type='page_view'
+                  order by client_visitor_id,client_session_id,received_at,ingest_id
+                )
+                select s.client_visitor_id,s.client_session_id,s.started_at,s.last_activity_at,s.event_count,s.page_views,
+                  s.entry_page,l.event_type,l.page_path,l.page_title,c.context->>'countryCode',c.context->>'region',
+                  c.context->>'city',c.context->>'browser',c.context->>'operatingSystem',c.context->>'deviceType',
+                  c.context->>'language',coalesce(a.actions_json,'[]')
+                from session_summary s join latest_event l using(client_visitor_id,client_session_id)
+                  left join visit_context c using(client_visitor_id,client_session_id)
+                  left join actions a using(client_visitor_id,client_session_id)
+                order by s.last_activity_at desc,s.client_visitor_id
+                """;
+        List<LiveVisitor> visitors = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setObject(1, site);
+            statement.setInt(2, windowMinutes);
+            statement.setInt(3, limit);
+            statement.setObject(4, site);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    Instant startedAt = rows.getTimestamp(3).toInstant();
+                    Instant lastActivityAt = rows.getTimestamp(4).toInstant();
+                    List<LiveAction> actions;
+                    try {
+                        actions = mapper.readValue(rows.getString(18), new TypeReference<>() {});
+                    } catch (Exception invalidActions) {
+                        actions = List.of();
+                    }
+                    visitors.add(new LiveVisitor(
+                            rows.getString(1),
+                            rows.getString(2),
+                            startedAt,
+                            lastActivityAt,
+                            rows.getInt(5),
+                            rows.getInt(6),
+                            rows.getString(7),
+                            rows.getString(8),
+                            rows.getString(9),
+                            rows.getString(10),
+                            rows.getString(11),
+                            rows.getString(12),
+                            rows.getString(13),
+                            rows.getString(14),
+                            rows.getString(15),
+                            rows.getString(16),
+                            rows.getString(17),
+                            Duration.between(startedAt, lastActivityAt).toMillis(),
+                            actions));
+                }
+            }
+            return visitors;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not query realtime visitors", error);
         }
     }
 
@@ -241,7 +361,21 @@ public class AnalyticsQueryService {
 
     public record Page(String path, long pageViews) {}
 
-    public record Traffic(String channel, String source, String medium, String campaign, long sessions) {}
+    public record PageTitle(String path, String title, long pageViews) {}
+
+    public record PageFlow(String flow, String path, String title, long sessions) {}
+
+    public record PageTransition(
+            int step, String sourcePath, String sourceTitle, String targetPath, String targetTitle, long sessions) {}
+
+    public record Traffic(
+            String channel,
+            String source,
+            String medium,
+            String campaign,
+            String term,
+            String content,
+            long sessions) {}
 
     public record Event(String eventType, long count) {}
 
@@ -267,4 +401,41 @@ public class AnalyticsQueryService {
 
     public record Goal(
             String name, long count, long convertedSessions, java.math.BigDecimal value, double conversionRate) {}
+
+    public record Technology(String dimension, String value, long sessions, long visitors) {}
+
+    public record Location(
+            String level,
+            String label,
+            String countryCode,
+            String continentCode,
+            String regionCode,
+            String region,
+            String city,
+            String timezone,
+            long sessions,
+            long visitors) {}
+
+    public record LiveAction(Instant at, String eventType, String path, String title) {}
+
+    public record LiveVisitor(
+            String visitorId,
+            String sessionId,
+            Instant startedAt,
+            Instant lastActivityAt,
+            int events,
+            int pageViews,
+            String entryPage,
+            String lastEventType,
+            String currentPage,
+            String currentTitle,
+            String countryCode,
+            String region,
+            String city,
+            String browser,
+            String operatingSystem,
+            String deviceType,
+            String language,
+            long durationMs,
+            List<LiveAction> actions) {}
 }

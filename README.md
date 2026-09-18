@@ -6,6 +6,16 @@ Lightweight, self-hosted, privacy-first web analytics. See [architecture](docs/a
 
 The control plane implements local authentication, Workspaces, Sites, allowed domains, API tokens, browser collection, RabbitMQ-backed ingestion, daily analytics aggregation, and the Flutter reporting dashboard. The Flutter Web admin uses the real versioned REST endpoints.
 
+Custom event properties can be registered as named report dimensions and managed from the site analytics UI. See [custom dimensions](docs/analytics/custom-dimensions.md) for the tracker integration and report behavior.
+
+Reusable audience segments can be composed in the site UI and applied across core reports, including custom-dimension values. See [audience segments](docs/analytics/segments.md) for supported rules and current report coverage.
+
+The site analytics UI includes normalized technology and page-behaviour reports, plus country/continent/region/city breakdowns when a trusted edge proxy is configured. Location collection is disabled by default and does not retain IP addresses; see [visitor locations](docs/analytics/locations.md) for the required proxy setup and privacy limits.
+
+The Live tab reads recent accepted events directly, shows active visits with their latest page and action trail, and refreshes automatically. See [live visitor reports](docs/analytics/realtime.md) for the timing and retention semantics.
+
+Analytics dashboards can be saved per user and site, assembled from a visual library of report widgets, reordered, configured, duplicated, and selected as the default view. The editor does not expose raw JSON. Custom reports can combine supported session dimensions, measures, visual filters, and table/bar displays; each data widget exports its displayed rows to CSV, JSON, or a paginated PDF with filter context. Owners and admins can configure weekly/monthly email reports and daily comparative alerts; delivery uses server-side SMTP/webhook settings and clustered PostgreSQL-backed Quartz scheduling. A site audit log records successful configuration changes without storing request bodies or credentials. Event/custom-dimension joins and user-defined formulas remain out of scope. See [saved dashboards](docs/analytics/dashboards.md), [scheduled reports](docs/analytics/scheduled-reports.md), [analytics alerts](docs/analytics/alerts.md), and [site audit history](docs/analytics/audit-log.md) for details.
+
 Heatmaps are disabled by default. Once an administrator enables them for a site, the tracker can collect sampled click locations, mouse movement samples, and scroll-depth reach for page instances. Heatmap raw batches, facts, and aggregates are isolated from ordinary analytics, so enabling or disabling heatmaps does not change PV, visitor, session, event, or bounce-rate meanings.
 
 ## Heatmap integration

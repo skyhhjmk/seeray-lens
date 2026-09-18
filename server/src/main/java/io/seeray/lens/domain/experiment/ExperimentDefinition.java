@@ -28,6 +28,10 @@ public class ExperimentDefinition extends PanacheEntityBase {
     @Column(name = "variants_json", nullable = false, columnDefinition = "jsonb")
     public String variantsJson;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "targeting_json", nullable = false, columnDefinition = "jsonb")
+    public String targetingJson;
+
     @Column(name = "created_at", nullable = false)
     public Instant createdAt;
 

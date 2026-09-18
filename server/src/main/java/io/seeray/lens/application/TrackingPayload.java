@@ -32,5 +32,19 @@ public record TrackingPayload(
             @Size(max = 120) String action,
             @Size(max = 256) String name,
             Map<String, Object> data,
-            JsonNode properties) {}
+            JsonNode properties,
+            @Valid ClientContext context) {}
+
+    public record ClientContext(
+            @Pattern(regexp = "^(Chrome|Safari|Firefox|Edge|Opera|Samsung Internet|Other)$") String browser,
+            @Pattern(regexp = "^[A-Za-z0-9._-]{1,24}$") String browserVersion,
+            @Pattern(regexp = "^(Android|iOS|Windows|macOS|Linux|ChromeOS|Other)$") String operatingSystem,
+            @Pattern(regexp = "^[A-Za-z0-9._-]{1,24}$") String operatingSystemVersion,
+            @Pattern(regexp = "^(mobile|tablet|desktop|other)$") String deviceType,
+            @Pattern(regexp = "^[A-Za-z0-9-]{1,35}$") String language,
+            @Min(1) @Max(10000) Integer screenWidth,
+            @Min(1) @Max(10000) Integer screenHeight,
+            @Min(1) @Max(10000) Integer viewportWidth,
+            @Min(1) @Max(10000) Integer viewportHeight,
+            @DecimalMin("0.25") @DecimalMax("8.0") Double pixelRatio) {}
 }

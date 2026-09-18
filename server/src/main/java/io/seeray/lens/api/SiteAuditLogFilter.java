@@ -1,0 +1,115 @@
+package io.seeray.lens.api;
+
+import io.quarkus.security.identity.SecurityIdentity;
+import io.seeray.lens.domain.common.UuidV7;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.container.ContainerResponseContext;
+import jakarta.ws.rs.container.ContainerResponseFilter;
+import jakarta.ws.rs.ext.Provider;
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.*;
+import javax.sql.DataSource;
+import org.jboss.logging.Logger;
+
+/** Records successful, site-scoped configuration mutations without retaining request bodies or query values. */
+@Provider
+@ApplicationScoped
+public class SiteAuditLogFilter implements ContainerResponseFilter {
+    private static final Logger LOG = Logger.getLogger(SiteAuditLogFilter.class);
+    private static final Set<String> AUDITED_RESOURCES = Set.of(
+            "domains",
+            "dashboards",
+            "segments",
+            "custom-dimensions",
+            "goals",
+            "experiments",
+            "funnels",
+            "tag-manager",
+            "heatmaps",
+            "scheduled-reports",
+            "analytics-alerts");
+
+    @Inject
+    DataSource dataSource;
+
+    @Inject
+    SecurityIdentity identity;
+
+    @Override
+    public void filter(ContainerRequestContext request, ContainerResponseContext response) throws IOException {
+        if (response.getStatus() < 200 || response.getStatus() >= 300 || identity.isAnonymous()) return;
+        Mutation mutation = classify(request.getMethod(), request.getUriInfo().getPath());
+        if (mutation == null) return;
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into site_audit_log(id,site_id,actor_user_id,action,resource,resource_id) values(?,?,?,?,?,?)")) {
+            statement.setObject(1, UuidV7.next());
+            statement.setObject(2, mutation.siteId());
+            statement.setObject(3, UUID.fromString(identity.getPrincipal().getName()));
+            statement.setString(4, mutation.action());
+            statement.setString(5, mutation.resource());
+            statement.setObject(6, mutation.resourceId());
+            statement.executeUpdate();
+        } catch (SQLException | IllegalArgumentException error) {
+            // Audit persistence must not turn an otherwise successful configuration request into a failure.
+            LOG.error("Could not persist site audit metadata", error);
+        }
+    }
+
+    static Mutation classify(String method, String rawPath) {
+        String[] path = rawPath.replaceFirst("^/+", "").split("/");
+        if (path.length < 4 || !"api".equals(path[0]) || !"v1".equals(path[1]) || !"sites".equals(path[2])) return null;
+        UUID siteId;
+        try {
+            siteId = UUID.fromString(path[3]);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
+        if ("GET".equals(method) || "OPTIONS".equals(method) || "HEAD".equals(method)) return null;
+        String resource;
+        int firstChild;
+        if (path.length == 4) {
+            resource = "site";
+            firstChild = path.length;
+        } else {
+            resource = path[4];
+            firstChild = 5;
+            if (!AUDITED_RESOURCES.contains(resource)) return null;
+        }
+        for (int i = firstChild; i < path.length; i++) {
+            if ("preview".equals(path[i]) || "report".equals(path[i])) return null;
+        }
+        if ("heatmaps".equals(resource) && (path.length < 6 || !"config".equals(path[5]))) return null;
+        String action =
+                switch (method) {
+                    case "POST" -> path.length > firstChild && "send-now".equals(path[path.length - 1])
+                            ? "SEND_NOW"
+                            : path.length > firstChild && "publish".equals(path[path.length - 1])
+                                    ? "PUBLISH"
+                                    : path.length > firstChild && "duplicate".equals(path[path.length - 1])
+                                            ? "DUPLICATE"
+                                            : "CREATE";
+                    case "PUT", "PATCH" -> "UPDATE";
+                    case "DELETE" -> "DELETE";
+                    default -> null;
+                };
+        if (action == null) return null;
+        UUID resourceId = null;
+        for (int i = firstChild; i < path.length; i++) {
+            try {
+                resourceId = UUID.fromString(path[i]);
+                break;
+            } catch (IllegalArgumentException ignored) {
+                // Route labels and action names are intentionally not stored as identifiers.
+            }
+        }
+        return new Mutation(siteId, action, resource, resourceId);
+    }
+
+    record Mutation(UUID siteId, String action, String resource, UUID resourceId) {}
+}

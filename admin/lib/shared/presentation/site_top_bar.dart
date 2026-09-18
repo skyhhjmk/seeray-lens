@@ -8,12 +8,21 @@ import 'page_help_button.dart';
 
 enum SiteTopTab {
   dashboard,
+  realtime,
   visitors,
+  cohorts,
+  technology,
+  locations,
   acquisition,
   behaviour,
   heatmaps,
   recordings,
+  dimensions,
+  segments,
   goals,
+  alerts,
+  auditLog,
+  scheduledReports,
   integration,
   settings,
 }
@@ -25,6 +34,7 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
     required this.help,
     this.rangeState,
     this.onSelectRange,
+    this.segmentFilter,
     this.onRefresh,
     super.key,
   });
@@ -33,6 +43,7 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
   final PageHelpButton help;
   final AnalyticsRangeState? rangeState;
   final VoidCallback? onSelectRange;
+  final Widget? segmentFilter;
   final VoidCallback? onRefresh;
 
   @override
@@ -52,6 +63,7 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
           label: Text(analyticsRangeLabel(context, rangeState!)),
           style: TextButton.styleFrom(foregroundColor: Colors.white),
         ),
+      ?segmentFilter,
       if (onRefresh != null)
         IconButton(
           tooltip: context.tr('Refresh', '刷新'),
@@ -75,7 +87,29 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
               '仪表盘',
               'dashboard',
             ),
+            _tab(context, SiteTopTab.realtime, 'Live', '实时访客', 'realtime'),
             _tab(context, SiteTopTab.visitors, 'Visitors', '访客', 'visitors'),
+            _tab(
+              context,
+              SiteTopTab.cohorts,
+              'Cohorts',
+              '留存队列',
+              'visitors/cohorts',
+            ),
+            _tab(
+              context,
+              SiteTopTab.technology,
+              'Technology',
+              '访客技术',
+              'visitors/technology',
+            ),
+            _tab(
+              context,
+              SiteTopTab.locations,
+              'Locations',
+              '地域',
+              'visitors/locations',
+            ),
             _tab(
               context,
               SiteTopTab.acquisition,
@@ -104,7 +138,30 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
               '会话回放',
               'behaviour/recordings',
             ),
+            _tab(
+              context,
+              SiteTopTab.dimensions,
+              'Dimensions',
+              '自定义维度',
+              'dimensions',
+            ),
+            _tab(context, SiteTopTab.segments, 'Segments', '用户分群', 'segments'),
             _tab(context, SiteTopTab.goals, 'Goals', '目标', 'goals'),
+            _tab(context, SiteTopTab.alerts, 'Alerts', '告警', 'alerts'),
+            _tab(
+              context,
+              SiteTopTab.auditLog,
+              'Audit log',
+              '审计日志',
+              'audit-log',
+            ),
+            _tab(
+              context,
+              SiteTopTab.scheduledReports,
+              'Email reports',
+              '邮件报表',
+              'scheduled-reports',
+            ),
             _tab(
               context,
               SiteTopTab.integration,

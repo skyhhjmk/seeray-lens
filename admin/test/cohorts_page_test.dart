@@ -1,0 +1,91 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:seeray_lens_admin/core/network/seeray_api.dart';
+import 'package:seeray_lens_admin/features/analytics/application/analytics_segment.dart';
+import 'package:seeray_lens_admin/features/analytics/presentation/cohorts_page.dart';
+import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
+
+void main() {
+  testWidgets('shows a retention matrix and offers a practical window switch', (
+    tester,
+  ) async {
+    final api = _CohortApi();
+    final container = ProviderContainer(
+      overrides: [apiProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: CohortsPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cohort retention'), findsOneWidget);
+    expect(find.text('Weekly retention'), findsOneWidget);
+    expect(find.text('Visitors'), findsOneWidget);
+    expect(find.text('60%'), findsOneWidget);
+    expect(find.text('—'), findsWidgets);
+    expect(api.paths.last, contains('weeks=8'));
+
+    await tester.tap(find.text('4 weeks'));
+    await tester.pumpAndSettle();
+    expect(api.paths.last, contains('weeks=4'));
+
+    container
+        .read(analyticsSegmentSelectionProvider('site-1').notifier)
+        .select('segment-1');
+    await tester.pumpAndSettle();
+    expect(api.paths.last, contains('segmentId=segment-1'));
+    expect(
+      find.text('Filtered by the site segment selected above.'),
+      findsOneWidget,
+    );
+  });
+}
+
+class _CohortApi extends SeeRayApi {
+  _CohortApi() : super(baseUrl: 'https://lens.example.test');
+
+  final paths = <String>[];
+
+  @override
+  Future<dynamic> request(
+    String method,
+    String path, {
+    Object? body,
+    bool retried = false,
+  }) async {
+    paths.add(path);
+    return [
+      {
+        'cohortWeek': '2026-07-06',
+        'weekIndex': 0,
+        'cohortSize': 5,
+        'retainedVisitors': 5,
+        'retentionRate': 1.0,
+        'complete': true,
+      },
+      {
+        'cohortWeek': '2026-07-06',
+        'weekIndex': 1,
+        'cohortSize': 5,
+        'retainedVisitors': 3,
+        'retentionRate': 0.6,
+        'complete': true,
+      },
+      {
+        'cohortWeek': '2026-07-06',
+        'weekIndex': 2,
+        'cohortSize': 5,
+        'retainedVisitors': 0,
+        'retentionRate': 0,
+        'complete': false,
+      },
+    ];
+  }
+}

@@ -104,3 +104,136 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0015-tag-manager.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0016-custom-dimensions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0016-custom-dimensions.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0017-segments
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0017-segments.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0018-technology-dimensions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0018-technology-dimensions.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0019-page-behavior-dimensions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0019-page-behavior-dimensions.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0020-location-dimensions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0020-location-dimensions.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0021-saved-dashboards
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0021-saved-dashboards.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0022-site-audit-log
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0022-site-audit-log.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0023-scheduled-reports
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0023-scheduled-reports.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0024-scheduled-report-timezone
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0024-scheduled-report-timezone.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0025-audit-report-delivery
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0025-audit-report-delivery.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0026-analytics-alerts
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0026-analytics-alerts.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0027-tag-manager-environments
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0027-tag-manager-environments.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0028-tag-manager-templates
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0028-tag-manager-templates.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0029-tag-manager-live-preview
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0029-tag-manager-live-preview.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0030-site-search
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0030-site-search.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0031-content-tracking
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0031-content-tracking.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0032-web-vitals
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0032-web-vitals.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0033-acquisition-dimensions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0033-acquisition-dimensions.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0034-experiment-targeting
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0034-experiment-targeting.sql
+            relativeToChangelogFile: false

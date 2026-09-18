@@ -81,7 +81,7 @@ public class AnalyticsFactBuilder {
 
     private static List<Event> load(Connection c, UUID site, Instant from, Instant to) throws SQLException {
         String sql =
-                "select client_visitor_id,client_session_id,event_type,occurred_at,received_at,page_path,page_host,referrer_host,utm_source,utm_medium,utm_campaign,duration_ms,event_data from raw_event where site_id=? order by occurred_at,received_at,ingest_id";
+                "select client_visitor_id,client_session_id,event_type,occurred_at,received_at,page_path,page_host,referrer_host,utm_source,utm_medium,utm_campaign,duration_ms,event_data,page_title,utm_term,utm_content from raw_event where site_id=? order by occurred_at,received_at,ingest_id";
         List<Event> out = new ArrayList<>();
         try (PreparedStatement p = c.prepareStatement(sql)) {
             p.setObject(1, site);
@@ -100,7 +100,10 @@ public class AnalyticsFactBuilder {
                             r.getString(10),
                             r.getString(11),
                             (Integer) r.getObject(12),
-                            r.getString(13)));
+                            r.getString(13),
+                            r.getString(14),
+                            r.getString(15),
+                            r.getString(16)));
             }
         }
         return out;
@@ -147,7 +150,7 @@ public class AnalyticsFactBuilder {
     private static void insertSessions(Connection c, UUID site, Collection<VisitorAcc> values, Map<String, UUID> ids)
             throws SQLException {
         try (PreparedStatement p = c.prepareStatement(
-                "insert into analytics_session(id,site_id,visitor_id,client_session_id,started_at,last_activity_at,ended_at,entry_page,exit_page,page_view_count,event_count,duration_ms,is_bounce,visitor_type,initial_referrer_host,initial_page_host,initial_utm_source,initial_utm_medium,initial_utm_campaign) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                "insert into analytics_session(id,site_id,visitor_id,client_session_id,started_at,last_activity_at,ended_at,entry_page,exit_page,page_view_count,event_count,duration_ms,is_bounce,visitor_type,initial_referrer_host,initial_page_host,initial_utm_source,initial_utm_medium,initial_utm_campaign,browser,browser_version,operating_system,operating_system_version,device_type,language,screen_width,screen_height,viewport_width,viewport_height,pixel_ratio,entry_page_title,exit_page_title,country_code,continent_code,region_code,region_name,city,geo_timezone,initial_utm_term,initial_utm_content) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             for (VisitorAcc v : values)
                 for (SessionAcc s : v.sessions) {
                     p.setObject(1, s.id = UuidV7.next());
@@ -169,6 +172,27 @@ public class AnalyticsFactBuilder {
                     p.setString(17, s.utm);
                     p.setString(18, s.utmMedium);
                     p.setString(19, s.utmCampaign);
+                    p.setString(20, s.browser);
+                    p.setString(21, s.browserVersion);
+                    p.setString(22, s.operatingSystem);
+                    p.setString(23, s.operatingSystemVersion);
+                    p.setString(24, s.deviceType);
+                    p.setString(25, s.language);
+                    p.setObject(26, s.screenWidth);
+                    p.setObject(27, s.screenHeight);
+                    p.setObject(28, s.viewportWidth);
+                    p.setObject(29, s.viewportHeight);
+                    p.setObject(30, s.pixelRatio);
+                    p.setString(31, s.entryPageTitle);
+                    p.setString(32, s.exitPageTitle);
+                    p.setString(33, s.countryCode);
+                    p.setString(34, s.continentCode);
+                    p.setString(35, s.regionCode);
+                    p.setString(36, s.region);
+                    p.setString(37, s.city);
+                    p.setString(38, s.geoTimezone);
+                    p.setString(39, s.utmTerm);
+                    p.setString(40, s.utmContent);
                     p.addBatch();
                 }
             p.executeBatch();
@@ -204,7 +228,10 @@ public class AnalyticsFactBuilder {
             String utmMedium,
             String utmCampaign,
             Integer duration,
-            String data) {}
+            String data,
+            String title,
+            String utmTerm,
+            String utmContent) {}
 
     private static final class VisitorAcc {
         String clientId;
@@ -221,7 +248,12 @@ public class AnalyticsFactBuilder {
     }
 
     private static final class SessionAcc {
-        String clientSessionId, entryPage, exitPage, referrer, host, utm, utmMedium, utmCampaign;
+        String clientSessionId, entryPage, exitPage, referrer, host, utm, utmMedium, utmCampaign, utmTerm, utmContent;
+        String entryPageTitle, exitPageTitle;
+        String browser, browserVersion, operatingSystem, operatingSystemVersion, deviceType, language;
+        String countryCode, continentCode, regionCode, region, city, geoTimezone;
+        Integer screenWidth, screenHeight, viewportWidth, viewportHeight;
+        Double pixelRatio;
         UUID id;
         Instant startedAt, lastActivity;
         int pageViews, events;
@@ -235,24 +267,111 @@ public class AnalyticsFactBuilder {
         }
 
         void accept(Event e, Instant t, ObjectMapper m) {
-            events++;
+            if (!"web_vital".equals(e.type)) events++;
             if (!"heartbeat".equals(e.type)) lastActivity = max(lastActivity, t);
+            JsonNode data;
+            try {
+                data = m.readTree(e.data == null ? "{}" : e.data);
+            } catch (Exception ignored) {
+                data = m.createObjectNode();
+            }
             if ("page_view".equals(e.type)) {
+                if (pageViews == 0) {
+                    captureTechnology(data.path("context"));
+                    captureLocation(data.path("context"));
+                }
                 pageViews++;
-                if (entryPage == null) entryPage = e.path;
+                if (entryPage == null) {
+                    entryPage = e.path;
+                    entryPageTitle = e.title;
+                }
                 exitPage = e.path;
+                exitPageTitle = e.title;
             }
             if (referrer == null) referrer = e.referrer;
             if (host == null) host = e.host;
             if (utm == null) utm = e.utm;
             if (utmMedium == null) utmMedium = e.utmMedium;
             if (utmCampaign == null) utmCampaign = e.utmCampaign;
-            try {
-                JsonNode n = m.readTree(e.data == null ? "{}" : e.data);
-                interaction |= n.path("interaction").asBoolean(false)
-                        || n.path("data").path("interaction").asBoolean(false);
-            } catch (Exception ignored) {
+            if (utmTerm == null) utmTerm = e.utmTerm;
+            if (utmContent == null) utmContent = e.utmContent;
+            interaction |= data.path("interaction").asBoolean(false)
+                    || data.path("data").path("interaction").asBoolean(false);
+        }
+
+        private void captureTechnology(JsonNode context) {
+            browser = category(
+                    context,
+                    "browser",
+                    Set.of("Chrome", "Safari", "Firefox", "Edge", "Opera", "Samsung Internet", "Other"));
+            browserVersion = version(context, "browserVersion");
+            operatingSystem = category(
+                    context,
+                    "operatingSystem",
+                    Set.of("Android", "iOS", "Windows", "macOS", "Linux", "ChromeOS", "Other"));
+            operatingSystemVersion = version(context, "operatingSystemVersion");
+            deviceType = category(context, "deviceType", Set.of("mobile", "tablet", "desktop", "other"));
+            language = boundedText(context, "language", 35);
+            screenWidth = boundedInt(context, "screenWidth");
+            screenHeight = boundedInt(context, "screenHeight");
+            viewportWidth = boundedInt(context, "viewportWidth");
+            viewportHeight = boundedInt(context, "viewportHeight");
+            JsonNode ratio = context.path("pixelRatio");
+            if (ratio.isNumber() && ratio.doubleValue() >= 0.25 && ratio.doubleValue() <= 8.0)
+                pixelRatio = ratio.doubleValue();
+        }
+
+        private void captureLocation(JsonNode context) {
+            countryCode = code(context, "countryCode", Locale.getISOCountries());
+            continentCode = code(context, "continentCode", new String[] {"AF", "AN", "AS", "EU", "NA", "OC", "SA"});
+            regionCode = boundedToken(context, "regionCode", 16);
+            region = boundedText(context, "region", 120);
+            city = boundedText(context, "city", 120);
+            geoTimezone = boundedText(context, "geoTimezone", 64);
+            if (countryCode == null) {
+                continentCode = null;
+                regionCode = null;
+                region = null;
+                city = null;
+                geoTimezone = null;
             }
+        }
+
+        private static String code(JsonNode context, String field, String[] allowed) {
+            String value = boundedText(context, field, 2);
+            if (value == null) return null;
+            String normalized = value.toUpperCase(Locale.ROOT);
+            return Arrays.asList(allowed).contains(normalized) ? normalized : null;
+        }
+
+        private static String boundedToken(JsonNode context, String field, int limit) {
+            String value = boundedText(context, field, limit);
+            return value != null && value.matches("[A-Za-z0-9-]{1," + limit + "}")
+                    ? value.toUpperCase(Locale.ROOT)
+                    : null;
+        }
+
+        private static String category(JsonNode context, String field, Set<String> allowed) {
+            String value = boundedText(context, field, 32);
+            return value != null && allowed.contains(value) ? value : null;
+        }
+
+        private static String version(JsonNode context, String field) {
+            String value = boundedText(context, field, 24);
+            return value != null && value.matches("[A-Za-z0-9._-]{1,24}") ? value : null;
+        }
+
+        private static String boundedText(JsonNode context, String field, int limit) {
+            JsonNode value = context.path(field);
+            if (!value.isTextual()) return null;
+            String text = value.asText();
+            return !text.isBlank() && text.length() <= limit ? text : null;
+        }
+
+        private static Integer boundedInt(JsonNode context, String field) {
+            JsonNode value = context.path(field);
+            if (!value.isIntegralNumber() || value.intValue() < 1 || value.intValue() > 10000) return null;
+            return value.intValue();
         }
     }
 }

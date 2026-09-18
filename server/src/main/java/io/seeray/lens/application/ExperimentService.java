@@ -18,6 +18,8 @@ import javax.sql.DataSource;
 @ApplicationScoped
 public class ExperimentService {
     private static final TypeReference<List<String>> VARIANTS = new TypeReference<>() {};
+    private static final Set<String> DEVICE_TYPES = Set.of("desktop", "mobile", "tablet", "other");
+    private static final Targeting DEFAULT_TARGETING = new Targeting(List.of(), List.of());
     private final SiteService sites;
     private final WorkspaceAccess access;
     private final ObjectMapper mapper;
@@ -42,7 +44,7 @@ public class ExperimentService {
         return ExperimentDefinition.<ExperimentDefinition>list(
                         "site.trackingId = ?1 and enabled order by name", trackingId)
                 .stream()
-                .map(e -> new PublicView(e.name, read(e.variantsJson)))
+                .map(e -> new PublicView(e.name, read(e.variantsJson), readTargeting(e.targetingJson)))
                 .toList();
     }
 
@@ -50,6 +52,7 @@ public class ExperimentService {
     public View create(UUID siteId, Update u) {
         Site s = writable(siteId);
         validate(u);
+        Targeting targeting = normalizeTargeting(u.targeting());
         if (ExperimentDefinition.count(
                         "site.id = ?1 and name = ?2", siteId, u.name().trim())
                 > 0) throw new ControlPlaneException(409, "EXPERIMENT_NAME_EXISTS", "Experiment already exists");
@@ -59,6 +62,7 @@ public class ExperimentService {
         e.name = u.name().trim();
         e.enabled = u.enabled();
         e.variantsJson = write(u.variants());
+        e.targetingJson = writeTargeting(targeting);
         e.createdAt = e.updatedAt = Instant.now();
         e.persist();
         return view(e);
@@ -69,9 +73,12 @@ public class ExperimentService {
         writable(siteId);
         validate(u);
         ExperimentDefinition e = experiment(siteId, id);
+        Targeting targeting =
+                u.targeting() == null ? readTargeting(e.targetingJson) : normalizeTargeting(u.targeting());
         e.name = u.name().trim();
         e.enabled = u.enabled();
         e.variantsJson = write(u.variants());
+        e.targetingJson = writeTargeting(targeting);
         e.updatedAt = Instant.now();
         return view(e);
     }
@@ -169,8 +176,24 @@ public class ExperimentService {
         }
     }
 
+    private String writeTargeting(Targeting targeting) {
+        try {
+            return mapper.writeValueAsString(targeting);
+        } catch (Exception x) {
+            throw new ControlPlaneException(400, "INVALID_EXPERIMENT_TARGETING", "Experiment targeting is invalid");
+        }
+    }
+
+    private Targeting readTargeting(String json) {
+        try {
+            return mapper.readValue(json, Targeting.class);
+        } catch (Exception x) {
+            throw new IllegalStateException("Stored experiment targeting is invalid", x);
+        }
+    }
+
     private View view(ExperimentDefinition e) {
-        return new View(e.id, e.name, e.enabled, read(e.variantsJson));
+        return new View(e.id, e.name, e.enabled, read(e.variantsJson), readTargeting(e.targetingJson));
     }
 
     private Site readable(UUID id) {
@@ -204,6 +227,40 @@ public class ExperimentService {
             throw new ControlPlaneException(400, "INVALID_EXPERIMENT", "Experiment needs 2 to 10 unique variants");
     }
 
+    private static Targeting normalizeTargeting(Targeting targeting) {
+        if (targeting == null) return DEFAULT_TARGETING;
+        List<String> paths = targeting.pathPrefixes() == null
+                ? List.of()
+                : targeting.pathPrefixes().stream()
+                        .filter(Objects::nonNull)
+                        .map(String::trim)
+                        .filter(value -> !value.isEmpty())
+                        .toList();
+        List<String> devices = targeting.deviceTypes() == null
+                ? List.of()
+                : targeting.deviceTypes().stream()
+                        .filter(Objects::nonNull)
+                        .map(String::trim)
+                        .filter(value -> !value.isEmpty())
+                        .toList();
+        boolean validPaths = paths.size() <= 20
+                && paths.stream()
+                        .allMatch(value -> value.length() <= 512
+                                && value.startsWith("/")
+                                && !value.contains("?")
+                                && !value.contains("#"))
+                && new HashSet<>(paths).size() == paths.size();
+        boolean validDevices = devices.size() <= DEVICE_TYPES.size()
+                && devices.stream().allMatch(DEVICE_TYPES::contains)
+                && new HashSet<>(devices).size() == devices.size();
+        if (!validPaths || !validDevices)
+            throw new ControlPlaneException(
+                    400,
+                    "INVALID_EXPERIMENT_TARGETING",
+                    "Targeting supports up to 20 unique path prefixes and known device types");
+        return new Targeting(paths, devices);
+    }
+
     private static Comparison compare(double controlRate, Counts control, double variantRate, Counts variant) {
         if (control.exposures == 0 || variant.exposures == 0)
             return new Comparison(controlRate == 0 ? null : (variantRate - controlRate) / controlRate, null, false);
@@ -226,11 +283,13 @@ public class ExperimentService {
         return probability;
     }
 
-    public record Update(boolean enabled, String name, List<String> variants) {}
+    public record Update(boolean enabled, String name, List<String> variants, Targeting targeting) {}
 
-    public record View(UUID id, String name, boolean enabled, List<String> variants) {}
+    public record Targeting(List<String> pathPrefixes, List<String> deviceTypes) {}
 
-    public record PublicView(String name, List<String> variants) {}
+    public record View(UUID id, String name, boolean enabled, List<String> variants, Targeting targeting) {}
+
+    public record PublicView(String name, List<String> variants, Targeting targeting) {}
 
     public record VariantReport(
             String variant,

@@ -34,6 +34,7 @@ public class AnalyticsAggregationService {
             delete(c, siteId, from, to);
             siteDaily(c, siteId, from, to, timezone);
             pages(c, siteId, from, to, timezone);
+            pageTitles(c, siteId, from, to, timezone);
             traffic(c, siteId, from, to, timezone);
             events(c, siteId, from, to, timezone);
             goals(c, siteId, from, to, timezone);
@@ -68,6 +69,7 @@ public class AnalyticsAggregationService {
         for (String table : List.of(
                 "analytics_site_daily",
                 "analytics_page_daily",
+                "analytics_page_title_daily",
                 "analytics_traffic_daily",
                 "analytics_event_daily",
                 "analytics_goal_daily",
@@ -121,12 +123,31 @@ public class AnalyticsAggregationService {
         }
     }
 
+    private static void pageTitles(Connection c, UUID site, LocalDate from, LocalDate to, String tz)
+            throws SQLException {
+        String sql =
+                """
+                insert into analytics_page_title_daily(site_id,business_date,path,title,page_view_count)
+                select site_id,business_date,page_path,coalesce(page_title,''),count(*)
+                from (select site_id,((case when occurred_at < received_at - interval '24 hours' or occurred_at > received_at + interval '24 hours' then received_at else occurred_at end) at time zone ?)::date business_date,page_path,page_title
+                  from raw_event where site_id=? and event_type='page_view' and page_path is not null) page_events
+                where business_date between ? and ? group by site_id,business_date,page_path,page_title
+                """;
+        try (PreparedStatement p = c.prepareStatement(sql)) {
+            p.setString(1, tz);
+            p.setObject(2, site);
+            p.setObject(3, from);
+            p.setObject(4, to);
+            p.executeUpdate();
+        }
+    }
+
     private static void events(Connection c, UUID site, LocalDate from, LocalDate to, String tz) throws SQLException {
         String sql =
                 """
                 insert into analytics_event_daily(site_id,business_date,event_type,event_count)
                 select * from (select site_id, ((case when occurred_at < received_at - interval '24 hours' or occurred_at > received_at + interval '24 hours' then received_at else occurred_at end) at time zone ?)::date business_date, event_type, count(*) event_count
-                from raw_event where site_id=? group by site_id,business_date,event_type) events
+                from raw_event where site_id=? and event_type<>'web_vital' group by site_id,business_date,event_type) events
                 where business_date between ? and ?
                 """;
         try (PreparedStatement p = c.prepareStatement(sql)) {
@@ -186,9 +207,9 @@ public class AnalyticsAggregationService {
         Set<String> internal = domains(c, site);
         // Preserve the business date in the primary key: populate day-by-day from the fact sessions.
         try (PreparedStatement read = c.prepareStatement(
-                        "select (started_at at time zone ?)::date,initial_referrer_host,initial_page_host,initial_utm_source,initial_utm_medium,initial_utm_campaign from analytics_session where site_id=? and (started_at at time zone ?)::date between ? and ?");
+                        "select (started_at at time zone ?)::date,initial_referrer_host,initial_page_host,initial_utm_source,initial_utm_medium,initial_utm_campaign,initial_utm_term,initial_utm_content from analytics_session where site_id=? and (started_at at time zone ?)::date between ? and ?");
                 PreparedStatement write = c.prepareStatement(
-                        "insert into analytics_traffic_daily(site_id,business_date,channel,source,medium,campaign,session_count) values(?,?,?,?,?,?,?) on conflict(site_id,business_date,channel,source,medium,campaign) do update set session_count=analytics_traffic_daily.session_count + excluded.session_count")) {
+                        "insert into analytics_traffic_daily(site_id,business_date,channel,source,medium,campaign,term,content,session_count) values(?,?,?,?,?,?,?,?,?) on conflict(site_id,business_date,channel,source,medium,campaign,term,content) do update set session_count=analytics_traffic_daily.session_count + excluded.session_count")) {
             read.setString(1, tz);
             read.setObject(2, site);
             read.setString(3, tz);
@@ -200,22 +221,21 @@ public class AnalyticsAggregationService {
                             host = r.getString(3),
                             source = r.getString(4),
                             medium = r.getString(5),
-                            campaign = r.getString(6);
-                    String channel = source != null && !source.isBlank()
-                            ? "campaign"
-                            : ref == null
-                                            || ref.isBlank()
-                                            || ref.equalsIgnoreCase(host)
-                                            || internal.contains(ref.toLowerCase(Locale.ROOT))
-                                    ? "direct"
-                                    : "referral";
+                            campaign = r.getString(6),
+                            term = r.getString(7),
+                            content = r.getString(8);
+                    String channel =
+                            AcquisitionClassifier.channel(ref, host, source, medium, campaign, term, content, internal);
+                    String trafficSource = AcquisitionClassifier.source(channel, ref, source);
                     write.setObject(1, site);
                     write.setObject(2, r.getObject(1, LocalDate.class));
                     write.setString(3, channel);
-                    write.setString(4, empty(channel.equals("referral") ? ref : source));
+                    write.setString(4, empty(trafficSource));
                     write.setString(5, empty(medium));
                     write.setString(6, empty(campaign));
-                    write.setLong(7, 1);
+                    write.setString(7, empty(term));
+                    write.setString(8, empty(content));
+                    write.setLong(9, 1);
                     write.addBatch();
                 }
             }

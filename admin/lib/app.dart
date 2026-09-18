@@ -13,6 +13,16 @@ import 'features/analytics/presentation/analytics_detail_page.dart';
 import 'features/analytics/presentation/heatmap_page.dart';
 import 'features/analytics/presentation/site_tab_shell.dart';
 import 'features/analytics/presentation/recordings_page.dart';
+import 'features/analytics/presentation/custom_dimensions_page.dart';
+import 'features/analytics/presentation/segments_page.dart';
+import 'features/analytics/presentation/technology_page.dart';
+import 'features/analytics/presentation/locations_page.dart';
+import 'features/analytics/presentation/cohorts_page.dart';
+import 'features/analytics/presentation/realtime_page.dart';
+import 'features/analytics/presentation/site_audit_log_page.dart';
+import 'features/analytics/presentation/scheduled_reports_page.dart';
+import 'features/analytics/presentation/analytics_alerts_page.dart';
+import 'features/analytics/presentation/attribution_page.dart';
 import 'features/landing/presentation/landing_page.dart';
 import 'features/integration/presentation/integration_page.dart';
 import 'features/domains/presentation/domains_page.dart';
@@ -69,6 +79,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
             ),
           ),
           GoRoute(
+            path: '/sites/:siteId/realtime',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: RealtimePage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
             path: '/sites/:siteId/integration',
             pageBuilder: (context, state) => _siteTabPage(
               state,
@@ -94,6 +116,42 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
             ),
           ),
           GoRoute(
+            path: '/sites/:siteId/visitors/cohorts',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: CohortsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/visitors/technology',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: TechnologyPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/visitors/locations',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: LocationsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
             path: '/sites/:siteId/acquisition',
             pageBuilder: (context, state) => _siteTabPage(
               state,
@@ -101,6 +159,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
                 child: AnalyticsDetailPage(
                   siteId: state.pathParameters['siteId']!,
                   view: AnalyticsView.acquisition,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/acquisition/attribution',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: AttributionPage(
+                  siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),
               ),
@@ -141,6 +211,30 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
             ),
           ),
           GoRoute(
+            path: '/sites/:siteId/dimensions',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: CustomDimensionsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/segments',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: SegmentsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
             path: '/sites/:siteId/goals',
             pageBuilder: (context, state) => _siteTabPage(
               state,
@@ -148,6 +242,42 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
                 child: AnalyticsDetailPage(
                   siteId: state.pathParameters['siteId']!,
                   view: AnalyticsView.goals,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/audit-log',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: SiteAuditLogPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/scheduled-reports',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: ScheduledReportsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/alerts',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: AnalyticsAlertsPage(
+                  siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),
               ),

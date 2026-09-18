@@ -3,13 +3,21 @@
   const siteId = script?.getAttribute('data-site-id');
   if (!siteId || !globalThis.SeeRayLens) return;
   const apiOrigin = globalThis.SeeRayLens.resolveApiOrigin?.(script?.src);
+  const previewSessionId = script.getAttribute('data-tag-manager-preview-session');
+  const previewToken = script.getAttribute('data-tag-manager-preview-token');
+  const tagManagerPreview = previewSessionId && previewToken
+    ? { sessionId: previewSessionId, token: previewToken }
+    : undefined;
   globalThis.SeeRay = globalThis.SeeRayLens.SeeRay;
   globalThis.SeeRayLens.init({
     siteId,
     apiOrigin,
     requireConsent: script.getAttribute('data-require-consent') === 'true',
-    tagManager: script.getAttribute('data-tag-manager') === 'true',
+    tagManager: tagManagerPreview !== undefined || script.getAttribute('data-tag-manager') === 'true',
+    tagManagerEnvironment: script.getAttribute('data-tag-manager-environment') || 'production',
+    tagManagerPreview,
     experiments: script.getAttribute('data-experiments') === 'true',
+    webVitals: script.hasAttribute('data-web-vitals'),
     heatmap: {
       enabled: true,
       navigationMode: script.getAttribute('data-navigation-mode') === 'manual' ? 'manual' : 'auto',

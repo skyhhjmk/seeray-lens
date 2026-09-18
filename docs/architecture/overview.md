@@ -5,9 +5,9 @@
 SeeRay Lens is a modular monolith: one Quarkus codebase with explicit `auth`, `user`, `site`, `tracking`, `visitor`, `session`, `event`, `analytics`, `aggregation`, `retention`, and `infrastructure` domains. HTTP collection remains inexpensive; asynchronous processing owns persistence and aggregation. The Flutter admin consumes only versioned REST contracts. The browser tracker is a standalone TypeScript package with no framework runtime.
 
 ```text
-Tracker -> Collector -> RabbitMQ exchange -> ingest queue -> Worker -> PostgreSQL raw events
+Tracker -> Collector -> RabbitMQ exchange -> ingest queue -> Worker -> PostgreSQL raw events -> Live Visitors API
                                                               -> aggregation -> aggregate tables -> Analytics API -> Flutter
-                         Redis: rate limit, realtime, transient visitor/session state and cache
+                         Redis: tracking rate limit
 ```
 
 Redis is never the only durable source of analytics facts. Elasticsearch is an optional observability integration, not a startup dependency.
@@ -44,7 +44,7 @@ Aggregation uses UPSERT and versioned checkpoints, processes an overlap window f
 
 ## Scheduling and clustering
 
-Tasks that mutate analytics state—aggregation, retention, rebuild, and maintenance—will use Quarkus Quartz clustered mode with PostgreSQL JDBC store. It provides persisted scheduling, cluster-wide mutual exclusion, and operational visibility using the existing durable database. Plain `@Scheduled` is permitted only for non-exclusive local housekeeping.
+Scheduled analytics delivery uses Quarkus Quartz clustered mode with PostgreSQL JDBC store. The same mechanism is reserved for future state-mutating tasks such as aggregation, retention, rebuild, and maintenance; it provides persisted schedules and cluster-wide coordination using the existing durable database. Plain `@Scheduled` is permitted only for non-exclusive local housekeeping.
 
 ## Workspace and access
 

@@ -65,8 +65,23 @@ public class ExperimentResource {
         @Size(min = 2, max = 10)
         public List<@NotBlank @Size(max = 120) String> variants;
 
+        @Valid
+        public TargetingRequest targeting;
+
         ExperimentService.Update update() {
-            return new ExperimentService.Update(enabled, name, variants);
+            return new ExperimentService.Update(enabled, name, variants, targeting == null ? null : targeting.update());
+        }
+    }
+
+    public static class TargetingRequest {
+        @Size(max = 20)
+        public List<@NotBlank @Size(max = 512) String> pathPrefixes = List.of();
+
+        @Size(max = 4)
+        public List<@NotBlank @Size(max = 16) String> deviceTypes = List.of();
+
+        ExperimentService.Targeting update() {
+            return new ExperimentService.Targeting(pathPrefixes, deviceTypes);
         }
     }
 }

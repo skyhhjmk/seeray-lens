@@ -2,4 +2,4 @@
 
 **Status:** Accepted
 
-Future aggregation, retention, rebuild, and maintenance jobs use Quarkus Quartz clustered mode backed by PostgreSQL. It is selected over ad-hoc advisory locks because it gives persistent schedules and operational job state while providing a single cluster-coordination mechanism. Quartz is added when the first such job is implemented; Phase 1 introduces no state-changing scheduled task.
+Scheduled analytics email delivery uses Quarkus Quartz clustered mode backed by PostgreSQL. It is selected over ad-hoc advisory locks because it gives persistent schedules and operational job state while providing a single cluster-coordination mechanism. Future aggregation, retention, rebuild, and maintenance jobs should use the same store. Quartz tables are installed through Liquibase; ad-hoc destructive upstream schema setup is not used.

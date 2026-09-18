@@ -10,6 +10,7 @@ import '../../../shared/presentation/site_top_bar.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/analytics_controller.dart';
 import '../application/analytics_range.dart';
+import '../application/analytics_segment.dart';
 
 enum AnalyticsView { visitors, acquisition, behaviour, goals }
 
@@ -27,7 +28,37 @@ class AnalyticsDetailPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rangeState = ref.watch(analyticsRangeProvider(siteId));
-    final query = AnalyticsDashboardQuery(siteId, rangeState.range);
+    final segmentId = ref.watch(analyticsSegmentSelectionProvider(siteId));
+    final query = AnalyticsDashboardQuery(
+      siteId,
+      rangeState.range,
+      segmentId: segmentId,
+    );
+    final reportBody = view == AnalyticsView.behaviour
+        ? ref
+              .watch(analyticsBehaviourProvider(query))
+              .when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => Center(
+                  child: Text(
+                    context.tr('Could not load analytics', '无法加载分析数据'),
+                  ),
+                ),
+                data: (data) => _BehaviourBody(siteId: siteId, data: data),
+              )
+        : ref
+              .watch(analyticsDashboardRangeProvider(query))
+              .when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => Center(
+                  child: Text(
+                    context.tr('Could not load analytics', '无法加载分析数据'),
+                  ),
+                ),
+                data: (data) => view == AnalyticsView.goals
+                    ? _GoalsBody(siteId: siteId, data: data)
+                    : _Body(view: view, data: data, siteId: siteId),
+              );
     return Scaffold(
       backgroundColor: const Color(0xfff3f5f8),
       appBar: embedded
@@ -48,19 +79,997 @@ class AnalyticsDetailPage extends ConsumerWidget {
                 chineseBody: '这些报表显示当前站点最近 30 天的数据。空白面板表示尚未采集到匹配事件。',
               ),
             ),
-      body: ref
-          .watch(analyticsDashboardRangeProvider(query))
-          .when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Center(
-              child: Text(context.tr('Could not load analytics', '无法加载分析数据')),
-            ),
-            data: (data) => view == AnalyticsView.goals
-                ? _GoalsBody(siteId: siteId, data: data)
-                : _Body(view: view, data: data),
-          ),
+      body: reportBody,
     );
   }
+}
+
+class _BehaviourBody extends StatelessWidget {
+  const _BehaviourBody({required this.siteId, required this.data});
+
+  final String siteId;
+  final AnalyticsBehaviourData data;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = data.flows.where((item) => item.flow == 'entry').toList();
+    final exits = data.flows.where((item) => item.flow == 'exit').toList();
+    final pages = data.pages
+        .map(
+          (item) => _ReportRow(
+            item.title?.isNotEmpty == true
+                ? item.title!
+                : context.tr('Untitled page', '未命名页面'),
+            item.path,
+            item.pageViews,
+          ),
+        )
+        .toList(growable: false);
+    final entryRows = entries.map(_pageFlowRow).toList(growable: false);
+    final exitRows = exits.map(_pageFlowRow).toList(growable: false);
+    final eventRows = data.events
+        .map((item) => _ReportRow(item.type, null, item.count))
+        .toList(growable: false);
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          context.tr('Behaviour', '用户行为'),
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          context.tr(
+            'Understand which content people view, where visits begin and end, and which actions are tracked.',
+            '查看访客浏览的内容、访问的起点与终点，以及追踪到的行为事件。',
+          ),
+        ),
+        const SizedBox(height: 16),
+        _BehaviourPanel(
+          title: context.tr('Page titles', '页面标题'),
+          metric: context.tr('Page views', '页面浏览'),
+          empty: context.tr('No page views yet', '暂无页面浏览数据'),
+          rows: pages,
+        ),
+        const SizedBox(height: 16),
+        _SiteSearchPanel(siteId: siteId, report: data.siteSearch),
+        const SizedBox(height: 16),
+        _ContentAnalyticsPanel(siteId: siteId, report: data.content),
+        const SizedBox(height: 16),
+        _WebVitalsPanel(siteId: siteId, report: data.webVitals),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth > 760;
+            final entryPanel = _BehaviourPanel(
+              title: context.tr('Entry pages', '入口页面'),
+              metric: context.tr('Visits', '访问'),
+              empty: context.tr('No entry-page data yet', '暂无入口页面数据'),
+              rows: entryRows,
+            );
+            final exitPanel = _BehaviourPanel(
+              title: context.tr('Exit pages', '退出页面'),
+              metric: context.tr('Visits', '访问'),
+              empty: context.tr('No exit-page data yet', '暂无退出页面数据'),
+              rows: exitRows,
+            );
+            return wide
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: entryPanel),
+                      const SizedBox(width: 16),
+                      Expanded(child: exitPanel),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      entryPanel,
+                      const SizedBox(height: 16),
+                      exitPanel,
+                    ],
+                  );
+          },
+        ),
+        const SizedBox(height: 16),
+        _BehaviourPanel(
+          title: context.tr('Tracked events', '已追踪事件'),
+          metric: context.tr('Events', '事件数'),
+          empty: context.tr('No events collected yet', '暂无事件数据'),
+          rows: eventRows,
+        ),
+        const SizedBox(height: 16),
+        _UserFlowExplorer(edges: data.userFlow),
+      ],
+    );
+  }
+
+  _ReportRow _pageFlowRow(AnalyticsPageFlow item) => _ReportRow(
+    item.title?.isNotEmpty == true ? item.title! : item.path,
+    item.title?.isNotEmpty == true ? item.path : null,
+    item.sessions,
+  );
+}
+
+class _SiteSearchPanel extends StatelessWidget {
+  const _SiteSearchPanel({required this.siteId, required this.report});
+
+  final String siteId;
+  final AnalyticsSiteSearchReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final noResultRate = report.measuredResultSearches == 0
+        ? null
+        : report.zeroResultSearches / report.measuredResultSearches * 100;
+    final terms = report.terms.take(20).toList(growable: false);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.manage_search_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    context.tr('Site search', '站内搜索'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: context.tr('Tracking setup', '追踪接入说明'),
+                  onPressed: () => context.go('/sites/$siteId/integration'),
+                  icon: const Icon(Icons.integration_instructions_outlined),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.tr(
+                'Search terms are collected only from opted-in search forms or explicit tracker calls. Result metrics use searches that supplied a result count.',
+                '搜索词仅从明确标记的搜索表单或显式追踪调用中采集。结果数指标只统计提供了结果数的搜索。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _SiteSearchMetric(
+                  label: context.tr('Searches', '搜索次数'),
+                  value: '${report.searches}',
+                ),
+                _SiteSearchMetric(
+                  label: context.tr('Search sessions', '搜索访问'),
+                  value: '${report.sessions}',
+                ),
+                _SiteSearchMetric(
+                  label: context.tr('No-result rate', '无结果率'),
+                  value: noResultRate == null
+                      ? '—'
+                      : '${noResultRate.toStringAsFixed(1)}%',
+                  detail: context.tr(
+                    '${report.zeroResultSearches} of ${report.measuredResultSearches} measured',
+                    '已知结果数 ${report.measuredResultSearches} 次中有 ${report.zeroResultSearches} 次无结果',
+                  ),
+                ),
+                _SiteSearchMetric(
+                  label: context.tr('Average results', '平均结果数'),
+                  value: report.averageResultsCount?.toStringAsFixed(1) ?? '—',
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (terms.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Text(
+                        context.tr(
+                          'No site-search events in this date range.',
+                          '当前日期范围内没有站内搜索事件。',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        context.tr(
+                          'Open tracking setup to mark your search form or call the tracker after a search.',
+                          '打开追踪接入说明，为搜索表单加上追踪标记，或在搜索完成后调用追踪器。',
+                        ),
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    DataColumn(label: Text(context.tr('Search term', '搜索词'))),
+                    DataColumn(label: Text(context.tr('Category', '类别'))),
+                    DataColumn(
+                      numeric: true,
+                      label: Text(context.tr('Searches', '搜索次数')),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: Text(context.tr('Visitors', '访客')),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: Text(context.tr('No results', '无结果')),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: Text(context.tr('Avg. results', '平均结果数')),
+                    ),
+                  ],
+                  rows: [
+                    for (final term in terms)
+                      DataRow(
+                        cells: [
+                          DataCell(
+                            Tooltip(
+                              message: term.keyword,
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 240,
+                                ),
+                                child: Text(
+                                  term.keyword,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ),
+                          DataCell(Text(term.category ?? '—')),
+                          DataCell(Text('${term.searches}')),
+                          DataCell(Text('${term.uniqueVisitors}')),
+                          DataCell(Text('${term.zeroResultSearches}')),
+                          DataCell(
+                            Text(
+                              term.averageResultsCount?.toStringAsFixed(1) ??
+                                  '—',
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            if (terms.isNotEmpty && report.terms.length > terms.length)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  context.tr(
+                    'Showing the 20 most searched terms.',
+                    '仅显示搜索次数最多的 20 个词。',
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SiteSearchMetric extends StatelessWidget {
+  const _SiteSearchMetric({
+    required this.label,
+    required this.value,
+    this.detail,
+  });
+
+  final String label;
+  final String value;
+  final String? detail;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(minWidth: 140),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 3),
+        Text(value, style: Theme.of(context).textTheme.titleLarge),
+        if (detail != null)
+          Text(detail!, style: Theme.of(context).textTheme.labelSmall),
+      ],
+    ),
+  );
+}
+
+class _ContentAnalyticsPanel extends StatelessWidget {
+  const _ContentAnalyticsPanel({required this.siteId, required this.report});
+
+  final String siteId;
+  final AnalyticsContentReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = report.entries.take(20).toList(growable: false);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.campaign_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    context.tr('Content performance', '内容表现'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: context.tr('Tracking setup', '追踪接入说明'),
+                  onPressed: () => context.go('/sites/$siteId/integration'),
+                  icon: const Icon(Icons.integration_instructions_outlined),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.tr(
+                'Only content with explicit SeeRay labels is measured. Impressions count when at least 10% of a marked item becomes visible; text and markup are never collected.',
+                '仅统计明确添加 SeeRay 标记的内容；标记项至少 10% 进入可视区域时记为曝光，不采集内容文本或页面结构。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _SiteSearchMetric(
+                  label: context.tr('Impressions', '曝光'),
+                  value: '${report.impressions}',
+                ),
+                _SiteSearchMetric(
+                  label: context.tr('Interactions', '互动'),
+                  value: '${report.interactions}',
+                ),
+                _SiteSearchMetric(
+                  label: context.tr('Interaction rate', '互动率'),
+                  value:
+                      '${(report.interactionRate * 100).toStringAsFixed(1)}%',
+                ),
+                _SiteSearchMetric(
+                  label: context.tr('Reached visitors', '触达访客'),
+                  value: '${report.uniqueVisitors}',
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (entries.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Text(
+                        context.tr(
+                          'No marked content has been seen in this date range.',
+                          '当前日期范围内尚无已标记内容的曝光。',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        context.tr(
+                          'Open tracking setup to label a content item and its interaction controls.',
+                          '打开追踪接入说明，为内容项及其互动控件添加标记。',
+                        ),
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    DataColumn(label: Text(context.tr('Content', '内容'))),
+                    DataColumn(label: Text(context.tr('Piece', '素材'))),
+                    DataColumn(label: Text(context.tr('Target', '目标'))),
+                    DataColumn(
+                      numeric: true,
+                      label: Text(context.tr('Impressions', '曝光')),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: Text(context.tr('Interactions', '互动')),
+                    ),
+                    DataColumn(
+                      numeric: true,
+                      label: Text(context.tr('Rate', '互动率')),
+                    ),
+                  ],
+                  rows: [
+                    for (final entry in entries)
+                      DataRow(
+                        cells: [
+                          DataCell(_BoundedReportText(entry.name)),
+                          DataCell(Text(entry.piece ?? '—')),
+                          DataCell(_BoundedReportText(entry.target ?? '—')),
+                          DataCell(Text('${entry.impressions}')),
+                          DataCell(Text('${entry.interactions}')),
+                          DataCell(
+                            Text(
+                              '${(entry.interactionRate * 100).toStringAsFixed(1)}%',
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            if (report.entries.length > entries.length)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  context.tr(
+                    'Showing the 20 content variants with the most impressions.',
+                    '仅显示曝光最多的 20 个内容变体。',
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WebVitalsPanel extends StatelessWidget {
+  const _WebVitalsPanel({required this.siteId, required this.report});
+
+  final String siteId;
+  final AnalyticsWebVitalsReport report;
+
+  String _value(String metric, double p75) => switch (metric) {
+    'LCP' => '${(p75 / 1000).toStringAsFixed(2)} s',
+    'INP' => '${p75.round()} ms',
+    'CLS' => p75.toStringAsFixed(3),
+    _ => p75.toStringAsFixed(1),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = {for (final item in report.metrics) item.metric: item};
+    final pages = report.pages.take(30).toList(growable: false);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.speed_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    context.tr(
+                      'Page performance · Web Vitals',
+                      '页面性能 · Web Vitals',
+                    ),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: context.tr('Tracking setup', '追踪接入说明'),
+                  onPressed: () =>
+                      context.go('/sites/$siteId/integration?tab=web-vitals'),
+                  icon: const Icon(Icons.integration_instructions_outlined),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.tr(
+                'The p75 summarizes the slowest quarter of measured experiences. Each page’s metric ID is deduplicated so later CLS/INP updates replace earlier values instead of inflating samples.',
+                'p75 表示本范围内第 75 百分位的体验值。每个页面指标 ID 会去重，CLS / INP 的后续更新会替换早先数值，不会重复增加样本。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              context.tr(
+                'Good: LCP ≤ 2.5 s · INP ≤ 200 ms · CLS ≤ 0.1. Poor: > 4 s · > 500 ms · > 0.25; values in between need improvement.',
+                '良好：LCP ≤ 2.5 秒 · INP ≤ 200 毫秒 · CLS ≤ 0.1。较差：> 4 秒 · > 500 毫秒 · > 0.25；中间值需改进。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            if (report.metrics.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Text(
+                        context.tr(
+                          'No Web Vitals have been collected in this date range.',
+                          '当前日期范围内尚无 Web Vitals 数据。',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        context.tr(
+                          'Enable the Web Vitals snippet in tracking setup. Collection starts only after the tracker is installed and the page has a supported browser API.',
+                          '请在追踪接入说明中启用 Web Vitals。安装追踪代码并由支持相关浏览器 API 的页面访问后才会开始采集。',
+                        ),
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: () => context.go(
+                          '/sites/$siteId/integration?tab=web-vitals',
+                        ),
+                        icon: const Icon(
+                          Icons.integration_instructions_outlined,
+                        ),
+                        label: Text(context.tr('Set up collection', '配置采集')),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else ...[
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final metric in const ['LCP', 'INP', 'CLS'])
+                    if (metrics[metric] case final summary?)
+                      _SiteSearchMetric(
+                        label: '$metric ${context.tr('p75', 'p75')}',
+                        value: _value(metric, summary.p75),
+                        detail: context.tr(
+                          '${summary.samples} samples · ${summary.good} good · ${summary.needsImprovement} needs work · ${summary.poor} poor',
+                          '${summary.samples} 个样本 · ${summary.good} 良好 · ${summary.needsImprovement} 需改进 · ${summary.poor} 较差',
+                        ),
+                      ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              if (pages.isEmpty)
+                Text(
+                  context.tr('No page-level measurements yet.', '暂无页面级测量数据。'),
+                )
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: [
+                      DataColumn(label: Text(context.tr('Page', '页面'))),
+                      DataColumn(label: Text(context.tr('Metric', '指标'))),
+                      DataColumn(
+                        numeric: true,
+                        label: Text(context.tr('p75', 'p75')),
+                      ),
+                      DataColumn(
+                        numeric: true,
+                        label: Text(context.tr('Samples', '样本')),
+                      ),
+                      DataColumn(
+                        numeric: true,
+                        label: Text(context.tr('Good', '良好')),
+                      ),
+                      DataColumn(
+                        numeric: true,
+                        label: Text(context.tr('Needs work', '需改进')),
+                      ),
+                      DataColumn(
+                        numeric: true,
+                        label: Text(context.tr('Poor', '较差')),
+                      ),
+                    ],
+                    rows: [
+                      for (final page in pages)
+                        DataRow(
+                          cells: [
+                            DataCell(_BoundedReportText(page.pagePath ?? '/')),
+                            DataCell(Text(page.metric)),
+                            DataCell(Text(_value(page.metric, page.p75))),
+                            DataCell(Text('${page.samples}')),
+                            DataCell(Text('${page.good}')),
+                            DataCell(Text('${page.needsImprovement}')),
+                            DataCell(Text('${page.poor}')),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              if (report.pages.length > pages.length)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    context.tr(
+                      'Showing the 30 page and metric combinations with the most samples.',
+                      '仅显示样本量最多的 30 个页面和指标组合。',
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BoundedReportText extends StatelessWidget {
+  const _BoundedReportText(this.value);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: value,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 220),
+      child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis),
+    ),
+  );
+}
+
+class _UserFlowExplorer extends StatefulWidget {
+  const _UserFlowExplorer({required this.edges});
+
+  final List<AnalyticsUserFlowEdge> edges;
+
+  @override
+  State<_UserFlowExplorer> createState() => _UserFlowExplorerState();
+}
+
+class _UserFlowExplorerState extends State<_UserFlowExplorer> {
+  int _step = 1;
+  String? _sourcePath;
+
+  @override
+  Widget build(BuildContext context) {
+    final stepEdges = widget.edges.where((edge) => edge.step == _step).toList();
+    final sources = stepEdges.map((edge) => edge.sourcePath).toSet().toList();
+    if (_sourcePath != null && !sources.contains(_sourcePath)) {
+      sources.insert(0, _sourcePath!);
+    }
+    final edges = _sourcePath == null
+        ? stepEdges
+        : stepEdges.where((edge) => edge.sourcePath == _sourcePath).toList();
+    final maxSessions = edges.fold<int>(
+      0,
+      (current, edge) => edge.sessions > current ? edge.sessions : current,
+    );
+
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.route_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    context.tr('User flow', '用户路径'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              context.tr(
+                'Follow the most common page-to-page journeys. Counts are visits, and each step represents one page transition.',
+                '查看常见的页面访问路径。数字表示访问次数，每一步代表一次页面跳转。',
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (var step = 1; step <= 5; step++)
+                  ChoiceChip(
+                    label: Text(context.tr('Step $step', '第 $step 步')),
+                    selected: _step == step,
+                    onSelected: (_) => setState(() {
+                      _step = step;
+                      _sourcePath = null;
+                    }),
+                  ),
+              ],
+            ),
+            if (sources.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                context.tr('Starting page', '起始页面'),
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilterChip(
+                    label: Text(context.tr('All pages', '全部页面')),
+                    selected: _sourcePath == null,
+                    onSelected: (_) => setState(() => _sourcePath = null),
+                  ),
+                  for (final path in sources.take(9))
+                    FilterChip(
+                      label: SizedBox(
+                        width: 190,
+                        child: Text(path, overflow: TextOverflow.ellipsis),
+                      ),
+                      selected: _sourcePath == path,
+                      onSelected: (_) => setState(() => _sourcePath = path),
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 8),
+            if (edges.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 22),
+                child: Center(
+                  child: Text(
+                    _sourcePath == null
+                        ? context.tr(
+                            'No page transitions recorded for this step.',
+                            '此步骤暂无页面跳转记录。',
+                          )
+                        : context.tr(
+                            'No recorded transition from $_sourcePath at this step.',
+                            '$_sourcePath 在此步骤没有后续跳转记录。',
+                          ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
+            else ...[
+              for (final edge in edges)
+                _UserFlowTransition(
+                  edge: edge,
+                  maxSessions: maxSessions,
+                  onFollow: edge.targetPath == null || _step == 5
+                      ? null
+                      : () => setState(() {
+                          _step++;
+                          _sourcePath = edge.targetPath;
+                        }),
+                ),
+              const SizedBox(height: 4),
+              Text(
+                context.tr(
+                  'Select a destination to follow that journey into the next step.',
+                  '选择一个目标页面，可继续查看它在下一步的去向。',
+                ),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UserFlowTransition extends StatelessWidget {
+  const _UserFlowTransition({
+    required this.edge,
+    required this.maxSessions,
+    required this.onFollow,
+  });
+
+  final AnalyticsUserFlowEdge edge;
+  final int maxSessions;
+  final VoidCallback? onFollow;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = _pageLabel(edge.sourceTitle, edge.sourcePath);
+    final target = edge.targetPath == null
+        ? context.tr('Exit after this page', '访问在此页面结束')
+        : _pageLabel(edge.targetTitle, edge.targetPath!);
+    final ratio = maxSessions == 0 ? 0.0 : edge.sessions / maxSessions;
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: InkWell(
+        onTap: onFollow,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(child: _FlowPageNode(label: source)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Icon(
+                      edge.targetPath == null
+                          ? Icons.logout
+                          : Icons.arrow_forward_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  Expanded(
+                    child: _FlowPageNode(
+                      label: target,
+                      isExit: edge.targetPath == null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: ratio,
+                      minHeight: 5,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    context.tr(
+                      '${edge.sessions} visits',
+                      '${edge.sessions} 次访问',
+                    ),
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _pageLabel(String? title, String path) =>
+      title?.isNotEmpty == true ? '$title · $path' : path;
+}
+
+class _FlowPageNode extends StatelessWidget {
+  const _FlowPageNode({required this.label, this.isExit = false});
+
+  final String label;
+  final bool isExit;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(minHeight: 48),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+    ),
+    child: Row(
+      children: [
+        Icon(
+          isExit ? Icons.flag_outlined : Icons.web_outlined,
+          size: 17,
+          color: isExit
+              ? Theme.of(context).colorScheme.onSurfaceVariant
+              : Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ReportRow {
+  const _ReportRow(this.title, this.subtitle, this.count);
+
+  final String title;
+  final String? subtitle;
+  final int count;
+}
+
+class _BehaviourPanel extends StatelessWidget {
+  const _BehaviourPanel({
+    required this.title,
+    required this.metric,
+    required this.empty,
+    required this.rows,
+  });
+
+  final String title;
+  final String metric;
+  final String empty;
+  final List<_ReportRow> rows;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    elevation: 0,
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const Divider(height: 28),
+          if (rows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Center(child: Text(empty)),
+            )
+          else
+            for (final row in rows.take(10))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 7),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(row.title, overflow: TextOverflow.ellipsis),
+                          if (row.subtitle != null)
+                            Text(
+                              row.subtitle!,
+                              style: Theme.of(context).textTheme.bodySmall,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('$metric · ${row.count}'),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    ),
+  );
 }
 
 // ignore: unused_element
@@ -148,9 +1157,10 @@ class _Tab extends StatelessWidget {
 }
 
 class _Body extends StatelessWidget {
-  const _Body({required this.view, required this.data});
+  const _Body({required this.view, required this.data, required this.siteId});
   final AnalyticsView view;
   final AnalyticsDashboard data;
+  final String siteId;
   @override
   Widget build(BuildContext context) {
     final rows = switch (view) {
@@ -165,16 +1175,7 @@ class _Body extends StatelessWidget {
           '${(data.visitors.bounceRate * 100).toStringAsFixed(1)}%',
         ),
       ],
-      AnalyticsView.acquisition =>
-        data.traffic
-            .map(
-              (x) => _Metric(
-                x.channel,
-                x.source ?? 'direct',
-                '${x.sessions} ${context.tr('visits', '次访问')}',
-              ),
-            )
-            .toList(),
+      AnalyticsView.acquisition => <_Metric>[],
       AnalyticsView.behaviour => [
         ...data.pages.map(
           (x) => _Metric(x.path, 'Page views', '${x.pageViews}'),
@@ -195,9 +1196,27 @@ class _Body extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(title, style: Theme.of(context).textTheme.headlineSmall),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+            ),
+            if (view == AnalyticsView.acquisition)
+              FilledButton.tonalIcon(
+                onPressed: () =>
+                    context.go('/sites/$siteId/acquisition/attribution'),
+                icon: const Icon(Icons.compare_arrows),
+                label: Text(context.tr('Attribution models', '多触点归因')),
+              ),
+          ],
+        ),
         const SizedBox(height: 16),
-        if (rows.isEmpty)
+        if (view == AnalyticsView.acquisition && data.traffic.isNotEmpty)
+          ...data.traffic.map((item) => _AcquisitionMetric(item))
+        else if (rows.isEmpty)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -207,6 +1226,69 @@ class _Body extends StatelessWidget {
         else
           ...rows,
       ],
+    );
+  }
+}
+
+class _AcquisitionMetric extends StatelessWidget {
+  const _AcquisitionMetric(this.traffic);
+
+  final AnalyticsTraffic traffic;
+
+  @override
+  Widget build(BuildContext context) {
+    final dimensions = <String, String?>{
+      'Source': traffic.source,
+      'Medium': traffic.medium,
+      'Campaign': traffic.campaign,
+      'Term': traffic.term,
+      'Content': traffic.content,
+    };
+    final details = dimensions.entries
+        .where((entry) => entry.value?.isNotEmpty == true)
+        .map(
+          (entry) =>
+              '${context.tr(entry.key, switch (entry.key) {
+                'Source' => '来源',
+                'Medium' => '媒介',
+                'Campaign' => '活动',
+                'Term' => '关键词',
+                _ => '内容',
+              })}: ${entry.value}',
+        )
+        .toList(growable: false);
+    return Card(
+      child: ListTile(
+        title: Text(
+          context.tr(
+            switch (traffic.channel) {
+              'direct' => 'Direct',
+              'referral' => 'Website referral',
+              'campaign' => 'Campaign',
+              'search_engine' => 'Search engine',
+              'social' => 'Social network',
+              'ai_assistant' => 'AI assistant',
+              _ => traffic.channel,
+            },
+            switch (traffic.channel) {
+              'direct' => '直接访问',
+              'referral' => '网站引荐',
+              'campaign' => '活动',
+              'search_engine' => '搜索引擎',
+              'social' => '社交网络',
+              'ai_assistant' => 'AI 助手',
+              _ => traffic.channel,
+            },
+          ),
+        ),
+        subtitle: details.isEmpty
+            ? Text(context.tr('No campaign parameters', '无活动参数'))
+            : Text(details.join(' · ')),
+        trailing: Text(
+          '${traffic.sessions} ${context.tr('visits', '次访问')}',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+      ),
     );
   }
 }
@@ -334,9 +1416,12 @@ class _GoalsBodyState extends ConsumerState<_GoalsBody> {
 
   void _invalidateReport() {
     final range = ref.read(analyticsRangeProvider(widget.siteId)).range;
+    final segmentId = ref.read(
+      analyticsSegmentSelectionProvider(widget.siteId),
+    );
     ref.invalidate(
       analyticsDashboardRangeProvider(
-        AnalyticsDashboardQuery(widget.siteId, range),
+        AnalyticsDashboardQuery(widget.siteId, range, segmentId: segmentId),
       ),
     );
   }
