@@ -24,12 +24,23 @@ import javax.sql.DataSource;
 public class OfflineConversionService {
     private static final int MAX_IMPORT_ROWS = 5_000;
     private static final int MAX_GOOGLE_ADS_ROWS = 2_000;
+    private static final int MAX_META_ADS_ROWS = 1_000;
     private static final int MAX_IMPORT_CHARACTERS = 2 * 1024 * 1024;
     private static final Set<String> PLATFORMS =
             Set.of("google_ads", "microsoft_ads", "meta_ads", "tiktok_ads", "linkedin_ads", "x_ads");
     private static final Set<String> MODELS =
             Set.of("first_touch", "last_touch", "linear", "position_based", "time_decay");
     private static final Set<Integer> LOOKBACK_DAYS = Set.of(7, 30, 90);
+    private static final Set<String> META_ACTION_SOURCES = Set.of(
+            "website",
+            "app",
+            "business_messaging",
+            "chat",
+            "email",
+            "other",
+            "phone_call",
+            "physical_store",
+            "system_generated");
 
     private final DataSource dataSource;
     private final SiteService sites;
@@ -37,6 +48,7 @@ public class OfflineConversionService {
     private final SegmentService segments;
     private final GoogleAdsDataManagerGateway googleAds;
     private final MicrosoftAdsCapiGateway microsoftAds;
+    private final MetaAdsCapiGateway metaAds;
     private final SecretEncryptionService encryption;
 
     @Inject
@@ -47,6 +59,7 @@ public class OfflineConversionService {
             SegmentService segments,
             GoogleAdsDataManagerGateway googleAds,
             MicrosoftAdsCapiGateway microsoftAds,
+            MetaAdsCapiGateway metaAds,
             SecretEncryptionService encryption) {
         this.dataSource = dataSource;
         this.sites = sites;
@@ -54,6 +67,7 @@ public class OfflineConversionService {
         this.segments = segments;
         this.googleAds = googleAds;
         this.microsoftAds = microsoftAds;
+        this.metaAds = metaAds;
         this.encryption = encryption;
     }
 
@@ -385,6 +399,297 @@ public class OfflineConversionService {
         MicrosoftAdsCapiGateway.Result result =
                 microsoftAds.send(destination.tagId(), encryption.decrypt(destination.tokenCiphertext()), payload);
         return new MicrosoftAdsTransferResult(events.size(), result.eventsReceived(), result.validationWarnings());
+    }
+
+    public MetaAdsConfigView metaAdsConfig(UUID siteId) {
+        Site site = readableSite(siteId);
+        var member = access.member(site.organization.id);
+        boolean canManage = member.role == WorkspaceRole.OWNER || member.role == WorkspaceRole.ADMIN;
+        String datasetId = null;
+        String currencyCode = null;
+        boolean configured = false;
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select dataset_id,currency_code from analytics_meta_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (row.next()) {
+                    datasetId = row.getString(1);
+                    currencyCode = row.getString(2);
+                    configured = true;
+                }
+            }
+            List<MetaAdsGoalMappingView> mappings = new ArrayList<>();
+            try (PreparedStatement mappingStatement = connection.prepareStatement(
+                    "select m.goal_id,g.name,m.event_name from analytics_meta_ads_goal_mapping m "
+                            + "join goal_definition g on g.id=m.goal_id and g.site_id=m.site_id "
+                            + "where m.site_id=? and g.enabled order by g.name,m.goal_id")) {
+                mappingStatement.setObject(1, siteId);
+                try (ResultSet rows = mappingStatement.executeQuery()) {
+                    while (rows.next()) {
+                        mappings.add(new MetaAdsGoalMappingView(
+                                rows.getObject(1, UUID.class), rows.getString(2), rows.getString(3)));
+                    }
+                }
+            }
+            return new MetaAdsConfigView(
+                    canManage, configured, configured, datasetId, currencyCode, List.copyOf(mappings));
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read Meta Ads CAPI configuration", error);
+        }
+    }
+
+    @Transactional
+    public MetaAdsConfigView saveMetaAdsConfig(UUID siteId, MetaAdsConfigInput input) {
+        writableSite(siteId);
+        if (input == null) throw invalid("Enter a Meta dataset/pixel ID and currency.");
+        String datasetId = input.datasetId() == null ? "" : input.datasetId().strip();
+        if (!datasetId.matches("[0-9]{1,32}")) throw invalid("Meta dataset/pixel ID must contain 1 to 32 digits.");
+        String currencyCode =
+                input.currencyCode() == null ? "" : input.currencyCode().strip().toUpperCase(Locale.ROOT);
+        try {
+            Currency.getInstance(currencyCode);
+        } catch (IllegalArgumentException error) {
+            throw invalid("Choose a valid three-letter ISO currency code.");
+        }
+        ExistingMetaAdsConfig existing = existingMetaAdsConfig(siteId);
+        byte[] encryptedToken;
+        if (input.apiToken() == null || input.apiToken().isBlank()) {
+            if (existing == null) {
+                throw new ControlPlaneException(
+                        400,
+                        "META_ADS_TOKEN_REQUIRED",
+                        "Enter the Meta Conversions API access token for the first connection.");
+            }
+            encryptedToken = existing.tokenCiphertext();
+        } else {
+            String token = input.apiToken().strip();
+            if (token.length() > 8_192) throw invalid("The Meta Conversions API token is too long.");
+            encryptedToken = encryption.encrypt(token);
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_meta_ads_capi_config(site_id,dataset_id,currency_code,api_token_ciphertext,updated_by,updated_at) "
+                                + "values(?,?,?,?,?,now()) on conflict(site_id) do update set dataset_id=excluded.dataset_id,"
+                                + "currency_code=excluded.currency_code,api_token_ciphertext=excluded.api_token_ciphertext,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, datasetId);
+            statement.setString(3, currencyCode);
+            statement.setBytes(4, encryptedToken);
+            statement.setObject(5, access.userId());
+            statement.executeUpdate();
+            return metaAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save Meta Ads CAPI configuration", error);
+        }
+    }
+
+    @Transactional
+    public MetaAdsConfigView mapMetaAdsGoal(UUID siteId, UUID goalId, String eventNameValue) {
+        writableSite(siteId);
+        goal(siteId, goalId, true);
+        String eventName = eventNameValue == null ? "" : eventNameValue.strip();
+        if (eventName.isBlank() || eventName.length() > 128 || eventName.chars().anyMatch(Character::isISOControl)) {
+            throw invalid("Meta event name is required and must be at most 128 characters.");
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_meta_ads_goal_mapping(site_id,goal_id,event_name,updated_by,updated_at) "
+                                + "values(?,?,?,?,now()) on conflict(site_id,goal_id) do update set event_name=excluded.event_name,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.setString(3, eventName);
+            statement.setObject(4, access.userId());
+            statement.executeUpdate();
+            return metaAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save Meta Ads goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public MetaAdsConfigView removeMetaAdsGoalMapping(UUID siteId, UUID goalId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "delete from analytics_meta_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.executeUpdate();
+            return metaAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove Meta Ads goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public MetaAdsConfigView removeMetaAdsConfig(UUID siteId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("delete from analytics_meta_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            statement.executeUpdate();
+            return metaAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove Meta Ads CAPI configuration", error);
+        }
+    }
+
+    public MetaAdsTransferResult transferToMetaAds(UUID siteId, MetaAdsTransferInput input) {
+        writableSite(siteId);
+        if (input == null
+                || input.goalId() == null
+                || input.rows() == null
+                || input.rows().isEmpty()
+                || input.rows().size() > MAX_META_ADS_ROWS) {
+            throw invalid("Choose 1 to 1,000 Meta Ads conversion rows per send.");
+        }
+        if (!input.consentConfirmed()) {
+            throw new ControlPlaneException(
+                    400,
+                    "META_ADS_CONSENT_CONFIRMATION_REQUIRED",
+                    "Confirm that every exported row has consent for ad-storage and conversion measurement.");
+        }
+        MetaAdsDestination destination = metaAdsDestination(siteId);
+        Goal goal = goal(siteId, input.goalId(), true);
+        String eventName = metaAdsEventName(siteId, input.goalId());
+        String actionSource =
+                input.actionSource() == null ? "" : input.actionSource().strip().toLowerCase(Locale.ROOT);
+        if (!META_ACTION_SOURCES.contains(actionSource)) {
+            throw invalid("Choose a supported Meta Conversions API action source.");
+        }
+        List<NormalizedRow> normalized = normalizeRows(siteId, input.rows());
+        ensureRowsMatchImportedConversions(siteId, input.goalId(), normalized, "meta_ads");
+        Instant now = Instant.now();
+        Map<String, RowInput> rawRows = new HashMap<>();
+        for (RowInput row : input.rows()) {
+            String key = TrackingIdentityHasher.hash(
+                    siteId, "offline-conversion:" + row.conversionId().trim());
+            rawRows.put(key, row);
+        }
+        Map<String, NavigableSet<Instant>> clickVisits = metaClickVisits(siteId, normalized);
+        List<Map<String, Object>> events = new ArrayList<>(normalized.size());
+        for (NormalizedRow row : normalized) {
+            RowInput raw = rawRows.get(row.conversionKeyHash());
+            if (!"meta_ads".equals(row.platform())) throw invalid("Every row must use platform meta_ads.");
+            String clickId = field(raw.clickId(), 2_048, "FBCLID", 0);
+            if (!clickId.matches("[A-Za-z0-9._-]{1,2048}"))
+                throw invalid("Every Meta click ID must be a valid FBCLID.");
+            if (row.convertedAt().isBefore(now.minus(Duration.ofDays(7)))
+                    || row.convertedAt().isAfter(now.plus(Duration.ofMinutes(5)))) {
+                throw invalid("Meta Conversions API accepts event times only within the last 7 days.");
+            }
+            NavigableSet<Instant> visits = clickVisits.get(row.clickIdHash());
+            Instant clickAt = visits == null ? null : visits.floor(row.convertedAt());
+            if (clickAt == null || clickAt.isBefore(row.convertedAt().minus(Duration.ofDays(7)))) {
+                throw new ControlPlaneException(
+                        409,
+                        "META_ADS_MATCHED_VISIT_REQUIRED",
+                        "Every row must match a tracked Meta ad click from this site within 7 days before conversion.");
+            }
+            Map<String, Object> userData = Map.of("fbc", "fb.1." + clickAt.toEpochMilli() + "." + clickId);
+            Map<String, Object> customData = Map.of(
+                    "value", goal.fixedValue().doubleValue(),
+                    "currency", destination.currencyCode());
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("event_name", eventName);
+            event.put("event_time", row.convertedAt().getEpochSecond());
+            event.put(
+                    "event_id",
+                    TrackingIdentityHasher.hash(
+                            siteId, "meta-ads-event:" + raw.conversionId().trim()));
+            event.put("action_source", actionSource);
+            event.put("user_data", userData);
+            event.put("custom_data", customData);
+            events.add(event);
+        }
+        Map<String, Object> payload = Map.of("data", events);
+        MetaAdsCapiGateway.Result result =
+                metaAds.send(destination.datasetId(), encryption.decrypt(destination.tokenCiphertext()), payload);
+        return new MetaAdsTransferResult(events.size(), result.eventsReceived());
+    }
+
+    private Map<String, NavigableSet<Instant>> metaClickVisits(UUID siteId, List<NormalizedRow> rows) {
+        Set<String> clickHashes = new HashSet<>();
+        Instant earliestConversion = rows.stream()
+                .map(NormalizedRow::convertedAt)
+                .min(Instant::compareTo)
+                .orElseThrow();
+        Instant latestConversion = rows.stream()
+                .map(NormalizedRow::convertedAt)
+                .max(Instant::compareTo)
+                .orElseThrow();
+        rows.forEach(row -> clickHashes.add(row.clickIdHash()));
+        if (clickHashes.isEmpty()) return Map.of();
+        String[] values = clickHashes.toArray(String[]::new);
+        Map<String, NavigableSet<Instant>> visits = new HashMap<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select ad_click_id_hash,started_at from analytics_session where site_id=? "
+                                + "and ad_click_platform='meta_ads' and ad_click_id_hash=any(?) "
+                                + "and started_at>=? and started_at<=? order by ad_click_id_hash,started_at")) {
+            statement.setObject(1, siteId);
+            statement.setArray(2, connection.createArrayOf("varchar", values));
+            statement.setTimestamp(3, Timestamp.from(earliestConversion.minus(Duration.ofDays(7))));
+            statement.setTimestamp(4, Timestamp.from(latestConversion));
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    visits.computeIfAbsent(result.getString(1), ignored -> new TreeSet<>())
+                            .add(result.getTimestamp(2).toInstant());
+                }
+            }
+            return visits;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not match imported Meta click IDs to tracked visits", error);
+        }
+    }
+
+    private ExistingMetaAdsConfig existingMetaAdsConfig(UUID siteId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select dataset_id,currency_code,api_token_ciphertext from analytics_meta_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return null;
+                return new ExistingMetaAdsConfig(row.getString(1), row.getString(2), row.getBytes(3));
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read Meta Ads CAPI credentials", error);
+        }
+    }
+
+    private MetaAdsDestination metaAdsDestination(UUID siteId) {
+        ExistingMetaAdsConfig config = existingMetaAdsConfig(siteId);
+        if (config == null) {
+            throw new ControlPlaneException(
+                    409, "META_ADS_CONFIG_REQUIRED", "Save the Meta dataset/pixel ID and access token first.");
+        }
+        return new MetaAdsDestination(config.datasetId(), config.currencyCode(), config.tokenCiphertext());
+    }
+
+    private String metaAdsEventName(UUID siteId, UUID goalId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select event_name from analytics_meta_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) {
+                    throw new ControlPlaneException(
+                            409,
+                            "META_ADS_GOAL_MAPPING_REQUIRED",
+                            "Map this SeeRay goal to a Meta standard or custom event before sending conversions.");
+                }
+                return row.getString(1);
+            }
+        } catch (ControlPlaneException error) {
+            throw error;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not load Meta Ads goal mapping", error);
+        }
     }
 
     private ExistingMicrosoftAdsConfig existingMicrosoftAdsConfig(UUID siteId) {
@@ -854,6 +1159,23 @@ public class OfflineConversionService {
     public record MicrosoftAdsTransferResult(
             int rowsProcessed, int eventsReceived, List<Map<String, Object>> validationWarnings) {}
 
+    public record MetaAdsConfigInput(String datasetId, String currencyCode, String apiToken) {}
+
+    public record MetaAdsConfigView(
+            boolean canManage,
+            boolean configured,
+            boolean credentialConfigured,
+            String datasetId,
+            String currencyCode,
+            List<MetaAdsGoalMappingView> goalMappings) {}
+
+    public record MetaAdsGoalMappingView(UUID goalId, String goalName, String eventName) {}
+
+    public record MetaAdsTransferInput(
+            UUID goalId, String actionSource, boolean consentConfirmed, List<RowInput> rows) {}
+
+    public record MetaAdsTransferResult(int rowsProcessed, int eventsReceived) {}
+
     public record RowInput(String conversionId, String platform, String clickId, String convertedAt) {}
 
     public record ImportBatch(UUID id, UUID goalId, String goalName, int rowCount, Instant importedAt) {}
@@ -894,6 +1216,10 @@ public class OfflineConversionService {
     private record ExistingMicrosoftAdsConfig(String tagId, String currencyCode, byte[] tokenCiphertext) {}
 
     private record MicrosoftAdsDestination(String tagId, String currencyCode, byte[] tokenCiphertext) {}
+
+    private record ExistingMetaAdsConfig(String datasetId, String currencyCode, byte[] tokenCiphertext) {}
+
+    private record MetaAdsDestination(String datasetId, String currencyCode, byte[] tokenCiphertext) {}
 
     private record StoredConversion(String platform, String clickIdHash, Instant convertedAt) {}
 

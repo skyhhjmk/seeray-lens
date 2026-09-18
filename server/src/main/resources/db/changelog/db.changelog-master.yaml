@@ -447,3 +447,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0064-microsoft-ads-export-audit-action.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0065-meta-ads-capi-config
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0065-meta-ads-capi-config.sql
+            relativeToChangelogFile: false

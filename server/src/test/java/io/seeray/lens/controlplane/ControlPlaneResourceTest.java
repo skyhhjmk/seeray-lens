@@ -13,6 +13,7 @@ import io.seeray.lens.application.AnalyticsFactBuilder;
 import io.seeray.lens.application.BingWebmasterGateway;
 import io.seeray.lens.application.GoogleAdsDataManagerGateway;
 import io.seeray.lens.application.HeatmapAggregationService;
+import io.seeray.lens.application.MetaAdsCapiGateway;
 import io.seeray.lens.application.MicrosoftAdsCapiGateway;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
 import io.seeray.lens.application.SearchConsoleGateway;
@@ -2378,6 +2379,196 @@ class ControlPlaneResourceTest {
             try (var result = statement.executeQuery()) {
                 assertTrue(result.next());
                 assertEquals("SEND_TO_MICROSOFT_ADS", result.getString(1));
+            }
+        }
+    }
+
+    @Test
+    void sendsMatchedConsentedOfflineConversionsToMetaWithoutPersistingRawClickIdsOrTokens() throws Exception {
+        Tokens owner = register("meta-ads-capi" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Meta Ads CAPI site");
+        String goalId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Qualified lead\",\"triggerType\":\"page_view\","
+                        + "\"pathPattern\":\"/qualified\",\"pathMatchMode\":\"exact\",\"fixedValue\":25}")
+                .post("/api/v1/sites/" + siteId + "/goals")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        UUID siteUuid = UUID.fromString(siteId);
+        Instant clickAt = Instant.now().minusSeconds(7_200);
+        Instant convertedAt = clickAt.plusSeconds(3_600);
+        String clientSession = "meta-click-session-" + UUID.randomUUID();
+        insertAttributionPage(
+                siteUuid,
+                UUID.randomUUID().toString(),
+                clientSession,
+                clickAt,
+                "/landing",
+                null,
+                "facebook",
+                "paid_social",
+                "spring-launch");
+        factBuilder.rebuild(siteUuid, clickAt.minusSeconds(1), clickAt.plusSeconds(1));
+
+        String rawClickId = "IwAR3VfT7M4xP8C2eA9kLmN6qR1sB5cD0fG7hJ2pQ";
+        String unmatchedClickId = "IwARunmatchedFbClickId9x2k7s5q";
+        String clickHash = io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "ad-click:" + rawClickId);
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update analytics_session set ad_click_platform='meta_ads',ad_click_id_hash=? "
+                                + "where site_id=? and client_session_id=?")) {
+            statement.setString(1, clickHash);
+            statement.setObject(2, siteUuid);
+            statement.setString(3, clientSession);
+            assertEquals(1, statement.executeUpdate());
+        }
+        Instant trackedClickAt;
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select started_at from analytics_session where site_id=? and client_session_id=?")) {
+            statement.setObject(1, siteUuid);
+            statement.setString(2, clientSession);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                trackedClickAt = result.getTimestamp(1).toInstant();
+            }
+        }
+
+        String endpoint = "/api/v1/sites/" + siteId + "/offline-conversions/meta-ads";
+        String matchedRow = "{\"conversionId\":\"crm-meta-lead-0081\",\"platform\":\"meta_ads\"," + "\"clickId\":\""
+                + rawClickId + "\",\"convertedAt\":\"" + convertedAt + "\"}";
+        String unmatchedRow = "{\"conversionId\":\"crm-meta-lead-0082\",\"platform\":\"meta_ads\"," + "\"clickId\":\""
+                + unmatchedClickId + "\",\"convertedAt\":\"" + convertedAt + "\"}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"rows\":[" + matchedRow + "," + unmatchedRow + "]}")
+                .post("/api/v1/sites/" + siteId + "/offline-conversions/imports")
+                .then()
+                .statusCode(200)
+                .body("rowsImported", is(2));
+
+        AtomicReference<Map<String, Object>> outboundPayload = new AtomicReference<>();
+        AtomicReference<String> outboundToken = new AtomicReference<>();
+        QuarkusMock.installMockForType(
+                (MetaAdsCapiGateway) (datasetId, token, payload) -> {
+                    assertEquals("123456789012345", datasetId);
+                    outboundToken.set(token);
+                    outboundPayload.set(payload);
+                    return new MetaAdsCapiGateway.Result(1);
+                },
+                MetaAdsCapiGateway.class);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"datasetId\":\"123456789012345\",\"currencyCode\":\"USD\","
+                        + "\"apiToken\":\"meta-secret-value\"}")
+                .put(endpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("credentialConfigured", is(true))
+                .body("apiToken", nullValue());
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("apiToken", nullValue());
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select api_token_ciphertext from analytics_meta_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertFalse(new String(result.getBytes(1), StandardCharsets.UTF_8).contains("meta-secret-value"));
+            }
+        }
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select ad_click_id_hash from analytics_offline_conversion where site_id=? order by conversion_key_hash")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertNotEquals(rawClickId, result.getString(1));
+                assertTrue(result.next());
+                assertNotEquals(unmatchedClickId, result.getString(1));
+            }
+        }
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"eventName\":\"Lead\"}")
+                .put(endpoint + "/config/goals/" + goalId)
+                .then()
+                .statusCode(200)
+                .body("goalMappings.size()", is(1))
+                .body("goalMappings[0].eventName", is("Lead"));
+
+        String matchedTransferRow = "\"rows\":[" + matchedRow + "]";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"actionSource\":\"other\"," + "\"consentConfirmed\":false,"
+                        + matchedTransferRow + "}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(400)
+                .body("code", is("META_ADS_CONSENT_CONFIRMATION_REQUIRED"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"actionSource\":\"internal_note\","
+                        + "\"consentConfirmed\":true," + matchedTransferRow + "}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(400)
+                .body("code", is("OFFLINE_CONVERSION_IMPORT_INVALID"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"actionSource\":\"other\","
+                        + "\"consentConfirmed\":true,\"rows\":[" + matchedRow + ","
+                        + unmatchedRow + "]}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(409)
+                .body("code", is("META_ADS_MATCHED_VISIT_REQUIRED"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"actionSource\":\"other\"," + "\"consentConfirmed\":true,"
+                        + matchedTransferRow + "}")
+                .post(endpoint + "/send")
+                .then()
+                .statusCode(200)
+                .body("rowsProcessed", is(1))
+                .body("eventsReceived", is(1));
+
+        assertEquals("meta-secret-value", outboundToken.get());
+        Map<?, ?> event = (Map<?, ?>) ((List<?>) outboundPayload.get().get("data")).getFirst();
+        assertEquals("Lead", event.get("event_name"));
+        assertEquals(convertedAt.getEpochSecond(), ((Number) event.get("event_time")).longValue());
+        assertEquals("other", event.get("action_source"));
+        assertEquals(
+                "fb.1." + trackedClickAt.toEpochMilli() + "." + rawClickId,
+                ((Map<?, ?>) event.get("user_data")).get("fbc"));
+        assertEquals(25.0, ((Number) ((Map<?, ?>) event.get("custom_data")).get("value")).doubleValue());
+        assertEquals("USD", ((Map<?, ?>) event.get("custom_data")).get("currency"));
+        assertNotEquals("crm-meta-lead-0081", event.get("event_id"));
+        assertFalse(event.containsKey("client_ip_address"));
+        assertFalse(event.containsKey("visitor_id"));
+
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select action from site_audit_log where site_id=? and action='SEND_TO_META_ADS'")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals("SEND_TO_META_ADS", result.getString(1));
             }
         }
     }
