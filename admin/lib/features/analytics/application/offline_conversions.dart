@@ -680,6 +680,91 @@ final linkedInAdsConversionConfigProvider =
       );
     });
 
+class XAdsGoalMapping {
+  const XAdsGoalMapping({
+    required this.goalId,
+    required this.goalName,
+    required this.eventId,
+  });
+
+  final String goalId;
+  final String goalName;
+  final String eventId;
+
+  factory XAdsGoalMapping.fromJson(Map<String, dynamic> json) =>
+      XAdsGoalMapping(
+        goalId: json['goalId'] as String? ?? '',
+        goalName: json['goalName'] as String? ?? 'Goal',
+        eventId: json['eventId'] as String? ?? '',
+      );
+}
+
+class XAdsConversionConfig {
+  const XAdsConversionConfig({
+    required this.canManage,
+    required this.configured,
+    required this.credentialConfigured,
+    required this.goalMappings,
+    this.pixelId,
+    this.currencyCode,
+  });
+
+  final bool canManage;
+  final bool configured;
+  final bool credentialConfigured;
+  final String? pixelId;
+  final String? currencyCode;
+  final List<XAdsGoalMapping> goalMappings;
+
+  XAdsGoalMapping? mappingFor(String? goalId) =>
+      goalMappings.where((mapping) => mapping.goalId == goalId).firstOrNull;
+
+  factory XAdsConversionConfig.fromJson(Map<String, dynamic> json) =>
+      XAdsConversionConfig(
+        canManage: json['canManage'] as bool? ?? false,
+        configured: json['configured'] as bool? ?? false,
+        credentialConfigured: json['credentialConfigured'] as bool? ?? false,
+        pixelId: json['pixelId'] as String?,
+        currencyCode: json['currencyCode'] as String?,
+        goalMappings: (json['goalMappings'] as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (mapping) =>
+                  XAdsGoalMapping.fromJson(Map<String, dynamic>.from(mapping)),
+            )
+            .toList(growable: false),
+      );
+}
+
+class XAdsTransferResult {
+  const XAdsTransferResult({
+    required this.rowsProcessed,
+    required this.eventsReceived,
+  });
+
+  final int rowsProcessed;
+  final int eventsReceived;
+
+  factory XAdsTransferResult.fromJson(Map<String, dynamic> json) =>
+      XAdsTransferResult(
+        rowsProcessed: (json['rowsProcessed'] as num?)?.toInt() ?? 0,
+        eventsReceived: (json['eventsReceived'] as num?)?.toInt() ?? 0,
+      );
+}
+
+final xAdsConversionConfigProvider =
+    FutureProvider.family<XAdsConversionConfig, String>((ref, siteId) async {
+      final response = await ref
+          .read(apiProvider)
+          .request(
+            'GET',
+            '/api/v1/sites/$siteId/offline-conversions/x-ads/config',
+          );
+      return XAdsConversionConfig.fromJson(
+        Map<String, dynamic>.from(response as Map),
+      );
+    });
+
 final offlineConversionAnalyticsProvider =
     FutureProvider.family<OfflineConversionData, OfflineConversionQuery>((
       ref,

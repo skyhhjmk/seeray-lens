@@ -7,6 +7,7 @@ import 'package:seeray_lens_admin/features/analytics/application/offline_convers
 import 'package:seeray_lens_admin/features/analytics/presentation/microsoft_ads_export_panel.dart';
 import 'package:seeray_lens_admin/features/analytics/presentation/meta_ads_export_panel.dart';
 import 'package:seeray_lens_admin/features/analytics/presentation/linkedin_ads_export_panel.dart';
+import 'package:seeray_lens_admin/features/analytics/presentation/x_ads_export_panel.dart';
 import 'package:seeray_lens_admin/features/analytics/presentation/offline_conversions_page.dart';
 import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 
@@ -136,6 +137,20 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('LinkedIn Marketing API OAuth token'), findsOneWidget);
       expect(find.text('LinkedIn conversion rule URN'), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      await tester.scrollUntilVisible(
+        find.text('Send conversions to X Ads'),
+        350,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.ensureVisible(find.text('Send conversions to X Ads'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send conversions to X Ads'));
+      await tester.pumpAndSettle();
+      expect(find.text('X Pixel ID'), findsOneWidget);
+      expect(find.text('X Conversion API access token'), findsOneWidget);
+      expect(find.text('X Events Manager Event ID'), findsNothing);
       expect(tester.takeException(), isNull);
 
       await tester.scrollUntilVisible(
@@ -319,6 +334,58 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('renders X destination and saves its selected Event ID mapping', (
+    tester,
+  ) async {
+    final api = _OfflineConversionsApi(xAdsConfigured: true);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: MaterialApp(
+          locale: Locale('en'),
+          supportedLocales: [Locale('en')],
+          home: Scaffold(
+            body: ListView(
+              children: [
+                XAdsOfflineExportPanel(
+                  siteId: 'site-1',
+                  canManage: true,
+                  goals: [
+                    AttributionGoal(
+                      id: 'goal-1',
+                      name: 'Qualified lead',
+                      enabled: true,
+                      fixedValue: 25,
+                    ),
+                  ],
+                  selectedGoalId: 'goal-1',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send conversions to X Ads'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('X · pixel-123 · USD'), findsOneWidget);
+    expect(find.text('Qualified lead → tw-pixel-123-lead'), findsOneWidget);
+    expect(find.text('Preview imported X Ads CSV'), findsOneWidget);
+    await tester.ensureVisible(find.text('Save mapping'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save mapping'));
+    await tester.pumpAndSettle();
+    expect(api.requests, hasLength(1));
+    expect(
+      api.requests.single['path'],
+      '/api/v1/sites/site-1/offline-conversions/x-ads/config/goals/goal-1',
+    );
+    expect(api.requests.single['body'], {'eventId': 'tw-pixel-123-lead'});
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _OfflineConversionsApi extends SeeRayApi {
@@ -326,11 +393,13 @@ class _OfflineConversionsApi extends SeeRayApi {
     this.microsoftAdsConfigured = false,
     this.metaAdsConfigured = false,
     this.linkedInAdsConfigured = false,
+    this.xAdsConfigured = false,
   }) : super(baseUrl: 'https://lens.example.test');
 
   final bool microsoftAdsConfigured;
   final bool metaAdsConfigured;
   final bool linkedInAdsConfigured;
+  final bool xAdsConfigured;
   final requests = <Map<String, dynamic>>[];
 
   @override
@@ -353,6 +422,10 @@ class _OfflineConversionsApi extends SeeRayApi {
       requests.add({'method': method, 'path': path, 'body': body});
       return _linkedInAdsConfig;
     }
+    if (uri.path.contains('/offline-conversions/x-ads/config/goals/')) {
+      requests.add({'method': method, 'path': path, 'body': body});
+      return _xAdsConfig;
+    }
     if (uri.path.endsWith('/offline-conversions/google-ads/config')) {
       return {'canManage': true, 'configured': false};
     }
@@ -364,6 +437,9 @@ class _OfflineConversionsApi extends SeeRayApi {
     }
     if (uri.path.endsWith('/offline-conversions/linkedin-ads/config')) {
       return _linkedInAdsConfig;
+    }
+    if (uri.path.endsWith('/offline-conversions/x-ads/config')) {
+      return _xAdsConfig;
     }
     if (uri.path.endsWith('/goals')) {
       return [
@@ -465,6 +541,23 @@ class _OfflineConversionsApi extends SeeRayApi {
               'goalId': 'goal-1',
               'goalName': 'Qualified lead',
               'conversionUrn': 'urn:lla:llaPartnerConversion:123456',
+            },
+          ]
+        : const [],
+  };
+
+  Map<String, dynamic> get _xAdsConfig => {
+    'canManage': true,
+    'configured': xAdsConfigured,
+    'credentialConfigured': xAdsConfigured,
+    'pixelId': xAdsConfigured ? 'pixel-123' : null,
+    'currencyCode': xAdsConfigured ? 'USD' : null,
+    'goalMappings': xAdsConfigured
+        ? [
+            {
+              'goalId': 'goal-1',
+              'goalName': 'Qualified lead',
+              'eventId': 'tw-pixel-123-lead',
             },
           ]
         : const [],

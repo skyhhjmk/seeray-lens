@@ -18,6 +18,7 @@ import '../application/analytics_export.dart';
 import 'microsoft_ads_export_panel.dart';
 import 'meta_ads_export_panel.dart';
 import 'linkedin_ads_export_panel.dart';
+import 'x_ads_export_panel.dart';
 
 class OfflineConversionsPage extends ConsumerStatefulWidget {
   const OfflineConversionsPage({
@@ -194,6 +195,13 @@ class _OfflineConversionsPageState
         ),
         const SizedBox(height: 12),
         LinkedInAdsOfflineExportPanel(
+          siteId: widget.siteId,
+          canManage: data.history.canManage,
+          goals: goals,
+          selectedGoalId: selectedGoalId,
+        ),
+        const SizedBox(height: 12),
+        XAdsOfflineExportPanel(
           siteId: widget.siteId,
           canManage: data.history.canManage,
           goals: goals,
