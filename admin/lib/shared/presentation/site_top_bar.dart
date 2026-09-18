@@ -8,6 +8,7 @@ import 'page_help_button.dart';
 
 enum SiteTopTab {
   dashboard,
+  insights,
   annotations,
   realtime,
   visitors,
@@ -100,6 +101,7 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
               '分析注释',
               'annotations',
             ),
+            _tab(context, SiteTopTab.insights, 'Insights', '趋势洞察', 'insights'),
             _tab(context, SiteTopTab.realtime, 'Live', '实时访客', 'realtime'),
             _tab(context, SiteTopTab.visitors, 'Visitors', '访客', 'visitors'),
             _tab(

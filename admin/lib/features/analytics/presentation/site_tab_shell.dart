@@ -7,6 +7,7 @@ import '../../../shared/presentation/site_top_bar.dart';
 import '../application/analytics_attribution.dart';
 import '../application/analytics_controller.dart';
 import '../application/analytics_annotations.dart';
+import '../application/analytics_insights.dart';
 import '../application/analytics_range.dart';
 import '../application/form_analytics.dart';
 import '../application/media_analytics.dart';
@@ -28,6 +29,8 @@ class SiteTabShell extends ConsumerWidget {
         ? SiteTopTab.dashboard
         : path.endsWith('/annotations')
         ? SiteTopTab.annotations
+        : path.endsWith('/insights')
+        ? SiteTopTab.insights
         : path.endsWith('/realtime')
         ? SiteTopTab.realtime
         : path.endsWith('/visitors/engagement')
@@ -80,6 +83,7 @@ class SiteTabShell extends ConsumerWidget {
     final supportsSegmentFilter =
         {
           SiteTopTab.dashboard,
+          SiteTopTab.insights,
           SiteTopTab.visitors,
           SiteTopTab.visitorInterest,
           SiteTopTab.visitTime,
@@ -133,6 +137,7 @@ class SiteTabShell extends ConsumerWidget {
                 ref.invalidate(analyticsBehaviourProvider);
                 ref.invalidate(analyticsAttributionProvider);
                 ref.invalidate(analyticsAnnotationsProvider);
+                ref.invalidate(analyticsInsightsProvider);
                 ref.invalidate(formAnalyticsProvider);
                 ref.invalidate(mediaAnalyticsProvider);
                 ref.invalidate(crashAnalyticsProvider);

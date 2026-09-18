@@ -10,6 +10,7 @@ import 'features/auth/application/auth_controller.dart';
 import 'features/auth/presentation/login_page.dart';
 import 'features/workspaces/presentation/workspace_invitation_page.dart';
 import 'features/analytics/presentation/analytics_dashboard_page.dart';
+import 'features/analytics/presentation/analytics_insights_page.dart';
 import 'features/analytics/presentation/analytics_detail_page.dart';
 import 'features/analytics/presentation/heatmap_page.dart';
 import 'features/analytics/presentation/site_tab_shell.dart';
@@ -119,6 +120,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
               state,
               _Authenticated(
                 child: AnalyticsDashboardPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/insights',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: AnalyticsInsightsPage(
                   siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),
