@@ -69,3 +69,5 @@ The client starts a bounded background flush loop. Call `flush()` when an app li
 - `trackEvent` should use the exact event type/name configured by a SeeRay goal when the event is intended to satisfy that goal. `trackGoal` emits the built-in `goal` event for simple goal reporting.
 
 The first release covers the Android client analytics path only. Native crash analytics, iOS, and real-device acceptance remain outstanding; unit tests and an AAR build are not device-level production acceptance.
+
+The site-specific setup wizard is available in Admin → Integration → **Android SDK**. It generates Kotlin configuration and tracking examples from the selected tracking ID, endpoint and consent policy, warns instead of generating unusable setup code when the endpoint is not HTTPS, and explains the current local-Maven-only artifact distribution. The SDK is not yet published to a public Maven repository.
