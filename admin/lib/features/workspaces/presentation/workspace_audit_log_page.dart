@@ -177,7 +177,7 @@ class _WorkspaceAuditLogPageState extends ConsumerState<WorkspaceAuditLogPage> {
           ),
         ),
         title: Text(
-          '${entry.actorEmail ?? context.tr('Former user', '已移除用户')} $action',
+          '${entry.actorApiTokenName == null ? (entry.actorEmail ?? context.tr('Former user', '已移除用户')) : '${entry.actorEmail ?? context.tr('Former user', '已移除用户')} · API ${entry.actorApiTokenName}'} $action',
         ),
         subtitle: Text(
           [

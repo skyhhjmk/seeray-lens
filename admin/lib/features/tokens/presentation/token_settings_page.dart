@@ -49,7 +49,10 @@ class TokenSettingsPage extends ConsumerWidget {
                   child: ListTile(
                     title: Text(token.name),
                     subtitle: Text(
-                      '${token.prefix} • ${token.scopes}\nCreated ${token.createdAt}${token.expiresAt == null ? '' : '\nExpires ${token.expiresAt}'}',
+                      '${token.prefix} • ${_scopeLabels(context, token.scopes)}'
+                      '\n${context.tr('Created', '创建于')} ${token.createdAt}'
+                      '\n${context.tr('Last used', '上次使用')} ${token.lastUsedAt ?? context.tr('Never', '从未使用')}'
+                      '${token.expiresAt == null ? '' : '\n${context.tr('Expires', '到期于')} ${token.expiresAt}'}',
                     ),
                     trailing: token.revokedAt == null
                         ? TextButton(
@@ -66,6 +69,16 @@ class TokenSettingsPage extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  String _scopeLabels(BuildContext context, String scopes) {
+    final normalized = scopes.toLowerCase();
+    final labels = <String>[
+      if (normalized.contains('sites:read')) context.tr('Sites: read', '站点：读取'),
+      if (normalized.contains('sites:write'))
+        context.tr('Sites: write', '站点：写入'),
+    ];
+    return labels.isEmpty ? scopes : labels.join(', ');
   }
 
   Future<void> _create(BuildContext context, WidgetRef ref) async {

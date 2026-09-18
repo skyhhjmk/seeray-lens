@@ -6,6 +6,7 @@ class WorkspaceAuditEntry {
   const WorkspaceAuditEntry({
     required this.id,
     required this.actorEmail,
+    required this.actorApiTokenName,
     required this.action,
     required this.resource,
     required this.resourceId,
@@ -14,6 +15,7 @@ class WorkspaceAuditEntry {
 
   final String id;
   final String? actorEmail;
+  final String? actorApiTokenName;
   final String action;
   final String resource;
   final String? resourceId;
@@ -23,6 +25,7 @@ class WorkspaceAuditEntry {
       WorkspaceAuditEntry(
         id: json['id'] as String,
         actorEmail: json['actorEmail'] as String?,
+        actorApiTokenName: json['actorApiTokenName'] as String?,
         action: json['action'] as String,
         resource: json['resource'] as String,
         resourceId: json['resourceId'] as String?,
@@ -36,18 +39,18 @@ class WorkspaceAuditPage {
   final List<WorkspaceAuditEntry> entries;
   final String? nextCursor;
 
-  factory WorkspaceAuditPage.fromJson(Map<String, dynamic> json) =>
-      WorkspaceAuditPage(
-        ((json['entries'] as List?) ?? const [])
-            .whereType<Map>()
-            .map(
-              (entry) => WorkspaceAuditEntry.fromJson(
-                Map<String, dynamic>.from(entry),
-              ),
-            )
-            .toList(growable: false),
-        json['nextCursor'] as String?,
-      );
+  factory WorkspaceAuditPage.fromJson(
+    Map<String, dynamic> json,
+  ) => WorkspaceAuditPage(
+    ((json['entries'] as List?) ?? const [])
+        .whereType<Map>()
+        .map(
+          (entry) =>
+              WorkspaceAuditEntry.fromJson(Map<String, dynamic>.from(entry)),
+        )
+        .toList(growable: false),
+    json['nextCursor'] as String?,
+  );
 }
 
 final workspaceAuditLogProvider = Provider(

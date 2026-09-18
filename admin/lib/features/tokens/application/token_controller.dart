@@ -11,6 +11,7 @@ class ApiTokenSummary {
     required this.prefix,
     required this.scopes,
     required this.createdAt,
+    required this.lastUsedAt,
     required this.expiresAt,
     required this.revokedAt,
   });
@@ -20,6 +21,7 @@ class ApiTokenSummary {
   final String prefix;
   final String scopes;
   final String createdAt;
+  final String? lastUsedAt;
   final String? expiresAt;
   final String? revokedAt;
 
@@ -30,6 +32,7 @@ class ApiTokenSummary {
         prefix: json['tokenPrefix'] as String,
         scopes: json['scopes'] as String,
         createdAt: json['createdAt'] as String,
+        lastUsedAt: json['lastUsedAt'] as String?,
         expiresAt: json['expiresAt'] as String?,
         revokedAt: json['revokedAt'] as String?,
       );
