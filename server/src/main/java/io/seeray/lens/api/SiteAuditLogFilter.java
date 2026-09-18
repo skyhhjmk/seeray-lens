@@ -84,7 +84,7 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
             if (!AUDITED_RESOURCES.contains(resource)) return null;
         }
         for (int i = firstChild; i < path.length; i++) {
-            if ("preview".equals(path[i]) || "report".equals(path[i])) return null;
+            if ("preview".equals(path[i]) || "report".equals(path[i]) || "validate".equals(path[i])) return null;
         }
         if ("heatmaps".equals(resource) && (path.length < 6 || !"config".equals(path[5]))) return null;
         String action =
@@ -111,6 +111,8 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
         if (path.length <= firstChild) return "CREATE";
         String last = path[path.length - 1];
         if ("send-now".equals(last)) return "SEND_NOW";
+        if ("send".equals(last) && path.length > firstChild && "google-ads".equals(path[firstChild]))
+            return "SEND_TO_GOOGLE_ADS";
         if ("publish".equals(last)) return "PUBLISH";
         if ("duplicate".equals(last)) return "DUPLICATE";
         if ("approve".equals(last)) return "APPROVE_PRODUCTION";

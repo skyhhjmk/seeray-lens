@@ -356,3 +356,17 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0051-offline-conversion-audit-action.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0052-google-ads-offline-conversion-config
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0052-google-ads-offline-conversion-config.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0053-google-ads-export-audit-action
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0053-google-ads-export-audit-action.sql
+            relativeToChangelogFile: false

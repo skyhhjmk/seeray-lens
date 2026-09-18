@@ -14,12 +14,14 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.Currency;
 import javax.sql.DataSource;
 
 /** Privacy-preserving click-id joins for operator-imported, goal-scoped offline conversions. */
 @ApplicationScoped
 public class OfflineConversionService {
     private static final int MAX_IMPORT_ROWS = 5_000;
+    private static final int MAX_GOOGLE_ADS_ROWS = 2_000;
     private static final int MAX_IMPORT_CHARACTERS = 2 * 1024 * 1024;
     private static final Set<String> PLATFORMS =
             Set.of("google_ads", "microsoft_ads", "meta_ads", "tiktok_ads", "linkedin_ads", "x_ads");
@@ -31,14 +33,204 @@ public class OfflineConversionService {
     private final SiteService sites;
     private final WorkspaceAccess access;
     private final SegmentService segments;
+    private final GoogleAdsDataManagerGateway googleAds;
 
     @Inject
     public OfflineConversionService(
-            DataSource dataSource, SiteService sites, WorkspaceAccess access, SegmentService segments) {
+            DataSource dataSource,
+            SiteService sites,
+            WorkspaceAccess access,
+            SegmentService segments,
+            GoogleAdsDataManagerGateway googleAds) {
         this.dataSource = dataSource;
         this.sites = sites;
         this.access = access;
         this.segments = segments;
+        this.googleAds = googleAds;
+    }
+
+    public GoogleAdsConfigView googleAdsConfig(UUID siteId) {
+        Site site = readableSite(siteId);
+        var member = access.member(site.organization.id);
+        boolean canManage = member.role == WorkspaceRole.OWNER || member.role == WorkspaceRole.ADMIN;
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select customer_id,login_customer_id,conversion_action_id,currency_code,updated_at "
+                                + "from analytics_google_ads_conversion_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return new GoogleAdsConfigView(canManage, false, null, null, null, null, null);
+                return new GoogleAdsConfigView(
+                        canManage,
+                        true,
+                        row.getString(1),
+                        row.getString(2),
+                        row.getString(3),
+                        row.getString(4),
+                        row.getTimestamp(5).toInstant());
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read Google Ads conversion configuration", error);
+        }
+    }
+
+    @Transactional
+    public GoogleAdsConfigView saveGoogleAdsConfig(UUID siteId, GoogleAdsConfigInput input) {
+        writableSite(siteId);
+        String customerId = customerId(input.customerId(), "Google Ads customer ID");
+        String loginCustomerId =
+                input.loginCustomerId() == null || input.loginCustomerId().isBlank()
+                        ? null
+                        : customerId(input.loginCustomerId(), "Google Ads manager customer ID");
+        String actionId = input.conversionActionId() == null
+                ? ""
+                : input.conversionActionId().trim();
+        if (!actionId.matches("[0-9]{1,20}")) throw invalid("Conversion action ID must contain 1 to 20 digits.");
+        String currencyCode =
+                input.currencyCode() == null ? "" : input.currencyCode().trim().toUpperCase(Locale.ROOT);
+        try {
+            Currency.getInstance(currencyCode);
+        } catch (IllegalArgumentException error) {
+            throw invalid("Choose a valid three-letter ISO currency code.");
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_google_ads_conversion_config(site_id,customer_id,login_customer_id,"
+                                + "conversion_action_id,currency_code,updated_by,updated_at) values(?,?,?,?,?,?,now()) "
+                                + "on conflict(site_id) do update set customer_id=excluded.customer_id,"
+                                + "login_customer_id=excluded.login_customer_id,"
+                                + "conversion_action_id=excluded.conversion_action_id,currency_code=excluded.currency_code,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, customerId);
+            statement.setString(3, loginCustomerId);
+            statement.setString(4, actionId);
+            statement.setString(5, currencyCode);
+            statement.setObject(6, access.userId());
+            statement.executeUpdate();
+            return googleAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save Google Ads conversion configuration", error);
+        }
+    }
+
+    public GoogleAdsTransferResult transferToGoogleAds(
+            UUID siteId, GoogleAdsTransferInput input, boolean validateOnly) {
+        writableSite(siteId);
+        GoogleAdsDestination destination = googleAdsDestination(siteId);
+        if (input == null
+                || input.rows() == null
+                || input.rows().isEmpty()
+                || input.rows().size() > MAX_GOOGLE_ADS_ROWS)
+            throw invalid("Choose 1 to " + MAX_GOOGLE_ADS_ROWS + " Google Ads conversion rows per request.");
+        if (input.clickIdType() == null || !Set.of("gclid", "gbraid", "wbraid").contains(input.clickIdType()))
+            throw invalid("Choose GCLID, GBRAID, or WBRAID for these rows.");
+        if (input.eventSource() == null
+                || !Set.of("WEB", "APP", "IN_STORE", "PHONE", "MESSAGE", "OTHER")
+                        .contains(input.eventSource()))
+            throw invalid("Choose a supported Google conversion event source.");
+        Goal goal = goal(siteId, input.goalId(), true);
+        List<NormalizedRow> normalized = normalizeRows(siteId, input.rows());
+        Map<String, RowInput> rawRows = new HashMap<>();
+        for (RowInput row : input.rows()) {
+            String key = TrackingIdentityHasher.hash(
+                    siteId, "offline-conversion:" + row.conversionId().trim());
+            rawRows.put(key, row);
+        }
+        ensureRowsMatchImportedConversions(siteId, input.goalId(), normalized);
+
+        List<Map<String, Object>> events = new ArrayList<>(normalized.size());
+        for (NormalizedRow row : normalized) {
+            RowInput raw = rawRows.get(row.conversionKeyHash());
+            Map<String, Object> adIdentifiers = Map.of(input.clickIdType(), field(raw.clickId(), 2_048, "click_id", 0));
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put(
+                    "transactionId",
+                    TrackingIdentityHasher.hash(
+                            siteId,
+                            "google-ads-transaction:" + raw.conversionId().trim()));
+            event.put("eventTimestamp", row.convertedAt().toString());
+            event.put("eventSource", input.eventSource());
+            event.put("adIdentifiers", adIdentifiers);
+            event.put("conversionValue", goal.fixedValue());
+            event.put("currency", destination.currencyCode());
+            events.add(event);
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        Map<String, Object> operatingAccount =
+                Map.of("accountType", "GOOGLE_ADS", "accountId", destination.customerId());
+        Map<String, Object> target = new LinkedHashMap<>();
+        target.put("operatingAccount", operatingAccount);
+        if (destination.loginCustomerId() != null)
+            target.put("loginAccount", Map.of("accountType", "GOOGLE_ADS", "accountId", destination.loginCustomerId()));
+        target.put("productDestinationId", destination.conversionActionId());
+        payload.put("destinations", List.of(target));
+        payload.put("events", events);
+        GoogleAdsDataManagerGateway.Result result = googleAds.ingest(payload, validateOnly);
+        return new GoogleAdsTransferResult(validateOnly, events.size(), result.requestId(), result.fieldWarnings());
+    }
+
+    private GoogleAdsDestination googleAdsDestination(UUID siteId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select customer_id,login_customer_id,conversion_action_id,currency_code "
+                                + "from analytics_google_ads_conversion_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next())
+                    throw new ControlPlaneException(
+                            409,
+                            "GOOGLE_ADS_CONFIG_REQUIRED",
+                            "Save a Google Ads account, conversion action, and currency first.");
+                return new GoogleAdsDestination(row.getString(1), row.getString(2), row.getString(3), row.getString(4));
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not load Google Ads conversion destination", error);
+        }
+    }
+
+    private void ensureRowsMatchImportedConversions(UUID siteId, UUID goalId, List<NormalizedRow> rows) {
+        String placeholders = String.join(",", Collections.nCopies(rows.size(), "?"));
+        String sql = "select conversion_key_hash,ad_click_platform,ad_click_id_hash,converted_at "
+                + "from analytics_offline_conversion where site_id=? and goal_id=? and conversion_key_hash in ("
+                + placeholders + ")";
+        Map<String, StoredConversion> stored = new HashMap<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            for (int i = 0; i < rows.size(); i++)
+                statement.setString(i + 3, rows.get(i).conversionKeyHash());
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next())
+                    stored.put(
+                            result.getString(1),
+                            new StoredConversion(
+                                    result.getString(2),
+                                    result.getString(3),
+                                    result.getTimestamp(4).toInstant()));
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not verify imported Google Ads conversions", error);
+        }
+        for (NormalizedRow row : rows) {
+            StoredConversion existing = stored.get(row.conversionKeyHash());
+            if (existing == null
+                    || !"google_ads".equals(existing.platform())
+                    || !existing.clickIdHash().equals(row.clickIdHash())
+                    || !existing.convertedAt().equals(row.convertedAt()))
+                throw new ControlPlaneException(
+                        409,
+                        "GOOGLE_ADS_EXPORT_ROW_NOT_IMPORTED",
+                        "Every exported row must exactly match a Google Ads conversion already imported for this site and goal.");
+        }
+    }
+
+    private static String customerId(String value, String label) {
+        String normalized = value == null ? "" : value.replaceAll("[-\\s]", "");
+        if (!normalized.matches("[0-9]{10}")) throw invalid(label + " must contain exactly 10 digits.");
+        return normalized;
     }
 
     public ImportHistory imports(UUID siteId) {
@@ -362,6 +554,23 @@ public class OfflineConversionService {
         return new ControlPlaneException(400, "OFFLINE_CONVERSION_IMPORT_INVALID", message);
     }
 
+    public record GoogleAdsConfigInput(
+            String customerId, String loginCustomerId, String conversionActionId, String currencyCode) {}
+
+    public record GoogleAdsConfigView(
+            boolean canManage,
+            boolean configured,
+            String customerId,
+            String loginCustomerId,
+            String conversionActionId,
+            String currencyCode,
+            Instant updatedAt) {}
+
+    public record GoogleAdsTransferInput(UUID goalId, String clickIdType, String eventSource, List<RowInput> rows) {}
+
+    public record GoogleAdsTransferResult(
+            boolean validatedOnly, int rowsProcessed, String requestId, List<Map<String, Object>> fieldWarnings) {}
+
     public record RowInput(String conversionId, String platform, String clickId, String convertedAt) {}
 
     public record ImportBatch(UUID id, UUID goalId, String goalName, int rowCount, Instant importedAt) {}
@@ -395,6 +604,11 @@ public class OfflineConversionService {
             java.math.BigDecimal attributedValue) {}
 
     private record Goal(String name, java.math.BigDecimal fixedValue) {}
+
+    private record GoogleAdsDestination(
+            String customerId, String loginCustomerId, String conversionActionId, String currencyCode) {}
+
+    private record StoredConversion(String platform, String clickIdHash, Instant convertedAt) {}
 
     private record NormalizedRow(String platform, Instant convertedAt, String conversionKeyHash, String clickIdHash) {}
 }

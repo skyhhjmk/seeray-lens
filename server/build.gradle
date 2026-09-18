@@ -29,6 +29,7 @@ dependencies {
     implementation 'io.quarkus:quarkus-scheduler'
     implementation 'io.quarkus:quarkus-quartz'
     implementation 'io.quarkus:quarkus-mailer'
+    implementation 'com.google.auth:google-auth-library-oauth2-http:1.43.0'
 
     testImplementation 'io.quarkus:quarkus-junit5'
     testImplementation 'io.rest-assured:rest-assured'

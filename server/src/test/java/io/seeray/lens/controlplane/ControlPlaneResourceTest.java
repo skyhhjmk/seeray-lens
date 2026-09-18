@@ -4,9 +4,11 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.seeray.lens.application.AnalyticsAggregationService;
 import io.seeray.lens.application.AnalyticsFactBuilder;
+import io.seeray.lens.application.GoogleAdsDataManagerGateway;
 import io.seeray.lens.application.HeatmapAggregationService;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
 import io.seeray.lens.domain.auth.AppUser;
@@ -21,7 +23,10 @@ import java.time.ZoneId;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.sql.DataSource;
@@ -1803,6 +1808,76 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("imports.size()", is(1))
                 .body("imports[0].rowCount", is(1));
+
+        AtomicReference<Map<String, Object>> outboundRequest = new AtomicReference<>();
+        AtomicBoolean validateOnly = new AtomicBoolean();
+        QuarkusMock.installMockForType(
+                new GoogleAdsDataManagerGateway() {
+                    @Override
+                    public Result ingest(Map<String, Object> request, boolean validation) {
+                        outboundRequest.set(request);
+                        validateOnly.set(validation);
+                        return new Result(validation ? "google-validation-123" : "google-send-456", List.of());
+                    }
+                },
+                GoogleAdsDataManagerGateway.class);
+        String googleAdsEndpoint = "/api/v1/sites/" + siteId + "/offline-conversions/google-ads";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"customerId\":\"123-456-7890\",\"conversionActionId\":\"12345678\",\"currencyCode\":\"USD\"}")
+                .put(googleAdsEndpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("customerId", is("1234567890"));
+        String transfer = "{\"goalId\":\"" + goalId + "\",\"clickIdType\":\"gclid\",\"eventSource\":\"WEB\",\"rows\":["
+                + row + "]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(transfer.replace(rawClickId, rawClickId + "-not-imported"))
+                .post(googleAdsEndpoint + "/validate")
+                .then()
+                .statusCode(409)
+                .body("code", is("GOOGLE_ADS_EXPORT_ROW_NOT_IMPORTED"));
+        assertNull(outboundRequest.get());
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(transfer)
+                .post(googleAdsEndpoint + "/validate")
+                .then()
+                .statusCode(200)
+                .body("validatedOnly", is(true))
+                .body("rowsProcessed", is(1))
+                .body("requestId", is("google-validation-123"));
+        assertTrue(validateOnly.get());
+        Map<?, ?> event = (Map<?, ?>) ((List<?>) outboundRequest.get().get("events")).getFirst();
+        assertEquals(rawClickId, ((Map<?, ?>) event.get("adIdentifiers")).get("gclid"));
+        assertEquals("WEB", event.get("eventSource"));
+        assertEquals("USD", event.get("currency"));
+        assertEquals(25, ((Number) event.get("conversionValue")).intValue());
+        assertNotEquals("crm-lead-0081", event.get("transactionId"));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(transfer)
+                .post(googleAdsEndpoint + "/send")
+                .then()
+                .statusCode(200)
+                .body("validatedOnly", is(false))
+                .body("requestId", is("google-send-456"));
+        assertFalse(validateOnly.get());
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select oc.ad_click_id_hash,a.action from analytics_offline_conversion oc "
+                                + "join site_audit_log a on a.site_id=oc.site_id "
+                                + "where oc.site_id=? and a.action='SEND_TO_GOOGLE_ADS'")) {
+            statement.setObject(1, siteUuid);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertNotEquals(rawClickId, result.getString(1));
+                assertEquals("SEND_TO_GOOGLE_ADS", result.getString(2));
+            }
+        }
     }
 
     @Test
