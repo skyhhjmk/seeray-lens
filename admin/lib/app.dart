@@ -26,6 +26,7 @@ import 'features/analytics/presentation/scheduled_reports_page.dart';
 import 'features/analytics/presentation/analytics_alerts_page.dart';
 import 'features/analytics/presentation/attribution_page.dart';
 import 'features/analytics/presentation/campaign_costs_page.dart';
+import 'features/analytics/presentation/offline_conversions_page.dart';
 import 'features/analytics/presentation/analytics_annotations_page.dart';
 import 'features/analytics/presentation/visitor_profile_page.dart';
 import 'features/analytics/presentation/form_analytics_page.dart';
@@ -245,6 +246,18 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
               state,
               _Authenticated(
                 child: CampaignCostsPage(
+                  siteId: state.pathParameters['siteId']!,
+                  embedded: true,
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/sites/:siteId/acquisition/offline-conversions',
+            pageBuilder: (context, state) => _siteTabPage(
+              state,
+              _Authenticated(
+                child: OfflineConversionsPage(
                   siteId: state.pathParameters['siteId']!,
                   embedded: true,
                 ),

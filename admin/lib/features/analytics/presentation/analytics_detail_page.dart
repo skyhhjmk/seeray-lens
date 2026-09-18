@@ -1761,15 +1761,12 @@ class _Body extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Row(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Text(
-                title,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-            ),
-            if (view == AnalyticsView.acquisition)
+            Text(title, style: Theme.of(context).textTheme.headlineSmall),
+            if (view == AnalyticsView.acquisition) ...[
+              const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -1786,8 +1783,16 @@ class _Body extends StatelessWidget {
                     icon: const Icon(Icons.payments_outlined),
                     label: Text(context.tr('Campaign costs', '广告活动费用')),
                   ),
+                  FilledButton.tonalIcon(
+                    onPressed: () => context.go(
+                      '/sites/$siteId/acquisition/offline-conversions',
+                    ),
+                    icon: const Icon(Icons.offline_bolt_outlined),
+                    label: Text(context.tr('Offline conversions', '线下转化')),
+                  ),
                 ],
               ),
+            ],
           ],
         ),
         const SizedBox(height: 16),
