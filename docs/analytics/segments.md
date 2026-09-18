@@ -7,10 +7,14 @@ Segments are named, reusable rules for grouping sessions. Open a site's **Segmen
 | Field | Meaning | Conditions |
 | --- | --- | --- |
 | Visitor type | New or returning visitor for the session | Equals, does not equal |
-| Entry page | Session landing path | Text comparisons, is set, is not set |
-| Campaign source / medium / name | Initial UTM attribution for the session | Text comparisons, is set, is not set |
+| Entry / exit page | Session landing or last page path | Text comparisons, is set, is not set |
+| Campaign source / medium / name / term / content | Initial UTM attribution for the session | Text comparisons, is set, is not set |
+| Referrer | Initial referrer host | Text comparisons, is set, is not set |
+| Browser / operating system / device type / language | Technology captured for the visit | Text comparisons, is set, is not set |
+| Country / region / city | Approximate visit location when trusted-proxy geo lookup is configured | Text comparisons, is set, is not set |
 | Bounced visit | Whether the session was a bounce | Yes, no |
-| Page views | Number of page views in the session | Equals, greater/less than, at least, at most |
+| Page views / events per visit | Number of matching page views or recorded events in the session | Equals, greater/less than, at least, at most |
+| Visit duration | Elapsed time between the first and last event in seconds | Equals, greater/less than, at least, at most |
 | Event type / event page | An event recorded during the session | Text comparisons, is set, is not set |
 | Custom property | A configured event property value | Text comparisons, is set, is not set |
 

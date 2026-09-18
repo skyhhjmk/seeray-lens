@@ -55,8 +55,9 @@ class _SegmentsPageState extends ConsumerState<SegmentsPage> {
                 englishTitle: 'Segments',
                 chineseTitle: '用户分群',
                 englishBody:
-                    'Build reusable audiences from visit, acquisition, event, and custom-property rules. Preview matching sessions, then save the rule set for reuse.',
-                chineseBody: '使用访问、流量来源、事件和自定义属性条件组合可复用的用户分群，预览命中情况后保存以便重复使用。',
+                    'Build reusable audiences from visit, acquisition, technology, location, event, and custom-property rules. Preview matching sessions, then save the rule set for reuse.',
+                chineseBody:
+                    '使用访问、流量来源、技术、地域、事件和自定义属性条件组合可复用的用户分群，预览命中情况后保存以便重复使用。',
               ),
               rangeState: range,
               onSelectRange: () => _selectRange(range),
@@ -891,13 +892,24 @@ class _RuleEditor extends StatelessWidget {
   static const _fields = <String, String>{
     'visitor_type': 'Visitor type',
     'entry_page': 'Entry page',
+    'exit_page': 'Exit page',
     'source': 'Campaign source',
     'medium': 'Campaign medium',
     'campaign': 'Campaign name',
     'campaign_term': 'Campaign term',
     'campaign_content': 'Campaign content',
+    'referrer': 'Referrer',
+    'browser': 'Browser',
+    'operating_system': 'Operating system',
+    'device_type': 'Device type',
+    'language': 'Language',
+    'country': 'Country',
+    'region': 'Region',
+    'city': 'City',
     'bounce': 'Bounced visit',
     'page_views': 'Page views',
+    'event_count': 'Events per visit',
+    'visit_duration': 'Visit duration (seconds)',
     'event_type': 'Event type',
     'page_path': 'Event page',
   };
@@ -907,7 +919,11 @@ class _RuleEditor extends StatelessWidget {
         rule['field'] == 'custom_property')
       'custom_property',
   ];
-  bool get _numeric => rule['field'] == 'page_views';
+  bool get _numeric => const {
+    'page_views',
+    'event_count',
+    'visit_duration',
+  }.contains(rule['field']);
   bool get _boolean => rule['field'] == 'bounce';
   List<String> get _operators => _numeric
       ? ['equals', 'greater_than', 'at_least', 'less_than', 'at_most']
@@ -927,13 +943,24 @@ class _RuleEditor extends StatelessWidget {
       : context.tr(_fields[field] ?? field, switch (field) {
           'visitor_type' => '访客类型',
           'entry_page' => '入口页面',
+          'exit_page' => '退出页面',
           'source' => '广告来源',
           'medium' => '广告媒介',
           'campaign' => '活动名称',
           'campaign_term' => '活动关键词',
           'campaign_content' => '活动内容',
+          'referrer' => '引荐来源',
+          'browser' => '浏览器',
+          'operating_system' => '操作系统',
+          'device_type' => '设备类型',
+          'language' => '语言',
+          'country' => '国家/地区',
+          'region' => '省/州',
+          'city' => '城市',
           'bounce' => '跳出访问',
           'page_views' => '浏览量',
+          'event_count' => '每次访问事件数',
+          'visit_duration' => '访问时长（秒）',
           'event_type' => '事件类型',
           'page_path' => '事件页面',
           _ => '自定义属性',
@@ -1098,12 +1125,10 @@ class _RuleEditor extends StatelessWidget {
     return TextFormField(
       key: ValueKey('value-${rule['field']}-${rule['operator']}'),
       initialValue: value,
-      keyboardType: field == 'page_views'
-          ? TextInputType.number
-          : TextInputType.text,
+      keyboardType: _numeric ? TextInputType.number : TextInputType.text,
       decoration: InputDecoration(
         labelText: context.tr('Value', '值'),
-        hintText: field == 'page_views' ? '0' : null,
+        hintText: _numeric ? '0' : null,
       ),
       onChanged: (next) => onChanged({...rule, 'value': next}),
     );
@@ -1139,6 +1164,10 @@ class _RuleEditor extends StatelessWidget {
       ? 'true'
       : field == 'page_views'
       ? '1'
+      : field == 'event_count'
+      ? '1'
+      : field == 'visit_duration'
+      ? '30'
       : field == 'visitor_type'
       ? 'new'
       : '';

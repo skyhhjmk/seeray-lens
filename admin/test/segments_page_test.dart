@@ -24,6 +24,12 @@ void main() {
     await tester.tap(find.text('Create a segment'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'New visitors');
+    final fieldSelector = tester.widget<DropdownButtonFormField<String>>(
+      find.byKey(const ValueKey('field-visitor_type')),
+    );
+    fieldSelector.onChanged?.call('event_count');
+    await tester.pumpAndSettle();
+    expect(find.text('Events per visit'), findsOneWidget);
     expect(
       tester.widget<TextField>(find.byType(TextField).first).controller!.text,
       'New visitors',
@@ -43,6 +49,9 @@ void main() {
     expect(api.lastMethod, 'POST');
     expect(api.lastPath, '/api/v1/sites/site-1/segments');
     expect((api.lastBody as Map)['matchMode'], 'all');
+    final rules = (api.lastBody as Map)['rules'] as List;
+    expect((rules.single as Map)['field'], 'event_count');
+    expect((rules.single as Map)['value'], '1');
     expect(find.text('New visitors'), findsNWidgets(2));
     expect(find.text('12'), findsOneWidget);
     expect(find.text('/pricing'), findsOneWidget);
