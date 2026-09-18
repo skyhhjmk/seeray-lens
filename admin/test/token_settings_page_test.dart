@@ -26,6 +26,8 @@ void main() {
       ),
     );
     await tester.pump();
+    expect(find.textContaining('Sites: read'), findsOneWidget);
+    expect(find.textContaining('Never'), findsOneWidget);
     await tester.tap(find.text('Create token'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'test token');
@@ -46,7 +48,18 @@ void main() {
 
 class _FakeTokensController extends ApiTokensController {
   @override
-  Future<List<ApiTokenSummary>> build() async => const [];
+  Future<List<ApiTokenSummary>> build() async => const [
+    ApiTokenSummary(
+      id: 'existing-token',
+      name: 'existing token',
+      prefix: 'srl_existing',
+      scopes: '["sites:read"]',
+      createdAt: 'now',
+      lastUsedAt: null,
+      expiresAt: null,
+      revokedAt: null,
+    ),
+  ];
 
   @override
   Future<CreatedApiToken> create(String name, List<String> scopes) async =>
@@ -57,6 +70,7 @@ class _FakeTokensController extends ApiTokensController {
           prefix: 'srl_prefix',
           scopes: '["sites:read"]',
           createdAt: 'now',
+          lastUsedAt: null,
           expiresAt: null,
           revokedAt: null,
         ),
