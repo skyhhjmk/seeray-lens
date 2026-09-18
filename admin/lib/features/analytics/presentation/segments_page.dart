@@ -900,16 +900,25 @@ class _RuleEditor extends StatelessWidget {
     'campaign_content': 'Campaign content',
     'referrer': 'Referrer',
     'browser': 'Browser',
+    'browser_version': 'Browser version',
     'operating_system': 'Operating system',
+    'operating_system_version': 'Operating system version',
     'device_type': 'Device type',
     'language': 'Language',
     'country': 'Country',
+    'continent': 'Continent',
     'region': 'Region',
     'city': 'City',
+    'geo_timezone': 'Geographic time zone',
     'bounce': 'Bounced visit',
     'page_views': 'Page views',
     'event_count': 'Events per visit',
     'visit_duration': 'Visit duration (seconds)',
+    'screen_width': 'Screen width (px)',
+    'screen_height': 'Screen height (px)',
+    'viewport_width': 'Viewport width (px)',
+    'viewport_height': 'Viewport height (px)',
+    'pixel_ratio': 'Pixel ratio',
     'event_type': 'Event type',
     'page_path': 'Event page',
   };
@@ -923,6 +932,11 @@ class _RuleEditor extends StatelessWidget {
     'page_views',
     'event_count',
     'visit_duration',
+    'screen_width',
+    'screen_height',
+    'viewport_width',
+    'viewport_height',
+    'pixel_ratio',
   }.contains(rule['field']);
   bool get _boolean => rule['field'] == 'bounce';
   List<String> get _operators => _numeric
@@ -951,16 +965,25 @@ class _RuleEditor extends StatelessWidget {
           'campaign_content' => '活动内容',
           'referrer' => '引荐来源',
           'browser' => '浏览器',
+          'browser_version' => '浏览器版本',
           'operating_system' => '操作系统',
+          'operating_system_version' => '操作系统版本',
           'device_type' => '设备类型',
           'language' => '语言',
           'country' => '国家/地区',
+          'continent' => '大洲',
           'region' => '省/州',
           'city' => '城市',
+          'geo_timezone' => '地理时区',
           'bounce' => '跳出访问',
           'page_views' => '浏览量',
           'event_count' => '每次访问事件数',
           'visit_duration' => '访问时长（秒）',
+          'screen_width' => '屏幕宽度（像素）',
+          'screen_height' => '屏幕高度（像素）',
+          'viewport_width' => '视口宽度（像素）',
+          'viewport_height' => '视口高度（像素）',
+          'pixel_ratio' => '像素比',
           'event_type' => '事件类型',
           'page_path' => '事件页面',
           _ => '自定义属性',
@@ -1125,7 +1148,9 @@ class _RuleEditor extends StatelessWidget {
     return TextFormField(
       key: ValueKey('value-${rule['field']}-${rule['operator']}'),
       initialValue: value,
-      keyboardType: _numeric ? TextInputType.number : TextInputType.text,
+      keyboardType: _numeric
+          ? TextInputType.numberWithOptions(decimal: field == 'pixel_ratio')
+          : TextInputType.text,
       decoration: InputDecoration(
         labelText: context.tr('Value', '值'),
         hintText: _numeric ? '0' : null,
@@ -1168,6 +1193,16 @@ class _RuleEditor extends StatelessWidget {
       ? '1'
       : field == 'visit_duration'
       ? '30'
+      : field == 'screen_width'
+      ? '1024'
+      : field == 'screen_height'
+      ? '768'
+      : field == 'viewport_width'
+      ? '1024'
+      : field == 'viewport_height'
+      ? '768'
+      : field == 'pixel_ratio'
+      ? '1'
       : field == 'visitor_type'
       ? 'new'
       : '';

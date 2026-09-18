@@ -4010,6 +4010,17 @@ class ControlPlaneResourceTest {
                 cohortWeek.atStartOfDay(ZoneId.of("UTC")).toInstant(),
                 cohortWeek.plusDays(11).atStartOfDay(ZoneId.of("UTC")).toInstant());
         aggregation.rebuild(siteId, cohortWeek, cohortWeek.plusDays(10));
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update analytics_session set browser='Chrome',browser_version='140.0.0',"
+                                + "operating_system='Android',operating_system_version='15',device_type='mobile',"
+                                + "language='en-US',screen_width=1080,screen_height=2400,viewport_width=412,"
+                                + "viewport_height=915,pixel_ratio=2.625,country_code='US',continent_code='NA',"
+                                + "region_code='CA',region_name='California',city='San Francisco',geo_timezone='America/Los_Angeles' "
+                                + "where site_id=? and client_session_id='identity-mobile-session'")) {
+            statement.setObject(1, siteId);
+            assertEquals(1, statement.executeUpdate());
+        }
 
         String analytics = "/api/v1/sites/" + site + "/analytics";
         String range = "?from=" + cohortWeek + "&to=" + cohortWeek.plusDays(10);
@@ -4044,6 +4055,20 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("sessions", is(7))
                 .body("visitors", is(4));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Mobile Chrome 140\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"browser_version\",\"operator\":\"starts_with\",\"value\":\"140\"},"
+                        + "{\"field\":\"operating_system_version\",\"operator\":\"equals\",\"value\":\"15\"},"
+                        + "{\"field\":\"country\",\"operator\":\"equals\",\"value\":\"US\"},"
+                        + "{\"field\":\"screen_width\",\"operator\":\"at_least\",\"value\":\"1000\"},"
+                        + "{\"field\":\"pixel_ratio\",\"operator\":\"at_least\",\"value\":\"2.5\"}]}")
+                .post("/api/v1/sites/" + site + "/segments/preview" + range)
+                .then()
+                .statusCode(200)
+                .body("sessions", is(1))
+                .body("visitors", is(1))
+                .body("pageViews", is(1));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"dimension\":\"event_type\",\"metric\":\"unique_visitors\","

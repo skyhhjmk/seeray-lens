@@ -33,13 +33,26 @@ public class SegmentService {
             "event_type",
             "page_path",
             "browser",
+            "browser_version",
             "operating_system",
+            "operating_system_version",
             "device_type",
             "language",
             "country",
+            "continent",
             "region",
             "city",
+            "geo_timezone",
             "custom_property");
+    private static final Set<String> NUMERIC_FIELDS = Set.of(
+            "page_views",
+            "event_count",
+            "visit_duration",
+            "screen_width",
+            "screen_height",
+            "viewport_width",
+            "viewport_height",
+            "pixel_ratio");
 
     private final DataSource dataSource;
     private final ObjectMapper mapper;
@@ -300,7 +313,7 @@ public class SegmentService {
     }
 
     private String matchingSessions(Criteria criteria) {
-        return "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,v.client_visitor_id,s.client_session_id,s.started_at,s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,s.entry_page,s.exit_page,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,s.initial_referrer_host,s.initial_page_host from analytics_session s join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+        return "with matching_sessions as (select s.id,s.site_id,s.visitor_id,s.identity_key,v.client_visitor_id,s.client_session_id,s.started_at,s.last_activity_at,s.page_view_count,s.event_count,s.duration_ms,s.is_bounce,s.visitor_type,s.entry_page,s.exit_page,s.initial_utm_source,s.initial_utm_medium,s.initial_utm_campaign,s.initial_utm_term,s.initial_utm_content,s.initial_referrer_host,s.initial_page_host,s.browser,s.browser_version,s.operating_system,s.operating_system_version,s.device_type,s.language,s.screen_width,s.screen_height,s.viewport_width,s.viewport_height,s.pixel_ratio,s.country_code,s.continent_code,s.region_code,s.region_name,s.city,s.geo_timezone from analytics_session s join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
                 + criteria.expression() + "))";
     }
 
@@ -371,16 +384,25 @@ public class SegmentService {
                     case "campaign_content" -> "s.initial_utm_content";
                     case "referrer" -> "s.initial_referrer_host";
                     case "browser" -> "s.browser";
+                    case "browser_version" -> "s.browser_version";
                     case "operating_system" -> "s.operating_system";
+                    case "operating_system_version" -> "s.operating_system_version";
                     case "device_type" -> "s.device_type";
                     case "language" -> "s.language";
                     case "country" -> "s.country_code";
+                    case "continent" -> "s.continent_code";
                     case "region" -> "coalesce(s.region_name,s.region_code)";
                     case "city" -> "s.city";
+                    case "geo_timezone" -> "s.geo_timezone";
                     case "bounce" -> "s.is_bounce";
                     case "page_views" -> "s.page_view_count";
                     case "event_count" -> "s.event_count";
                     case "visit_duration" -> "s.duration_ms";
+                    case "screen_width" -> "s.screen_width";
+                    case "screen_height" -> "s.screen_height";
+                    case "viewport_width" -> "s.viewport_width";
+                    case "viewport_height" -> "s.viewport_height";
+                    case "pixel_ratio" -> "s.pixel_ratio";
                     default -> throw invalid();
                 };
         if (operator.equals("is_set")) return column + " is not null and " + column + " <> ''";
@@ -389,9 +411,8 @@ public class SegmentService {
             values.add(Boolean.parseBoolean(value));
             return column + (operator.equals("does_not_equal") ? " <> ?" : " = ?");
         }
-        if (field.equals("page_views") || field.equals("event_count") || field.equals("visit_duration")) {
-            int count = Integer.parseInt(value);
-            values.add(field.equals("visit_duration") ? count * 1000L : count);
+        if (NUMERIC_FIELDS.contains(field)) {
+            values.add(field.equals("pixel_ratio") ? Double.parseDouble(value) : numericValue(field, value));
             return column
                     + switch (operator) {
                         case "equals" -> " = ?";
@@ -454,12 +475,26 @@ public class SegmentService {
             } else if (field.equals("bounce")) {
                 requireOperator(operator, Set.of("equals", "does_not_equal"));
                 if (!Set.of("true", "false").contains(rule.value())) throw invalid();
-            } else if (field.equals("page_views") || field.equals("event_count") || field.equals("visit_duration")) {
+            } else if (NUMERIC_FIELDS.contains(field)) {
                 requireOperator(operator, Set.of("equals", "greater_than", "at_least", "less_than", "at_most"));
                 try {
-                    int count = Integer.parseInt(rule.value());
-                    int maximum = field.equals("visit_duration") ? 86_400 : 1_000_000;
-                    if (count < 0 || count > maximum) throw invalid();
+                    if (rule.value() == null || rule.value().isBlank()) throw invalid();
+                    if (field.equals("pixel_ratio")) {
+                        java.math.BigDecimal ratio = new java.math.BigDecimal(rule.value());
+                        if (ratio.scale() > 3
+                                || ratio.compareTo(new java.math.BigDecimal("0.25")) < 0
+                                || ratio.compareTo(new java.math.BigDecimal("8.0")) > 0) throw invalid();
+                    } else {
+                        int count = Integer.parseInt(rule.value());
+                        int maximum =
+                                switch (field) {
+                                    case "visit_duration" -> 86_400;
+                                    case "screen_width", "screen_height", "viewport_width", "viewport_height" -> 10_000;
+                                    default -> 1_000_000;
+                                };
+                        int minimum = field.startsWith("screen_") || field.startsWith("viewport_") ? 1 : 0;
+                        if (count < minimum || count > maximum) throw invalid();
+                    }
                 } catch (Exception error) {
                     throw invalid();
                 }
@@ -484,6 +519,11 @@ public class SegmentService {
 
     private static boolean isSet(String operator) {
         return operator.equals("is_set") || operator.equals("is_not_set");
+    }
+
+    private static Object numericValue(String field, String value) {
+        int count = Integer.parseInt(value);
+        return field.equals("visit_duration") ? count * 1000L : count;
     }
 
     private Site readableSite(UUID siteId) {
