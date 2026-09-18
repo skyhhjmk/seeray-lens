@@ -299,6 +299,16 @@ public class AnalyticsResource {
     }
 
     @GET
+    @Path("/custom-report/event-properties")
+    public List<CustomReportService.EventProperty> customReportEventProperties(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return customReports.eventProperties(site, from, to, segmentId);
+    }
+
+    @GET
     @Path("/realtime")
     public List<AnalyticsQueryService.LiveVisitor> realtime(
             @PathParam("siteId") UUID site,

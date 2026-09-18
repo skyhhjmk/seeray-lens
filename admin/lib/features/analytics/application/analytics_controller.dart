@@ -945,6 +945,56 @@ final analyticsCustomDimensionDefinitionsProvider =
           .toList(growable: false);
     });
 
+class AnalyticsEventPropertyPath {
+  const AnalyticsEventPropertyPath({
+    required this.id,
+    required this.label,
+    required this.eventCount,
+    required this.sessionCount,
+  });
+
+  final String id;
+  final String label;
+  final int eventCount;
+  final int sessionCount;
+
+  factory AnalyticsEventPropertyPath.fromJson(Map<String, dynamic> json) =>
+      AnalyticsEventPropertyPath(
+        id: json['id'] as String? ?? '',
+        label: json['label'] as String? ?? '',
+        eventCount: (json['eventCount'] as num?)?.toInt() ?? 0,
+        sessionCount: (json['sessionCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
+final analyticsEventPropertyPathsProvider =
+    FutureProvider.family<
+      List<AnalyticsEventPropertyPath>,
+      AnalyticsDashboardQuery
+    >((ref, query) async {
+      final parameters = <String, String>{
+        'from': query.range.fromQuery,
+        'to': query.range.toQuery,
+        if (query.segmentId != null) 'segmentId': query.segmentId!,
+      };
+      final path = Uri(
+        path:
+            '/api/v1/sites/${query.siteId}/analytics/custom-report/event-properties',
+        queryParameters: parameters,
+      );
+      final response =
+          await ref.read(apiProvider).request('GET', path.toString()) as List;
+      return response
+          .whereType<Map>()
+          .map(
+            (item) => AnalyticsEventPropertyPath.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .where((item) => item.id.isNotEmpty && item.label.isNotEmpty)
+          .toList(growable: false);
+    });
+
 class CustomReportQuery {
   const CustomReportQuery({
     required this.siteId,

@@ -1516,11 +1516,75 @@ class ControlPlaneResourceTest {
             }
         } while (count < 5 && System.currentTimeMillis() < deadline);
         assertEquals(5, count);
+        String nestedPayload =
+                """
+                {"schemaVersion":1,"siteId":"%s","events":[{"eventId":"%s","type":"nested_test","occurredAt":"%s",
+                "url":"https://example.com/pricing","visitorId":"%s","sessionId":"%s",
+                "properties":{"product":{"category":{"name":"software"}},"password":"do-not-list"}}]}
+                """
+                        .formatted(trackingId, UUID.randomUUID(), now, visitor, session);
+        given().contentType("application/json")
+                .body(nestedPayload)
+                .post("/api/v1/collect")
+                .then()
+                .statusCode(202);
+        deadline = System.currentTimeMillis() + 8_000;
+        do {
+            Thread.sleep(200);
+            try (var connection = dataSource.getConnection();
+                    var statement = connection.prepareStatement("select count(*) from raw_event where site_id=?")) {
+                statement.setObject(1, UUID.fromString(site));
+                try (var result = statement.executeQuery()) {
+                    result.next();
+                    count = result.getLong(1);
+                }
+            }
+        } while (count < 6 && System.currentTimeMillis() < deadline);
+        assertEquals(6, count);
         Instant occurredAt = Instant.parse(now);
         factBuilder.rebuild(UUID.fromString(site), occurredAt.minusSeconds(1), occurredAt.plusSeconds(1));
 
         String today = LocalDate.now(java.time.ZoneOffset.UTC).toString();
         String customDimension = "custom:" + dimensionId;
+        String propertyId = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/analytics/custom-report/event-properties?from=" + today + "&to="
+                        + today)
+                .then()
+                .statusCode(200)
+                .body("find { it.label == 'product › category › name' }.eventCount", is(1))
+                .body("find { it.label == 'password' }", nullValue())
+                .extract()
+                .path("find { it.label == 'product › category › name' }.id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"dimension\":\"" + propertyId
+                        + "\",\"metric\":\"events\",\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body("customDimensionName", is("product › category › name"))
+                .body("rows.dimensionValue", contains("software"))
+                .body("rows.metricValue", contains(1.0f));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"dimension\":\"" + propertyId
+                        + "\",\"secondaryDimension\":\"event_type\",\"metric\":\"events\","
+                        + "\"limit\":10,\"matchMode\":\"all\",\"filters\":[]}")
+                .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .body(
+                        "rows.find { it.dimensionValue == 'software' && it.secondaryDimensionValue == 'nested_test' }.metricValue",
+                        is(1.0f));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Nested property report\",\"widgets\":[{\"id\":\"nested\","
+                        + "\"type\":\"custom_report\",\"title\":\"Events by product category\",\"dimension\":\""
+                        + propertyId + "\",\"metric\":\"events\",\"limit\":5,\"chartType\":\"table\"}]}")
+                .post("/api/v1/sites/" + site + "/dashboards")
+                .then()
+                .statusCode(200)
+                .body("widgets[0].dimension", is(propertyId));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"dimension\":\"" + customDimension
@@ -1563,8 +1627,8 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("customDimensionName", nullValue())
-                .body("rows.dimensionValue", contains("product_interaction", "page_view"))
-                .body("rows.metricValue", contains(3.0f, 2.0f));
+                .body("rows.dimensionValue", contains("product_interaction", "page_view", "nested_test"))
+                .body("rows.metricValue", contains(3.0f, 2.0f, 1.0f));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"dimension\":\"event_type\",\"secondaryDimension\":\"" + customDimension
@@ -1615,8 +1679,8 @@ class ControlPlaneResourceTest {
                 .post("/api/v1/sites/" + site + "/analytics/custom-report/query?from=" + today + "&to=" + today)
                 .then()
                 .statusCode(200)
-                .body("rows.dimensionValue", contains("page_view", "product_interaction"))
-                .body("rows.metricValue", contains(2.0f, 2.0f));
+                .body("rows.dimensionValue", contains("page_view", "product_interaction", "nested_test"))
+                .body("rows.metricValue", contains(2.0f, 2.0f, 1.0f));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"dimension\":\"event_type\",\"metric\":\"formula\",\"formula\":{"
@@ -1627,8 +1691,10 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("formulaName", is("Events per visit"))
-                .body("rows.dimensionValue", contains("product_interaction", "page_view"))
-                .body("rows.metricValue", contains(150.0f, 100.0f));
+                .body("rows.dimensionValue", hasItems("product_interaction", "page_view", "nested_test"))
+                .body("rows.find { it.dimensionValue == 'product_interaction' }.metricValue", is(150.0f))
+                .body("rows.find { it.dimensionValue == 'nested_test' }.metricValue", is(100.0f))
+                .body("rows.find { it.dimensionValue == 'page_view' }.metricValue", is(100.0f));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"dimension\":\"event_type\",\"metric\":\"formula\",\"formula\":{"
@@ -1809,8 +1875,8 @@ class ControlPlaneResourceTest {
                         + "&segmentId=" + segmentId)
                 .then()
                 .statusCode(200)
-                .body("rows.dimensionValue", contains("page_view", "product_interaction"))
-                .body("rows.metricValue", contains(1.0f, 1.0f));
+                .body("rows.dimensionValue", hasItems("page_view", "product_interaction", "nested_test"))
+                .body("rows.metricValue", contains(1.0f, 1.0f, 1.0f));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"dimension\":\"" + customDimension
@@ -1917,7 +1983,7 @@ class ControlPlaneResourceTest {
                 .body("sessions.size()", is(1))
                 .body("sessions[0].visitorType", is("new"))
                 .body("sessions[0].entryPage", is("/pricing"))
-                .body("actions.size()", is(3))
+                .body("actions.size()", is(4))
                 .body("actions.eventType", hasItems("page_view", "product_interaction"));
         given().header("Authorization", "Bearer " + owner.access())
                 .get(analyticsPath + "/visitors/not-a-real-visitor" + filteredPeriod)

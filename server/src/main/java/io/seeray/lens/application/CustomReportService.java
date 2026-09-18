@@ -12,6 +12,8 @@ import javax.sql.DataSource;
 @ApplicationScoped
 public class CustomReportService {
     private static final String CUSTOM_DIMENSION_PREFIX = "custom:";
+    private static final String EVENT_PROPERTY_PREFIX = "event_property:";
+    private static final int EVENT_PROPERTY_MAX_DEPTH = 5;
     private static final String EVENT_TIME = "(case when e.occurred_at < e.received_at - interval '24 hours' "
             + "or e.occurred_at > e.received_at + interval '24 hours' then e.received_at else e.occurred_at end)";
     private static final Map<String, String> DIMENSIONS = Map.ofEntries(
@@ -85,15 +87,13 @@ public class CustomReportService {
         if (request.secondaryDimension() != null) {
             if (DIMENSIONS.containsKey(request.dimension()) && DIMENSIONS.containsKey(request.secondaryDimension()))
                 return querySessionDimensionPair(siteId, site, range, filter, request, metric);
-            UUID firstCustomId = customDimensionId(request.dimension());
-            UUID secondCustomId = customDimensionId(request.secondaryDimension());
-            DimensionDefinition firstCustom = firstCustomId == null ? null : enabledDimension(siteId, firstCustomId);
-            DimensionDefinition secondCustom = secondCustomId == null ? null : enabledDimension(siteId, secondCustomId);
+            DimensionDefinition firstCustom = eventPropertyDimension(siteId, request.dimension());
+            DimensionDefinition secondCustom = eventPropertyDimension(siteId, request.secondaryDimension());
             return queryEventDimensionPair(siteId, site, range, filter, request, metric, firstCustom, secondCustom);
         }
-        UUID customDimensionId = customDimensionId(request.dimension());
-        if (customDimensionId != null) {
-            DimensionDefinition definition = enabledDimension(siteId, customDimensionId);
+        DimensionDefinition eventProperty = eventPropertyDimension(siteId, request.dimension());
+        if (eventProperty != null) {
+            DimensionDefinition definition = eventProperty;
             return queryCustomDimension(siteId, site, range, filter, request, metric, definition);
         }
         if (EVENT_DIMENSIONS.contains(request.dimension())) {
@@ -124,6 +124,64 @@ public class CustomReportService {
             return new Result(request.dimension(), null, request.metric(), null, rows, formulaName(request));
         } catch (SQLException error) {
             throw new IllegalStateException("Could not query custom report", error);
+        }
+    }
+
+    /** Lists observed scalar event-property paths without returning the property values themselves. */
+    public List<EventProperty> eventProperties(UUID siteId, String from, String to, UUID segmentId) {
+        AnalyticsQueryService.Range range = analytics.range(siteId, from, to);
+        Site site = sites.site(siteId);
+        SegmentService.SessionFilter filter = segments.sessionFilter(siteId, segmentId);
+        String sql = "with recursive matching_sessions as (select s.id,s.site_id,s.client_session_id,"
+                + "v.client_visitor_id,s.started_at,s.last_activity_at from analytics_session s "
+                + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
+                + "where s.site_id=? and (s.started_at at time zone ?)::date between ? and ? and ("
+                + filter.expression() + ")), sampled_events as (select s.id session_id,e.event_data->'data' value "
+                + "from matching_sessions s join raw_event e on " + eventScope("e", "s") + " where "
+                + eventBusinessDate("e")
+                + " between ? and ? order by e.occurred_at desc,e.ingest_id desc limit 10000), "
+                + "property_tree(session_id,value,path,depth) as (select session_id,value,ARRAY[]::text[],0 "
+                + "from sampled_events union all select t.session_id,child.value,t.path||child.key,t.depth+1 "
+                + "from property_tree t cross join lateral ("
+                + "select key,value from jsonb_each(case when jsonb_typeof(t.value)='object' then t.value else '{}'::jsonb end) "
+                + "union all select ordinal::text,value from jsonb_array_elements(case when jsonb_typeof(t.value)='array' "
+                + "then t.value else '[]'::jsonb end) with ordinality as item(value,ordinal)) child "
+                + "where t.depth<? and jsonb_typeof(t.value) in ('object','array')) "
+                + "select path,count(*) event_count,count(distinct session_id) session_count from property_tree "
+                + "where depth>0 and jsonb_typeof(value) in ('string','number','boolean') "
+                + "group by path order by count(*) desc,path asc limit 250";
+        List<EventProperty> properties = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setObject(index++, siteId);
+            statement.setString(index++, site.timezone);
+            statement.setObject(index++, range.from());
+            statement.setObject(index++, range.to());
+            for (Object value : filter.values()) statement.setObject(index++, value);
+            statement.setString(index++, site.timezone);
+            statement.setObject(index++, range.from());
+            statement.setObject(index++, range.to());
+            statement.setInt(index, EVENT_PROPERTY_MAX_DEPTH);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    Array pathArray = rows.getArray(1);
+                    try {
+                        String[] path = (String[]) pathArray.getArray();
+                        if (!safePropertyPath(path)) continue;
+                        properties.add(new EventProperty(
+                                eventPropertyDimensionId(path),
+                                eventPropertyLabel(path),
+                                rows.getLong(2),
+                                rows.getLong(3)));
+                    } finally {
+                        pathArray.free();
+                    }
+                }
+            }
+            return List.copyOf(properties);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not list custom report event properties", error);
         }
     }
 
@@ -181,10 +239,8 @@ public class CustomReportService {
             Query request,
             String metric) {
         List<String> names = List.of(request.dimension(), request.secondaryDimension(), request.tertiaryDimension());
-        List<DimensionDefinition> customDimensions = names.stream()
-                .map(CustomReportService::customDimensionId)
-                .map(id -> id == null ? null : enabledDimension(siteId, id))
-                .toList();
+        List<DimensionDefinition> customDimensions =
+                names.stream().map(name -> eventPropertyDimension(siteId, name)).toList();
         List<String> expressions = new ArrayList<>(3);
         StringBuilder propertyJoins = new StringBuilder();
         for (int index = 0; index < names.size(); index++) {
@@ -212,8 +268,7 @@ public class CustomReportService {
             int index = bindSessionBase(statement, siteId, site, range, filter);
             for (DimensionDefinition custom : customDimensions) {
                 if (custom != null) {
-                    statement.setString(index++, custom.key());
-                    statement.setString(index++, custom.key());
+                    index = bindPropertyPath(connection, statement, index, custom);
                 }
             }
             statement.setString(index++, site.timezone);
@@ -314,10 +369,8 @@ public class CustomReportService {
                 request.secondaryDimension(),
                 request.tertiaryDimension(),
                 request.quaternaryDimension());
-        List<DimensionDefinition> customDimensions = names.stream()
-                .map(CustomReportService::customDimensionId)
-                .map(id -> id == null ? null : enabledDimension(siteId, id))
-                .toList();
+        List<DimensionDefinition> customDimensions =
+                names.stream().map(name -> eventPropertyDimension(siteId, name)).toList();
         List<String> expressions = new ArrayList<>(names.size());
         StringBuilder propertyJoins = new StringBuilder();
         for (int index = 0; index < names.size(); index++) {
@@ -353,8 +406,7 @@ public class CustomReportService {
             int index = bindSessionBase(statement, siteId, site, range, filter);
             for (DimensionDefinition custom : customDimensions) {
                 if (custom != null) {
-                    statement.setString(index++, custom.key());
-                    statement.setString(index++, custom.key());
+                    index = bindPropertyPath(connection, statement, index, custom);
                 }
             }
             statement.setString(index++, site.timezone);
@@ -471,12 +523,10 @@ public class CustomReportService {
                 PreparedStatement statement = connection.prepareStatement(sql)) {
             int index = bindSessionBase(statement, siteId, site, range, filter);
             if (firstCustom != null) {
-                statement.setString(index++, firstCustom.key());
-                statement.setString(index++, firstCustom.key());
+                index = bindPropertyPath(connection, statement, index, firstCustom);
             }
             if (secondCustom != null) {
-                statement.setString(index++, secondCustom.key());
-                statement.setString(index++, secondCustom.key());
+                index = bindPropertyPath(connection, statement, index, secondCustom);
             }
             statement.setString(index++, site.timezone);
             statement.setObject(index++, range.from());
@@ -517,8 +567,8 @@ public class CustomReportService {
     }
 
     private static String pairPropertyJoin(int index) {
-        return " cross join lateral (select e.event_data #>> ARRAY['data',cast(? as text)] text_value,"
-                + "e.event_data #> ARRAY['data',cast(? as text)] raw_value) property"
+        return " cross join lateral (select e.event_data #>> cast(? as text[]) text_value,"
+                + "e.event_data #> cast(? as text[]) raw_value) property"
                 + index;
     }
 
@@ -571,8 +621,8 @@ public class CustomReportService {
                 + "coalesce(d.dimension_value,'Unknown') dimension_value,coalesce(d.event_count,0)::integer event_count "
                 + "from matching_sessions s left join lateral (select "
                 + "nullif(btrim(property.text_value),'') dimension_value,count(*)::integer event_count "
-                + "from raw_event e cross join lateral (select e.event_data #>> ARRAY['data',cast(? as text)] text_value,"
-                + "e.event_data #> ARRAY['data',cast(? as text)] raw_value) property where " + eventScope("e", "s")
+                + "from raw_event e cross join lateral (select e.event_data #>> cast(? as text[]) text_value,"
+                + "e.event_data #> cast(? as text[]) raw_value) property where " + eventScope("e", "s")
                 + " and " + eventBusinessDate("e") + " between ? and ? "
                 + "and jsonb_typeof(property.raw_value) in ('string','number','boolean') "
                 + "and nullif(btrim(property.text_value),'') is not null group by 1) d on true) "
@@ -584,8 +634,7 @@ public class CustomReportService {
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(sql)) {
             int index = bindSessionBase(statement, siteId, site, range, filter);
-            statement.setString(index++, dimension.key());
-            statement.setString(index++, dimension.key());
+            index = bindPropertyPath(connection, statement, index, dimension);
             statement.setString(index++, site.timezone);
             statement.setObject(index++, range.from());
             statement.setObject(index++, range.to());
@@ -610,8 +659,8 @@ public class CustomReportService {
         String sql = customDimensionSessionsCte(filter)
                 + ", dimension_events as (select nullif(btrim(property.text_value),'') dimension_value "
                 + "from matching_sessions s join raw_event e on " + eventScope("e", "s")
-                + " cross join lateral (select e.event_data #>> ARRAY['data',cast(? as text)] text_value,"
-                + "e.event_data #> ARRAY['data',cast(? as text)] raw_value) property "
+                + " cross join lateral (select e.event_data #>> cast(? as text[]) text_value,"
+                + "e.event_data #> cast(? as text[]) raw_value) property "
                 + "where " + eventBusinessDate("e") + " between ? and ? "
                 + "and jsonb_typeof(property.raw_value) in ('string','number','boolean') "
                 + "and nullif(btrim(property.text_value),'') is not null) "
@@ -621,8 +670,7 @@ public class CustomReportService {
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(sql)) {
             int index = bindSessionBase(statement, siteId, site, range, filter);
-            statement.setString(index++, dimension.key());
-            statement.setString(index++, dimension.key());
+            index = bindPropertyPath(connection, statement, index, dimension);
             statement.setString(index++, site.timezone);
             statement.setObject(index++, range.from());
             statement.setObject(index++, range.to());
@@ -673,7 +721,7 @@ public class CustomReportService {
             statement.setObject(2, dimensionId);
             try (ResultSet row = statement.executeQuery()) {
                 if (!row.next()) throw invalid("Choose an enabled custom dimension for this site");
-                return new DimensionDefinition(row.getString(1), row.getString(2));
+                return new DimensionDefinition(List.of("data", row.getString(1)), row.getString(2));
             }
         } catch (SQLException error) {
             throw new IllegalStateException("Could not resolve custom report dimension", error);
@@ -697,6 +745,87 @@ public class CustomReportService {
         String value = dimension.substring(CUSTOM_DIMENSION_PREFIX.length());
         if (!validUuid(value)) throw invalid("Choose a valid custom dimension");
         return UUID.fromString(value);
+    }
+
+    private DimensionDefinition eventPropertyDimension(UUID siteId, String dimension) {
+        UUID customId = customDimensionId(dimension);
+        if (customId != null) return enabledDimension(siteId, customId);
+        if (dimension == null || !dimension.startsWith(EVENT_PROPERTY_PREFIX)) return null;
+        String encoded = dimension.substring(EVENT_PROPERTY_PREFIX.length());
+        if (encoded.isEmpty() || encoded.length() > 1024 || !encoded.matches("[A-Za-z0-9_-]+"))
+            throw invalid("Choose a valid event-property path");
+        try {
+            String decoded =
+                    new String(Base64.getUrlDecoder().decode(encoded), java.nio.charset.StandardCharsets.UTF_8);
+            String[] path = decoded.split("\u001f", -1);
+            if (!safePropertyPath(path)) throw invalid("Choose a valid event-property path");
+            List<String> fullPath = new ArrayList<>(path.length + 1);
+            fullPath.add("data");
+            fullPath.addAll(List.of(path));
+            return new DimensionDefinition(fullPath, eventPropertyLabel(path));
+        } catch (IllegalArgumentException error) {
+            throw invalid("Choose a valid event-property path");
+        }
+    }
+
+    private static String eventPropertyDimensionId(String[] path) {
+        String joined = String.join("\u001f", path);
+        String encoded = Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(joined.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return EVENT_PROPERTY_PREFIX + encoded;
+    }
+
+    private static String eventPropertyLabel(String[] path) {
+        return String.join(
+                " › ",
+                Arrays.stream(path)
+                        .map(part -> part.matches("[0-9]+") ? "[" + part + "]" : part)
+                        .toList());
+    }
+
+    private static boolean safePropertyPath(String[] path) {
+        if (path == null || path.length == 0 || path.length > EVENT_PROPERTY_MAX_DEPTH) return false;
+        for (String part : path) {
+            if (part == null
+                    || part.isBlank()
+                    || part.length() > 80
+                    || part.chars().anyMatch(Character::isISOControl)) return false;
+            String normalized = part.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+            if (List.of(
+                            "password",
+                            "passwd",
+                            "secret",
+                            "token",
+                            "authorization",
+                            "auth",
+                            "credential",
+                            "bearer",
+                            "apikey",
+                            "privatekey",
+                            "accesskey",
+                            "refreshkey",
+                            "email",
+                            "phone",
+                            "mobile",
+                            "address",
+                            "ipaddress",
+                            "ssn",
+                            "creditcard",
+                            "cardnumber")
+                    .stream()
+                    .anyMatch(normalized::contains)) return false;
+        }
+        return true;
+    }
+
+    private static int bindPropertyPath(
+            Connection connection, PreparedStatement statement, int index, DimensionDefinition dimension)
+            throws SQLException {
+        Array path = connection.createArrayOf("text", dimension.path().toArray(String[]::new));
+        statement.setArray(index++, path);
+        statement.setArray(index++, path);
+        return index;
     }
 
     private static boolean validUuid(String value) {
@@ -742,12 +871,26 @@ public class CustomReportService {
             throw invalid("Choose whether all or any report filters must match");
     }
 
-    private static boolean supportedDimension(String dimension) {
+    static boolean supportedDimension(String dimension) {
         return dimension != null
                 && (DIMENSIONS.containsKey(dimension)
                         || EVENT_DIMENSIONS.contains(dimension)
                         || dimension.startsWith(CUSTOM_DIMENSION_PREFIX)
-                                && validUuid(dimension.substring(CUSTOM_DIMENSION_PREFIX.length())));
+                                && validUuid(dimension.substring(CUSTOM_DIMENSION_PREFIX.length()))
+                        || validEventPropertyDimension(dimension));
+    }
+
+    private static boolean validEventPropertyDimension(String dimension) {
+        if (dimension == null || !dimension.startsWith(EVENT_PROPERTY_PREFIX)) return false;
+        String encoded = dimension.substring(EVENT_PROPERTY_PREFIX.length());
+        if (encoded.isEmpty() || encoded.length() > 1024 || !encoded.matches("[A-Za-z0-9_-]+")) return false;
+        try {
+            return safePropertyPath(
+                    new String(Base64.getUrlDecoder().decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
+                            .split("\u001f", -1));
+        } catch (IllegalArgumentException error) {
+            return false;
+        }
     }
 
     static void validateFormula(Formula formula) {
@@ -948,5 +1091,7 @@ public class CustomReportService {
         }
     }
 
-    private record DimensionDefinition(String key, String name) {}
+    private record DimensionDefinition(List<String> path, String name) {}
+
+    public record EventProperty(String id, String label, long eventCount, long sessionCount) {}
 }

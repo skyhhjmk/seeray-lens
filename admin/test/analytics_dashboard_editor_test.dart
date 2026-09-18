@@ -229,6 +229,52 @@ void main() {
     expect(widget['metric'], 'sessions');
   });
 
+  testWidgets('searches and selects a nested event property visually', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final api = _DashboardApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: AnalyticsDashboardPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Customize'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add widget'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Custom report').last);
+    await tester.tap(find.text('Custom report').last);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Browse event properties (1)'));
+    await tester.tap(find.text('Browse event properties (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose an event property'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'category');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('product › category › name'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Apply'));
+    await tester.tap(find.text('Apply'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final widget = (api.savedBody!['widgets'] as List).cast<Map>().singleWhere(
+      (item) => item['type'] == 'custom_report',
+    );
+    expect(widget['dimension'], _eventPropertyId);
+  });
+
   testWidgets('adds a second built-in session breakdown visually', (
     tester,
   ) async {
@@ -584,6 +630,9 @@ void main() {
   });
 }
 
+final _eventPropertyId =
+    'event_property:${base64Url.encode(utf8.encode('product\u001fcategory\u001fname')).replaceAll('=', '')}';
+
 class _DashboardApi extends SeeRayApi {
   _DashboardApi() : super(baseUrl: 'https://lens.example.test');
 
@@ -606,6 +655,16 @@ class _DashboardApi extends SeeRayApi {
           'key': 'subscription_plan',
           'name': 'Subscription plan',
           'enabled': true,
+        },
+      ];
+    }
+    if (route.endsWith('/analytics/custom-report/event-properties')) {
+      return [
+        {
+          'id': _eventPropertyId,
+          'label': 'product › category › name',
+          'eventCount': 12,
+          'sessionCount': 7,
         },
       ];
     }

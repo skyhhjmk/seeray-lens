@@ -427,11 +427,7 @@ public class DashboardService {
     private static boolean supportedReportDimension(String dimension) {
         if (dimension == null) return false;
         if (REPORT_DIMENSIONS.contains(dimension)) return true;
-        String prefix = "custom:";
-        return dimension.startsWith(prefix)
-                && dimension
-                        .substring(prefix.length())
-                        .matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+        return CustomReportService.supportedDimension(dimension);
     }
 
     private static String validateName(String name) {

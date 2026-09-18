@@ -1085,6 +1085,36 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
   @override
   Widget build(BuildContext context) {
     final type = widget.widgetDefinition.type;
+    final reportRange = type == 'custom_report'
+        ? ref.watch(analyticsRangeProvider(widget.siteId)).range
+        : null;
+    final reportSegment = type == 'custom_report'
+        ? ref.watch(analyticsSegmentSelectionProvider(widget.siteId))
+        : null;
+    final eventPropertyState = reportRange == null
+        ? null
+        : ref.watch(
+            analyticsEventPropertyPathsProvider(
+              AnalyticsDashboardQuery(
+                widget.siteId,
+                reportRange,
+                segmentId: reportSegment,
+              ),
+            ),
+          );
+    final eventProperties =
+        eventPropertyState?.value ?? const <AnalyticsEventPropertyPath>[];
+    final selectedEventPropertyIds = {
+      _reportDimension,
+      _reportSecondaryDimension,
+      _reportTertiaryDimension,
+      _reportQuaternaryDimension,
+    };
+    final visibleEventProperties = [
+      ...eventProperties.take(50),
+      for (final property in eventProperties.skip(50))
+        if (selectedEventPropertyIds.contains(property.id)) property,
+    ];
     final customDimensionState = type == 'custom_report'
         ? ref.watch(analyticsCustomDimensionDefinitionsProvider(widget.siteId))
         : null;
@@ -1122,6 +1152,16 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
           value: 'custom:${dimension.id}',
           child: Text('${dimension.name} (${dimension.key})'),
         ),
+      for (final property in visibleEventProperties)
+        DropdownMenuItem(
+          value: property.id,
+          child: Text(
+            context.tr(
+              'Event property · ${property.label} (${property.eventCount} events)',
+              '事件属性 · ${property.label}（${property.eventCount} 个事件）',
+            ),
+          ),
+        ),
     ];
     final secondaryDimensionOptions = reportDimensionOptions
         .where((item) => item.value != _reportDimension)
@@ -1152,17 +1192,16 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
     ].whereType<String>();
     final eventDimensionPair = selectedReportDimensions.any(
       (dimension) =>
-          dimension == 'event_type' || dimension.startsWith('custom:'),
+          dimension == 'event_type' ||
+          dimension.startsWith('custom:') ||
+          dimension.startsWith('event_property:'),
     );
     if (!reportDimensionOptions.any((item) => item.value == _reportDimension)) {
       reportDimensionOptions.add(
         DropdownMenuItem(
           value: _reportDimension,
           child: Text(
-            context.tr(
-              'Unavailable custom dimension — choose another',
-              '自定义维度不可用，请重新选择',
-            ),
+            '${_reportDimensionLabel(context, _reportDimension)} · ${context.tr('Not observed in this range — choose another', '此范围内未观察到，请重新选择')}',
           ),
         ),
       );
@@ -1374,6 +1413,55 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                     }
                   },
                 ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed:
+                        eventProperties.isEmpty ||
+                            eventProperties.every(
+                              (property) => selectedReportDimensions.contains(
+                                property.id,
+                              ),
+                            ) ||
+                            selectedReportDimensions.length >= 4
+                        ? null
+                        : () async {
+                            final selected = await showDialog<String>(
+                              context: context,
+                              builder: (context) => _EventPropertyPickerDialog(
+                                properties: eventProperties
+                                    .where(
+                                      (property) => !selectedReportDimensions
+                                          .contains(property.id),
+                                    )
+                                    .toList(growable: false),
+                              ),
+                            );
+                            if (!mounted || selected == null) return;
+                            setState(() {
+                              if (!selectedReportDimensions.any(
+                                (dimension) =>
+                                    dimension.startsWith('event_property:'),
+                              )) {
+                                _reportDimension = selected;
+                              } else if (_reportSecondaryDimension == null) {
+                                _reportSecondaryDimension = selected;
+                              } else if (_reportTertiaryDimension == null) {
+                                _reportTertiaryDimension = selected;
+                              } else {
+                                _reportQuaternaryDimension ??= selected;
+                              }
+                            });
+                          },
+                    icon: const Icon(Icons.search),
+                    label: Text(
+                      context.tr(
+                        'Browse event properties (${eventProperties.length})',
+                        '浏览事件属性（${eventProperties.length}）',
+                      ),
+                    ),
+                  ),
+                ),
                 if (canAddSecondaryDimension ||
                     _reportSecondaryDimension != null)
                   Align(
@@ -1555,8 +1643,47 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                       ),
                     ),
                   ),
-                if (customDimensionState?.isLoading == true)
+                if (eventPropertyState?.isLoading == true ||
+                    customDimensionState?.isLoading == true)
                   const LinearProgressIndicator(),
+                if (eventPropertyState?.hasValue == true &&
+                    eventProperties.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      context.tr(
+                        'No scalar event properties were found in this date range and audience.',
+                        '当前日期范围和受众中没有可拆分的标量事件属性。',
+                      ),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                if (eventPropertyState?.hasError == true)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        if (reportRange != null) {
+                          ref.invalidate(
+                            analyticsEventPropertyPathsProvider(
+                              AnalyticsDashboardQuery(
+                                widget.siteId,
+                                reportRange,
+                                segmentId: reportSegment,
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: Text(
+                        context.tr(
+                          'Could not load event properties. Retry.',
+                          '无法加载事件属性，点击重试。',
+                        ),
+                      ),
+                    ),
+                  ),
                 if (customDimensionState?.hasError == true)
                   Align(
                     alignment: Alignment.centerLeft,
@@ -1589,7 +1716,9 @@ class _WidgetSettingsDialogState extends ConsumerState<_WidgetSettingsDialog> {
                     ),
                   ),
                 if (selectedReportDimensions.any(
-                  (dimension) => dimension.startsWith('custom:'),
+                  (dimension) =>
+                      dimension.startsWith('custom:') ||
+                      dimension.startsWith('event_property:'),
                 ))
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -2232,9 +2361,116 @@ class _ReportFilterEditor extends StatelessWidget {
   }
 }
 
+class _EventPropertyPickerDialog extends StatefulWidget {
+  const _EventPropertyPickerDialog({required this.properties});
+
+  final List<AnalyticsEventPropertyPath> properties;
+
+  @override
+  State<_EventPropertyPickerDialog> createState() =>
+      _EventPropertyPickerDialogState();
+}
+
+class _EventPropertyPickerDialogState
+    extends State<_EventPropertyPickerDialog> {
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _search.text.trim().toLowerCase();
+    final matches = widget.properties
+        .where((property) => property.label.toLowerCase().contains(query))
+        .take(100)
+        .toList(growable: false);
+    return AlertDialog(
+      title: Text(context.tr('Choose an event property', '选择事件属性')),
+      content: SizedBox(
+        width: 520,
+        height: 440,
+        child: Column(
+          children: [
+            TextField(
+              controller: _search,
+              autofocus: true,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                labelText: context.tr('Search property paths', '搜索属性路径'),
+                suffixIcon: _search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _search.clear();
+                          setState(() {});
+                        },
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: matches.isEmpty
+                  ? Center(
+                      child: Text(
+                        context.tr(
+                          'No matching event properties in this date range.',
+                          '当前日期范围内没有匹配的事件属性。',
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: matches.length,
+                      itemBuilder: (context, index) {
+                        final property = matches[index];
+                        return ListTile(
+                          title: Text(property.label),
+                          subtitle: Text(
+                            context.tr(
+                              '${property.eventCount} events · ${property.sessionCount} visits',
+                              '${property.eventCount} 个事件 · ${property.sessionCount} 次访问',
+                            ),
+                          ),
+                          onTap: () => Navigator.pop(context, property.id),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(context.tr('Cancel', '取消')),
+        ),
+      ],
+    );
+  }
+}
+
 String _reportDimensionLabel(BuildContext context, String value) {
   if (value.startsWith('custom:')) {
     return context.tr('Custom dimension', '自定义维度');
+  }
+  if (value.startsWith('event_property:')) {
+    try {
+      final encoded = value.substring('event_property:'.length);
+      final decoded = utf8.decode(
+        base64Url.decode(base64Url.normalize(encoded)),
+      );
+      return decoded
+          .split('\u001f')
+          .map((part) => RegExp(r'^\d+$').hasMatch(part) ? '[$part]' : part)
+          .join(' › ');
+    } on FormatException {
+      return context.tr('Event property', '事件属性');
+    }
   }
   return context.tr(
     switch (value) {
