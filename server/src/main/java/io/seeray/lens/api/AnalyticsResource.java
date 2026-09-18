@@ -77,7 +77,15 @@ public class AnalyticsResource {
             @QueryParam("metricGoalId") UUID metricGoalId) {
         int window = periods != null ? periods : legacyWeeks != null ? legacyWeeks : 8;
         return cohorts.report(
-                site, analytics.range(site, from, to), segmentId, period, window, basis, goalId, metric, metricGoalId);
+                site,
+                analytics.range(site, from, to, CohortQueryService.MAX_RANGE_DAYS),
+                segmentId,
+                period,
+                window,
+                basis,
+                goalId,
+                metric,
+                metricGoalId);
     }
 
     @GET

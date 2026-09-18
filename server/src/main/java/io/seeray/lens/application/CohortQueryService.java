@@ -13,6 +13,8 @@ import javax.sql.DataSource;
 /** Builds weekly acquisition cohorts and repeat-activity retention from session facts. */
 @ApplicationScoped
 public class CohortQueryService {
+    public static final int MAX_RANGE_DAYS = 3660;
+
     private static final String MEANINGFUL_ACTIVITY = "(s.page_view_count>0 or exists(select 1 from raw_event e "
             + "where e.site_id=s.site_id and e.client_session_id=s.client_session_id "
             + "and e.client_visitor_id=v.client_visitor_id and "
@@ -97,6 +99,7 @@ public class CohortQueryService {
                     case "week" -> "((a.activity_period-c.cohort_period)/7)::int";
                     case "month" -> "((extract(year from a.activity_period)-extract(year from c.cohort_period))*12+"
                             + "extract(month from a.activity_period)-extract(month from c.cohort_period))::int";
+                    case "year" -> "(extract(year from a.activity_period)-extract(year from c.cohort_period))::int";
                     default -> throw new IllegalStateException("Validated cohort period was not supported");
                 };
         String completionDate =
@@ -104,6 +107,7 @@ public class CohortQueryService {
                     case "day" -> "s.cohort_period+a.period_index<=?::date";
                     case "week" -> "s.cohort_period+((a.period_index+1)*7-1)<=?::date";
                     case "month" -> "(s.cohort_period+(a.period_index+1)*interval '1 month'-interval '1 day')::date<=?::date";
+                    case "year" -> "(s.cohort_period+(a.period_index+1)*interval '1 year'-interval '1 day')::date<=?::date";
                     default -> throw new IllegalStateException("Validated cohort period was not supported");
                 };
         String goalActivityCtes;
@@ -255,6 +259,7 @@ public class CohortQueryService {
             case "day" -> periods == 7 || periods == 14 || periods == 30;
             case "week" -> periods == 4 || periods == 8 || periods == 12;
             case "month" -> periods == 3 || periods == 6 || periods == 12;
+            case "year" -> periods == 2 || periods == 3 || periods == 5 || periods == 10;
             default -> false;
         };
     }
@@ -264,6 +269,7 @@ public class CohortQueryService {
             case "day" -> "(" + value + " at time zone ?)::date";
             case "week" -> "date_trunc('week',(" + value + " at time zone ?)::date)::date";
             case "month" -> "date_trunc('month',(" + value + " at time zone ?)::date)::date";
+            case "year" -> "date_trunc('year',(" + value + " at time zone ?)::date)::date";
             default -> throw new IllegalStateException("Validated cohort period was not supported");
         };
     }
@@ -274,6 +280,7 @@ public class CohortQueryService {
             case "week" -> "((" + activityPeriod + "-" + cohortPeriod + ")/7)::int";
             case "month" -> "((extract(year from " + activityPeriod + ")-extract(year from " + cohortPeriod + "))*12+"
                     + "extract(month from " + activityPeriod + ")-extract(month from " + cohortPeriod + "))::int";
+            case "year" -> "(extract(year from " + activityPeriod + ")-extract(year from " + cohortPeriod + "))::int";
             default -> throw new IllegalStateException("Validated cohort period was not supported");
         };
     }

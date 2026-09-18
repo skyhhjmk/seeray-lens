@@ -32,14 +32,20 @@ public class AnalyticsQueryService {
     }
 
     public Range range(UUID siteId, String fromValue, String toValue) {
+        return range(siteId, fromValue, toValue, MAX_DAYS);
+    }
+
+    public Range range(UUID siteId, String fromValue, String toValue, int maximumDays) {
+        if (maximumDays < 1) throw new IllegalArgumentException("maximumDays must be positive");
         Site site = sites.site(siteId);
         access.member(site.organization.id); // deliberately maps cross-workspace sites to the existing 404 policy
         ZoneId zone = ZoneId.of(site.timezone);
         LocalDate today = LocalDate.now(zone);
         LocalDate from = fromValue == null || fromValue.isBlank() ? today.minusDays(29) : parse(fromValue);
         LocalDate to = toValue == null || toValue.isBlank() ? today : parse(toValue);
-        if (from.isAfter(to) || from.plusDays(MAX_DAYS - 1L).isBefore(to))
-            throw new IllegalArgumentException("from/to must be an inclusive range of at most 366 days");
+        if (from.isAfter(to) || from.plusDays(maximumDays - 1L).isBefore(to))
+            throw new IllegalArgumentException(
+                    "from/to must be an inclusive range of at most " + maximumDays + " days");
         return new Range(from, to);
     }
 

@@ -1790,8 +1790,35 @@ class ControlPlaneResourceTest {
                 .getList(".");
         LocalDate cohortMonth = cohortWeek.plusDays(1).withDayOfMonth(1);
         assertTrue(monthly.stream().anyMatch(cell -> cohortMonth.toString().equals(cell.get("cohortPeriod"))));
+        String yearRangeFrom = cohortWeek.minusYears(3).toString();
+        String yearReportPath = "/api/v1/sites/" + siteId + "/analytics/cohorts?from=" + yearRangeFrom + "&to=" + to
+                + "&period=year&periods=3";
+        List<java.util.Map<String, Object>> yearly = given().header("Authorization", "Bearer " + owner.access())
+                .get(yearReportPath)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        LocalDate cohortYear = cohortWeek.plusDays(1).withDayOfYear(1);
+        var yearZero = yearly.stream()
+                .filter(cell -> cohortYear.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(3, yearZero.get("cohortSize"));
+        assertTrue(Boolean.TRUE.equals(yearZero.get("complete")));
+        var immatureYear = yearly.stream()
+                .filter(cell -> cohortYear.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertFalse(Boolean.TRUE.equals(immatureYear.get("complete")));
+
+        LocalDate today = LocalDate.now(ZoneId.of("UTC"));
         given().header("Authorization", "Bearer " + owner.access())
-                .get(reportPath + "&period=year&periods=1")
+                .get("/api/v1/sites/" + siteId + "/analytics/cohorts?from=" + today.minusDays(3660) + "&to=" + today
+                        + "&period=year&periods=3")
                 .then()
                 .statusCode(400);
     }
