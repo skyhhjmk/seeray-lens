@@ -2587,6 +2587,30 @@ class ControlPlaneResourceTest {
                 .body("name", is("Pro plan visitors"))
                 .extract()
                 .path("id");
+        String visitorInterestPath =
+                "/api/v1/sites/" + site + "/analytics/visitor-interest?from=" + today + "&to=" + today;
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(visitorInterestPath)
+                .then()
+                .statusCode(200)
+                .body("visitors", is(2))
+                .body("sessions", is(2))
+                .body("pageViews", is(2))
+                .body("frequency.find { it.visits == '1' }.visitors", is(2))
+                .body("frequency.find { it.visits == '1' }.sessions", is(2))
+                .body("pageViewsPerSession.find { it.band == '1' }.sessions", is(2))
+                .body("eventsPerSession.find { it.band == '1–2' }.sessions", is(1))
+                .body("eventsPerSession.find { it.band == '3–5' }.sessions", is(1))
+                .body("durationPerSession.find { it.band == '<10s' }.sessions", is(1))
+                .body("durationPerSession.find { it.band == '30–<60s' }.sessions", is(1));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(visitorInterestPath + "&segmentId=" + segmentId)
+                .then()
+                .statusCode(200)
+                .body("visitors", is(1))
+                .body("sessions", is(1))
+                .body("eventsPerSession.find { it.band == '3–5' }.sessions", is(1))
+                .body("durationPerSession.find { it.band == '30–<60s' }.sessions", is(1));
         given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + site + "/analytics/visit-time?from=" + today + "&to=" + today)
                 .then()

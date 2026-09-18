@@ -914,6 +914,72 @@ public class SegmentedAnalyticsQueryService {
                 row -> new VisitTimeCell(row.getInt(1), row.getInt(2), row.getLong(3)));
     }
 
+    /** Reports visit frequency and per-session activity for the selected date range. */
+    public VisitorInterestReport visitorInterest(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
+        QueryContext context = context(siteId, range, segmentId);
+        VisitorInterestTotals totals = single(
+                context,
+                cte(context)
+                        + " select count(distinct visitor_id),count(*),coalesce(sum(page_view_count),0),"
+                        + "coalesce(sum(event_count),0),coalesce(avg(duration_ms),0) from matching_sessions",
+                List.of(),
+                row -> new VisitorInterestTotals(
+                        row.getLong(1), row.getLong(2), row.getLong(3), row.getLong(4), row.getDouble(5)));
+        String frequencySql = cte(context)
+                + ", visits_per_visitor as (select visitor_id,count(*) visits from matching_sessions group by visitor_id), "
+                + "labeled_visitors as (select visits,case when visits=1 then '1' when visits=2 then '2' "
+                + "when visits=3 then '3' when visits between 4 and 5 then '4–5' "
+                + "when visits between 6 and 10 then '6–10' else '11+' end band, "
+                + "case when visits=1 then 1 when visits=2 then 2 when visits=3 then 3 "
+                + "when visits between 4 and 5 then 4 when visits between 6 and 10 then 5 else 6 end band_order "
+                + "from visits_per_visitor) select band,count(*),sum(visits) from labeled_visitors "
+                + "group by band,band_order order by band_order";
+        List<VisitorFrequencyBand> frequency = list(
+                context,
+                frequencySql,
+                List.of(),
+                row -> new VisitorFrequencyBand(row.getString(1), row.getLong(2), row.getLong(3)));
+        String activitySql = cte(context)
+                + ", categorized_sessions as ("
+                + "select 'page_views' metric,case when page_view_count=0 then '0' when page_view_count=1 then '1' "
+                + "when page_view_count=2 then '2' when page_view_count between 3 and 5 then '3–5' "
+                + "when page_view_count between 6 and 10 then '6–10' else '11+' end band,"
+                + "case when page_view_count=0 then 1 when page_view_count=1 then 2 when page_view_count=2 then 3 "
+                + "when page_view_count between 3 and 5 then 4 when page_view_count between 6 and 10 then 5 else 6 end band_order "
+                + "from matching_sessions union all "
+                + "select 'events',case when event_count=0 then '0' when event_count between 1 and 2 then '1–2' "
+                + "when event_count between 3 and 5 then '3–5' when event_count between 6 and 10 then '6–10' else '11+' end,"
+                + "case when event_count=0 then 1 when event_count between 1 and 2 then 2 "
+                + "when event_count between 3 and 5 then 3 when event_count between 6 and 10 then 4 else 5 end "
+                + "from matching_sessions union all "
+                + "select 'duration',case when duration_ms<10000 then '<10s' when duration_ms<30000 then '10–<30s' "
+                + "when duration_ms<60000 then '30–<60s' when duration_ms<180000 then '1–<3m' "
+                + "when duration_ms<600000 then '3–<10m' else '10m+' end,"
+                + "case when duration_ms<10000 then 1 when duration_ms<30000 then 2 when duration_ms<60000 then 3 "
+                + "when duration_ms<180000 then 4 when duration_ms<600000 then 5 else 6 end from matching_sessions) "
+                + "select metric,band,count(*) from categorized_sessions group by metric,band,band_order "
+                + "order by case metric when 'page_views' then 1 when 'events' then 2 else 3 end,band_order";
+        List<SessionActivityBand> activity = list(
+                context,
+                activitySql,
+                List.of(),
+                row -> new SessionActivityBand(row.getString(1), row.getString(2), row.getLong(3)));
+        Map<String, List<SessionActivityBand>> byMetric = new LinkedHashMap<>();
+        for (SessionActivityBand band : activity)
+            byMetric.computeIfAbsent(band.metric(), ignored -> new ArrayList<>())
+                    .add(band);
+        return new VisitorInterestReport(
+                totals.visitors(),
+                totals.sessions(),
+                totals.pageViews(),
+                totals.events(),
+                totals.averageSessionDurationMs(),
+                frequency,
+                byMetric.getOrDefault("page_views", List.of()),
+                byMetric.getOrDefault("events", List.of()),
+                byMetric.getOrDefault("duration", List.of()));
+    }
+
     public List<AnalyticsQueryService.Location> locations(
             UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
         QueryContext context = context(siteId, range, segmentId);
@@ -1092,6 +1158,24 @@ public class SegmentedAnalyticsQueryService {
             Double averageResultsCount) {}
 
     public record VisitTimeCell(int dayOfWeek, int hour, long sessions) {}
+
+    private record VisitorInterestTotals(
+            long visitors, long sessions, long pageViews, long events, double averageSessionDurationMs) {}
+
+    public record VisitorFrequencyBand(String visits, long visitors, long sessions) {}
+
+    public record SessionActivityBand(String metric, String band, long sessions) {}
+
+    public record VisitorInterestReport(
+            long visitors,
+            long sessions,
+            long pageViews,
+            long events,
+            double averageSessionDurationMs,
+            List<VisitorFrequencyBand> frequency,
+            List<SessionActivityBand> pageViewsPerSession,
+            List<SessionActivityBand> eventsPerSession,
+            List<SessionActivityBand> durationPerSession) {}
 
     public record ContentReport(
             long impressions,
