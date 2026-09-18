@@ -2895,6 +2895,12 @@ class ControlPlaneResourceTest {
                 assertEquals("SEND_TO_X_ADS", result.getString(1));
             }
         }
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(endpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("configured", is(false))
+                .body("goalMappings", hasSize(0));
     }
 
     @Test

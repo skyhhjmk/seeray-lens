@@ -943,11 +943,17 @@ public class OfflineConversionService {
     @Transactional
     public XAdsConfigView removeXAdsConfig(UUID siteId) {
         writableSite(siteId);
-        try (Connection connection = dataSource.getConnection();
-                PreparedStatement statement =
-                        connection.prepareStatement("delete from analytics_x_ads_capi_config where site_id=?")) {
-            statement.setObject(1, siteId);
-            statement.executeUpdate();
+        try (Connection connection = dataSource.getConnection()) {
+            try (PreparedStatement mappings =
+                    connection.prepareStatement("delete from analytics_x_ads_goal_mapping where site_id=?")) {
+                mappings.setObject(1, siteId);
+                mappings.executeUpdate();
+            }
+            try (PreparedStatement config =
+                    connection.prepareStatement("delete from analytics_x_ads_capi_config where site_id=?")) {
+                config.setObject(1, siteId);
+                config.executeUpdate();
+            }
             return xAdsConfig(siteId);
         } catch (SQLException error) {
             throw new IllegalStateException("Could not remove X Ads Conversion API configuration", error);
