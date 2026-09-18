@@ -196,6 +196,15 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(201);
         given().header("Authorization", "Bearer " + writeSecret)
+                .get("/api/v1/workspaces/" + workspaceId + "/api-write-log")
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/workspaces/" + workspaceId + "/api-write-log")
+                .then()
+                .statusCode(200)
+                .body("entries.find { it.routeTemplate == '/api/v1/sites/{siteId}/domains' }", nullValue());
+        given().header("Authorization", "Bearer " + writeSecret)
                 .contentType("application/json")
                 .body("{\"email\":\"should-not-be-added@example.test\",\"role\":\"viewer\"}")
                 .post("/api/v1/workspaces/" + workspaceId + "/members")
@@ -5725,6 +5734,12 @@ class ControlPlaneResourceTest {
                 .get("/api/v1/sites/" + siteId + "/analytics/overview")
                 .then()
                 .statusCode(200);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Activity site\",\"timezone\":\"Asia/Shanghai\"}")
+                .patch("/api/v1/sites/" + siteId)
+                .then()
+                .statusCode(200);
         var createdApiToken = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Automation\",\"scopes\":[\"sites:read\"]}")
@@ -5835,6 +5850,56 @@ class ControlPlaneResourceTest {
                 .response();
         assertFalse(readHistory.asString().contains("never-store-human-query"));
         assertFalse(readHistory.path("entries.routeTemplate").toString().contains(siteId));
+        String writeEndpoint = "/api/v1/workspaces/" + workspaceId + "/api-write-log";
+        var firstWritePage = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 1)
+                .get(writeEndpoint)
+                .then()
+                .statusCode(200)
+                .body("retentionDays", is(30))
+                .body("entries.size()", is(1))
+                .extract();
+        String writeCursor = firstWritePage.path("nextCursor");
+        assertNotNull(writeCursor);
+        var writeHistory = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 100)
+                .get(writeEndpoint)
+                .then()
+                .statusCode(200)
+                .body(
+                        "entries.find { it.actorEmail == '" + ownerEmail
+                                + "' && it.siteName == 'Activity site' && it.method == 'PATCH' && it.routeTemplate == '/api/v1/sites/{siteId}' && it.statusCode == 200 }",
+                        notNullValue())
+                .extract()
+                .response();
+        assertFalse(writeHistory.asString().contains("Asia/Shanghai"));
+        assertFalse(writeHistory.asString().contains(inviteEmail));
+        assertFalse(writeHistory.path("entries.routeTemplate").toString().contains(siteId));
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 1)
+                .queryParam("cursor", writeCursor)
+                .get(writeEndpoint)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", is(1));
+        given().header("Authorization", "Bearer " + admin.access())
+                .get(writeEndpoint)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get(writeEndpoint)
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(writeEndpoint)
+                .then()
+                .statusCode(404);
         var firstReadPage = given().header("Authorization", "Bearer " + owner.access())
                 .queryParam("from", day)
                 .queryParam("to", day)
@@ -5964,6 +6029,24 @@ class ControlPlaneResourceTest {
                 .get("/api/v1/sites/" + siteId + "/audit-log")
                 .then()
                 .statusCode(200);
+        String deletedSiteId = createSite(owner.access(), workspaceId, "Deleted activity site");
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete("/api/v1/sites/" + deletedSiteId)
+                .then()
+                .statusCode(204);
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 100)
+                .get(writeEndpoint)
+                .then()
+                .statusCode(200)
+                .body(
+                        "entries.find { it.method == 'DELETE' && it.routeTemplate == '/api/v1/sites/{siteId}' }.siteId",
+                        nullValue())
+                .body(
+                        "entries.find { it.method == 'DELETE' && it.routeTemplate == '/api/v1/sites/{siteId}' }.statusCode",
+                        is(204));
     }
 
     @Test

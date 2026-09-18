@@ -454,3 +454,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0065-meta-ads-capi-config.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0066-workspace-human-write-history
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0066-workspace-human-write-history.sql
+            relativeToChangelogFile: false

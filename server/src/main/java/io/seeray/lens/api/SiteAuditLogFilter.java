@@ -51,6 +51,8 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
         if (response.getStatus() < 200 || response.getStatus() >= 300 || identity.isAnonymous()) return;
         Mutation mutation = classify(request.getMethod(), request.getUriInfo().getPath());
         if (mutation == null) return;
+        // Deleting a site cascades its site-scoped audit rows; the durable workspace write history records it.
+        if ("site".equals(mutation.resource()) && "DELETE".equals(mutation.action())) return;
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(
                         "insert into site_audit_log(id,site_id,actor_user_id,actor_api_token_id,action,resource,resource_id) values(?,?,?,?,?,?,?)")) {
