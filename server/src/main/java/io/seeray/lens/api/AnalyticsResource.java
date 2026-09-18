@@ -1,6 +1,7 @@
 package io.seeray.lens.api;
 
 import io.quarkus.security.Authenticated;
+import io.seeray.lens.application.AnalyticsInsightsService;
 import io.seeray.lens.application.AnalyticsQueryService;
 import io.seeray.lens.application.AttributionQueryService;
 import io.seeray.lens.application.CohortQueryService;
@@ -21,6 +22,7 @@ import java.util.*;
 @Produces(MediaType.APPLICATION_JSON)
 public class AnalyticsResource {
     private final AnalyticsQueryService analytics;
+    private final AnalyticsInsightsService insights;
     private final SegmentedAnalyticsQueryService segmented;
     private final GeoLocationResolver geoLocationResolver;
     private final CustomReportService customReports;
@@ -33,6 +35,7 @@ public class AnalyticsResource {
 
     public AnalyticsResource(
             AnalyticsQueryService analytics,
+            AnalyticsInsightsService insights,
             SegmentedAnalyticsQueryService segmented,
             GeoLocationResolver geoLocationResolver,
             CustomReportService customReports,
@@ -43,6 +46,7 @@ public class AnalyticsResource {
             OfflineConversionService offlineConversions,
             CrashAnalyticsService crashes) {
         this.analytics = analytics;
+        this.insights = insights;
         this.segmented = segmented;
         this.geoLocationResolver = geoLocationResolver;
         this.customReports = customReports;
@@ -63,6 +67,16 @@ public class AnalyticsResource {
             @QueryParam("segmentId") UUID segmentId) {
         var range = analytics.range(site, from, to);
         return segmentId == null ? analytics.overview(site, range) : segmented.overview(site, range, segmentId);
+    }
+
+    @GET
+    @Path("/insights")
+    public AnalyticsInsightsService.Report insights(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId) {
+        return insights.report(site, analytics.range(site, from, to), segmentId);
     }
 
     @GET

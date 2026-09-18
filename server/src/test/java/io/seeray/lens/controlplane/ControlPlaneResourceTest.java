@@ -2653,6 +2653,124 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void analyticsInsightsCompareEqualPeriodsAndSuppressLowVolumeNoise() throws Exception {
+        Tokens owner = register("insights" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Insights\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        UUID siteId = UUID.fromString(site);
+        Instant previousDay = Instant.parse("2026-08-31T10:00:00Z");
+        Instant currentDay = Instant.parse("2026-09-02T10:00:00Z");
+        for (int i = 0; i < 15; i++) {
+            String session = "previous-pricing-" + i;
+            insertAnalyticsRaw(
+                    siteId,
+                    "previous-pricing-visitor-" + i,
+                    session,
+                    "page_view",
+                    previousDay,
+                    "/pricing",
+                    null,
+                    "newsletter",
+                    "email",
+                    "launch");
+            insertAnalyticsRaw(
+                    siteId,
+                    "previous-pricing-visitor-" + i,
+                    session,
+                    "signup",
+                    previousDay,
+                    "/pricing",
+                    null,
+                    "newsletter",
+                    "email",
+                    "launch");
+        }
+        for (int i = 0; i < 25; i++) {
+            insertAnalyticsRaw(
+                    siteId,
+                    "legacy-visitor-" + i,
+                    "legacy-session-" + i,
+                    "page_view",
+                    previousDay,
+                    "/legacy",
+                    "search.example",
+                    null,
+                    null,
+                    null);
+        }
+        for (int i = 0; i < 30; i++) {
+            String session = "current-pricing-" + i;
+            insertAnalyticsRaw(
+                    siteId,
+                    "current-pricing-visitor-" + i,
+                    session,
+                    "page_view",
+                    currentDay,
+                    "/pricing",
+                    null,
+                    "newsletter",
+                    "email",
+                    "launch");
+            insertAnalyticsRaw(
+                    siteId,
+                    "current-pricing-visitor-" + i,
+                    session,
+                    "signup",
+                    currentDay,
+                    "/pricing",
+                    null,
+                    "newsletter",
+                    "email",
+                    "launch");
+        }
+        // This change is below both the absolute and relative thresholds and must stay out of the report.
+        for (int i = 0; i < 5; i++) {
+            insertAnalyticsRaw(
+                    siteId,
+                    "noise-visitor-" + i,
+                    "noise-session-" + i,
+                    "page_view",
+                    currentDay,
+                    "/small-change",
+                    null,
+                    null,
+                    null,
+                    null);
+        }
+        aggregation.rebuild(siteId, java.time.LocalDate.of(2026, 8, 31), java.time.LocalDate.of(2026, 9, 3));
+
+        String base = "/api/v1/sites/" + site + "/analytics/insights?from=2026-09-02&to=2026-09-03";
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(base)
+                .then()
+                .statusCode(200)
+                .body("from", is("2026-09-02"))
+                .body("to", is("2026-09-03"))
+                .body("previousFrom", is("2026-08-31"))
+                .body("previousTo", is("2026-09-01"))
+                .body("changes.find { it.category == 'page' && it.label == '/pricing' }.current", is(30))
+                .body("changes.find { it.category == 'page' && it.label == '/pricing' }.previous", is(15))
+                .body("changes.find { it.category == 'page' && it.label == '/pricing' }.direction", is("increase"))
+                .body("changes.find { it.category == 'page' && it.label == '/legacy' }.direction", is("disappeared"))
+                .body("changes.find { it.category == 'acquisition' && it.label == 'launch' }.current", is(30))
+                .body("changes.find { it.category == 'event' && it.label == 'signup' }.percentChange", is(100.0f))
+                .body("changes.find { it.label == '/small-change' }", org.hamcrest.Matchers.nullValue());
+
+        Tokens outsider = register("insights-outsider" + System.nanoTime() + "@example.test");
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(base)
+                .then()
+                .statusCode(404);
+    }
+
+    @Test
     void analyticsApisUseAggregatesAndExactRangeVisitors() throws Exception {
         Tokens owner = register("analytics" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");
