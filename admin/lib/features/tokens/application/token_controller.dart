@@ -25,6 +25,10 @@ class ApiTokenSummary {
   final String? expiresAt;
   final String? revokedAt;
 
+  bool get isExpired =>
+      expiresAt != null &&
+      (DateTime.tryParse(expiresAt!)?.isBefore(DateTime.now()) ?? false);
+
   factory ApiTokenSummary.fromJson(Map<String, dynamic> json) =>
       ApiTokenSummary(
         id: json['id'] as String,
@@ -70,7 +74,11 @@ class ApiTokensController extends AsyncNotifier<List<ApiTokenSummary>> {
         .toList(growable: false);
   }
 
-  Future<CreatedApiToken> create(String name, List<String> scopes) async {
+  Future<CreatedApiToken> create(
+    String name,
+    List<String> scopes, {
+    DateTime? expiresAt,
+  }) async {
     final workspace = ref.read(currentWorkspaceProvider);
     if (workspace == null) {
       throw const ApiFailure(0, 'Select a workspace first');
@@ -81,7 +89,12 @@ class ApiTokensController extends AsyncNotifier<List<ApiTokenSummary>> {
                 .request(
                   'POST',
                   '/api/v1/workspaces/${workspace.id}/api-tokens',
-                  body: {'name': name, 'scopes': scopes},
+                  body: {
+                    'name': name,
+                    'scopes': scopes,
+                    if (expiresAt != null)
+                      'expiresAt': expiresAt.toUtc().toIso8601String(),
+                  },
                 )
             as Map<String, dynamic>;
     final created = CreatedApiToken(

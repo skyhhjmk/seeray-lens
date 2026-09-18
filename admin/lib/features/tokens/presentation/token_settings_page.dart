@@ -54,14 +54,16 @@ class TokenSettingsPage extends ConsumerWidget {
                       '\n${context.tr('Last used', '上次使用')} ${token.lastUsedAt ?? context.tr('Never', '从未使用')}'
                       '${token.expiresAt == null ? '' : '\n${context.tr('Expires', '到期于')} ${token.expiresAt}'}',
                     ),
-                    trailing: token.revokedAt == null
-                        ? TextButton(
+                    trailing: token.revokedAt != null
+                        ? Chip(label: Text(context.tr('Revoked', '已撤销')))
+                        : token.isExpired
+                        ? Chip(label: Text(context.tr('Expired', '已过期')))
+                        : TextButton(
                             onPressed: () => ref
                                 .read(apiTokensProvider.notifier)
                                 .revoke(token.id),
                             child: Text(context.tr('Revoke', '撤销')),
-                          )
-                        : Chip(label: Text(context.tr('Revoked', '已撤销'))),
+                          ),
                   ),
                 ),
               )
@@ -92,7 +94,7 @@ class TokenSettingsPage extends ConsumerWidget {
     try {
       final created = await ref
           .read(apiTokensProvider.notifier)
-          .create(input.name, input.scopes);
+          .create(input.name, input.scopes, expiresAt: input.expiresAt);
       if (!context.mounted) return;
       await showDialog<void>(
         context: context,
@@ -140,9 +142,10 @@ class TokenSettingsPage extends ConsumerWidget {
 }
 
 class _TokenInput {
-  const _TokenInput(this.name, this.scopes);
+  const _TokenInput(this.name, this.scopes, this.expiresAt);
   final String name;
   final List<String> scopes;
+  final DateTime? expiresAt;
 }
 
 class _CreateTokenDialog extends StatefulWidget {
@@ -156,6 +159,7 @@ class _CreateTokenDialogState extends State<_CreateTokenDialog> {
   final _name = TextEditingController();
   bool _read = true;
   bool _write = false;
+  DateTime? _expiresAt;
 
   @override
   void dispose() {
@@ -185,6 +189,31 @@ class _CreateTokenDialogState extends State<_CreateTokenDialog> {
           onChanged: (value) => setState(() => _write = value ?? false),
           title: Text(context.tr('Sites: write', '站点：写入')),
         ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(context.tr('Expiration', '到期时间')),
+          subtitle: Text(
+            _expiresAt == null
+                ? context.tr('Never expires', '永不过期')
+                : _dateLabel(_expiresAt!),
+          ),
+          trailing: Wrap(
+            spacing: 0,
+            children: [
+              if (_expiresAt != null)
+                IconButton(
+                  tooltip: context.tr('Clear expiration', '清除到期时间'),
+                  onPressed: () => setState(() => _expiresAt = null),
+                  icon: const Icon(Icons.clear),
+                ),
+              IconButton(
+                tooltip: context.tr('Choose expiration', '选择到期时间'),
+                onPressed: _chooseExpiration,
+                icon: const Icon(Icons.calendar_month_outlined),
+              ),
+            ],
+          ),
+        ),
       ],
     ),
     actions: [
@@ -200,11 +229,38 @@ class _CreateTokenDialogState extends State<_CreateTokenDialog> {
             _TokenInput(_name.text.trim(), [
               if (_read) 'sites:read',
               if (_write) 'sites:write',
-            ]),
+            ], _expiresAt),
           );
         },
         child: Text(context.tr('Create', '创建')),
       ),
     ],
   );
+
+  Future<void> _chooseExpiration() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _expiresAt ?? now.add(const Duration(days: 90)),
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 10, now.month, now.day),
+    );
+    if (selected != null && mounted) {
+      setState(() {
+        _expiresAt = DateTime(
+          selected.year,
+          selected.month,
+          selected.day,
+          23,
+          59,
+          59,
+        );
+      });
+    }
+  }
+
+  String _dateLabel(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
 }
