@@ -19,10 +19,12 @@ public class AuthService {
 
     private final JwtService jwt;
     private final WorkspaceInvitationService invitations;
+    private final AuthActivityRecorder activity;
 
-    public AuthService(JwtService jwt, WorkspaceInvitationService invitations) {
+    public AuthService(JwtService jwt, WorkspaceInvitationService invitations, AuthActivityRecorder activity) {
         this.jwt = jwt;
         this.invitations = invitations;
+        this.activity = activity;
     }
 
     @Transactional
@@ -82,30 +84,53 @@ public class AuthService {
     public Tokens login(String email, String password) {
         AppUser user =
                 AppUser.find("email", email.trim().toLowerCase(Locale.ROOT)).firstResult();
-        if (user == null || !BcryptUtil.matches(password, user.passwordHash))
+        if (user == null || !BcryptUtil.matches(password, user.passwordHash)) {
+            if (user != null) recordActivity(user.id, "LOGIN_FAILED");
             throw new ControlPlaneException(401, "INVALID_CREDENTIALS", "Invalid email or password");
-        if (user.status == UserStatus.DISABLED)
+        }
+        if (user.status == UserStatus.DISABLED) {
+            recordActivity(user.id, "LOGIN_FAILED");
             throw new ControlPlaneException(403, "USER_DISABLED", "User is disabled");
-        return issue(user, Instant.now());
+        }
+        Tokens tokens = issue(user, Instant.now());
+        recordActivity(user.id, "LOGIN_SUCCEEDED");
+        return tokens;
     }
 
     @Transactional
     public Tokens refresh(String refresh) {
         AuthSession old = AuthSession.find("refreshTokenHash", hash(refresh)).firstResult();
         Instant now = Instant.now();
-        if (old == null || old.revokedAt != null || old.expiresAt.isBefore(now))
+        if (old == null || old.revokedAt != null || old.expiresAt.isBefore(now)) {
+            if (old != null) recordActivity(old.user.id, "REFRESH_REJECTED");
             throw new ControlPlaneException(401, "INVALID_REFRESH_TOKEN", "Refresh token is invalid");
-        if (old.user.status == UserStatus.DISABLED)
+        }
+        if (old.user.status == UserStatus.DISABLED) {
+            recordActivity(old.user.id, "REFRESH_REJECTED");
             throw new ControlPlaneException(403, "USER_DISABLED", "User is disabled");
+        }
         old.revokedAt = now;
         old.lastUsedAt = now;
-        return issue(old.user, now);
+        Tokens tokens = issue(old.user, now);
+        recordActivity(old.user.id, "SESSION_REFRESHED");
+        return tokens;
     }
 
     @Transactional
     public void logout(String refresh) {
         AuthSession s = AuthSession.find("refreshTokenHash", hash(refresh)).firstResult();
-        if (s != null && s.revokedAt == null) s.revokedAt = Instant.now();
+        if (s != null && s.revokedAt == null) {
+            s.revokedAt = Instant.now();
+            recordActivity(s.user.id, "LOGOUT");
+        }
+    }
+
+    private void recordActivity(UUID userId, String eventType) {
+        try {
+            activity.record(userId, eventType);
+        } catch (RuntimeException error) {
+            // Authentication outcomes must not depend on audit storage availability.
+        }
     }
 
     private Tokens issue(AppUser user, Instant now) {

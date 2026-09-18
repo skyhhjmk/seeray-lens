@@ -99,6 +99,7 @@ public class WorkspaceReadAccessLogFilter implements ContainerResponseFilter {
                         + (methodPath == null ? "" : methodPath.value()))
                 .replaceAll("/{2,}", "/");
         if (!route.startsWith("/")) route = "/" + route;
+        if (route.length() > 1 && route.endsWith("/")) route = route.substring(0, route.length() - 1);
         return route.length() <= 512 ? route : null;
     }
 
@@ -140,6 +141,9 @@ public class WorkspaceReadAccessLogFilter implements ContainerResponseFilter {
     }
 
     private static boolean isAuditRoute(String route) {
-        return route.endsWith("/audit-log") || route.endsWith("/request-history") || route.endsWith("/api-read-log");
+        return route.endsWith("/audit-log")
+                || route.endsWith("/request-history")
+                || route.endsWith("/api-read-log")
+                || route.endsWith("/auth-activity");
     }
 }

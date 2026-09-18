@@ -48,6 +48,15 @@ void main() {
       api.lastPath,
       contains('/api/v1/workspaces/workspace-1/api-read-log'),
     );
+
+    await tester.tap(find.text('Authentication').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Authentication activity'), findsOneWidget);
+    expect(find.text('owner@example.test sign-in rejected'), findsOneWidget);
+    expect(
+      api.lastPath,
+      contains('/api/v1/workspaces/workspace-1/auth-activity'),
+    );
   });
 }
 
@@ -66,6 +75,20 @@ class _WorkspaceAuditApi extends SeeRayApi {
   }) async {
     lastPath = path;
     paths.add(path);
+    if (path.contains('/auth-activity')) {
+      return {
+        'entries': [
+          {
+            'id': 'auth-1',
+            'actorEmail': 'owner@example.test',
+            'eventType': 'LOGIN_FAILED',
+            'createdAt': '2026-09-19T08:40:00Z',
+          },
+        ],
+        'nextCursor': null,
+        'retentionDays': 30,
+      };
+    }
     if (path.contains('/api-read-log')) {
       return {
         'entries': [

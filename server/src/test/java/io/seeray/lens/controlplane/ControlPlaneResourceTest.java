@@ -5358,14 +5358,19 @@ class ControlPlaneResourceTest {
                 .get("/api/v1/sites/" + siteId + "/analytics/overview")
                 .then()
                 .statusCode(200);
-        String tokenId = given().header("Authorization", "Bearer " + owner.access())
+        var createdApiToken = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Automation\",\"scopes\":[\"sites:read\"]}")
                 .post("/api/v1/workspaces/" + workspaceId + "/api-tokens")
                 .then()
                 .statusCode(201)
-                .extract()
-                .path("token.id");
+                .extract();
+        String tokenId = createdApiToken.path("token.id");
+        String plainApiToken = createdApiToken.path("plainToken");
+        given().header("Authorization", "Bearer " + plainApiToken)
+                .get("/api/v1/workspaces/" + workspaceId + "/auth-activity")
+                .then()
+                .statusCode(403);
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{}")
@@ -5392,6 +5397,20 @@ class ControlPlaneResourceTest {
                 .post(members + "/" + promotedId + "/transfer-ownership")
                 .then()
                 .statusCode(200);
+
+        Tokens auditedSession = login(ownerEmail);
+        String rejectedPassword = "never-store-auth-secret";
+        given().contentType("application/json")
+                .body("{\"email\":\"" + ownerEmail + "\",\"password\":\"" + rejectedPassword + "\"}")
+                .post("/api/v1/auth/login")
+                .then()
+                .statusCode(401);
+        Tokens refreshedSession = refresh(auditedSession.refresh());
+        given().contentType("application/json")
+                .body("{\"refreshToken\":\"" + refreshedSession.refresh() + "\"}")
+                .post("/api/v1/auth/logout")
+                .then()
+                .statusCode(204);
 
         String endpoint = "/api/v1/workspaces/" + workspaceId + "/audit-log";
         String day = LocalDate.now(ZoneId.of("UTC")).toString();
@@ -5481,6 +5500,73 @@ class ControlPlaneResourceTest {
                 .get(readEndpoint)
                 .then()
                 .statusCode(404);
+        String authEndpoint = "/api/v1/workspaces/" + workspaceId + "/auth-activity";
+        var firstAuthPage = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 2)
+                .get(authEndpoint)
+                .then()
+                .statusCode(200)
+                .body("retentionDays", is(30))
+                .body("entries.size()", is(2))
+                .extract();
+        String authCursor = firstAuthPage.path("nextCursor");
+        assertNotNull(authCursor);
+        var authHistory = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 100)
+                .get(authEndpoint)
+                .then()
+                .statusCode(200)
+                .body(
+                        "entries.find { it.actorEmail == '" + ownerEmail + "' && it.eventType == 'LOGIN_SUCCEEDED' }",
+                        notNullValue())
+                .body(
+                        "entries.find { it.actorEmail == '" + ownerEmail + "' && it.eventType == 'LOGIN_FAILED' }",
+                        notNullValue())
+                .body(
+                        "entries.find { it.actorEmail == '" + ownerEmail + "' && it.eventType == 'SESSION_REFRESHED' }",
+                        notNullValue())
+                .body(
+                        "entries.find { it.actorEmail == '" + ownerEmail + "' && it.eventType == 'LOGOUT' }",
+                        notNullValue())
+                .extract()
+                .response();
+        assertFalse(authHistory.asString().contains(rejectedPassword));
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 2)
+                .queryParam("cursor", authCursor)
+                .get(authEndpoint)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", is(2));
+        given().header("Authorization", "Bearer " + viewer.access())
+                .get(authEndpoint)
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + admin.access())
+                .get(authEndpoint)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(authEndpoint)
+                .then()
+                .statusCode(404);
+        var readHistoryAfterAuthQuery = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("from", day)
+                .queryParam("to", day)
+                .queryParam("limit", 100)
+                .get(readEndpoint)
+                .then()
+                .statusCode(200)
+                .extract()
+                .response();
+        assertFalse(readHistoryAfterAuthQuery.asString().contains("auth-activity"));
+        assertFalse(readHistoryAfterAuthQuery.asString().contains(plainApiToken));
         given().header("Authorization", "Bearer " + owner.access())
                 .queryParam("from", day)
                 .queryParam("to", day)

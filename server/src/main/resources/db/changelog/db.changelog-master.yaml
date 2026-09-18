@@ -412,3 +412,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0059-workspace-api-read-history.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0060-workspace-auth-activity
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0060-workspace-auth-activity.sql
+            relativeToChangelogFile: false

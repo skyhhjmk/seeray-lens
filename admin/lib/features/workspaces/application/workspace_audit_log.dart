@@ -149,6 +149,92 @@ final workspaceApiReadLogProvider = Provider(
   (ref) => WorkspaceApiReadLogRepository(ref),
 );
 
+class WorkspaceAuthActivityEntry {
+  const WorkspaceAuthActivityEntry({
+    required this.id,
+    required this.actorEmail,
+    required this.eventType,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String? actorEmail;
+  final String eventType;
+  final DateTime createdAt;
+
+  factory WorkspaceAuthActivityEntry.fromJson(Map<String, dynamic> json) =>
+      WorkspaceAuthActivityEntry(
+        id: json['id'] as String,
+        actorEmail: json['actorEmail'] as String?,
+        eventType: json['eventType'] as String,
+        createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      );
+}
+
+class WorkspaceAuthActivityPage {
+  const WorkspaceAuthActivityPage(
+    this.entries,
+    this.nextCursor,
+    this.retentionDays,
+  );
+
+  final List<WorkspaceAuthActivityEntry> entries;
+  final String? nextCursor;
+  final int retentionDays;
+
+  factory WorkspaceAuthActivityPage.fromJson(Map<String, dynamic> json) =>
+      WorkspaceAuthActivityPage(
+        ((json['entries'] as List?) ?? const [])
+            .whereType<Map>()
+            .map(
+              (entry) => WorkspaceAuthActivityEntry.fromJson(
+                Map<String, dynamic>.from(entry),
+              ),
+            )
+            .toList(growable: false),
+        json['nextCursor'] as String?,
+        (json['retentionDays'] as num?)?.toInt() ?? 30,
+      );
+}
+
+final workspaceAuthActivityProvider = Provider(
+  (ref) => WorkspaceAuthActivityRepository(ref),
+);
+
+class WorkspaceAuthActivityRepository {
+  WorkspaceAuthActivityRepository(this.ref);
+  final Ref ref;
+
+  Future<WorkspaceAuthActivityPage> load({
+    required String workspaceId,
+    required DateTime from,
+    required DateTime to,
+    String? cursor,
+  }) async {
+    final path = Uri(
+      path: '/api/v1/workspaces/$workspaceId/auth-activity',
+      queryParameters: {
+        'from': _date(from),
+        'to': _date(to),
+        'limit': '25',
+        'cursor': ?cursor,
+      },
+    ).toString();
+    final result = await ref.read(apiProvider).request('GET', path);
+    if (result is! Map) {
+      throw const FormatException('Invalid authentication activity response');
+    }
+    return WorkspaceAuthActivityPage.fromJson(
+      Map<String, dynamic>.from(result),
+    );
+  }
+
+  String _date(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+}
+
 class WorkspaceApiReadLogRepository {
   WorkspaceApiReadLogRepository(this.ref);
   final Ref ref;
