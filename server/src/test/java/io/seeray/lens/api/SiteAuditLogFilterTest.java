@@ -125,4 +125,13 @@ class SiteAuditLogFilterTest {
         assertEquals("search-console", update.resource());
         assertNull(SiteAuditLogFilter.classify("POST", "/api/v1/sites/" + siteId + "/search-console/validate"));
     }
+
+    @Test
+    void auditsBingWebmasterCredentialChangesButNotConnectionChecks() {
+        var update = SiteAuditLogFilter.classify("PUT", "/api/v1/sites/" + siteId + "/bing-webmaster/property");
+        assertNotNull(update);
+        assertEquals("UPDATE", update.action());
+        assertEquals("bing-webmaster", update.resource());
+        assertNull(SiteAuditLogFilter.classify("POST", "/api/v1/sites/" + siteId + "/bing-webmaster/validate"));
+    }
 }

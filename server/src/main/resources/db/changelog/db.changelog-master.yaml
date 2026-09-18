@@ -419,3 +419,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0060-workspace-auth-activity.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0061-bing-webmaster-property
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0061-bing-webmaster-property.sql
+            relativeToChangelogFile: false

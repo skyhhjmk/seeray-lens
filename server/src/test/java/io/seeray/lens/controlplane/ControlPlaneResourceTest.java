@@ -10,6 +10,7 @@ import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.seeray.lens.application.AnalyticsAggregationService;
 import io.seeray.lens.application.AnalyticsFactBuilder;
+import io.seeray.lens.application.BingWebmasterGateway;
 import io.seeray.lens.application.GoogleAdsDataManagerGateway;
 import io.seeray.lens.application.HeatmapAggregationService;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
@@ -5927,6 +5928,115 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("entries.find { it.resource == 'search-console' }.action", is("UPDATE"));
+    }
+
+    @Test
+    void configuresAndReportsBingWebmasterWithoutExposingItsApiKey() throws Exception {
+        String secret = "private-bing-key-" + System.nanoTime();
+        String siteUrl = "https://www.example.com/";
+        LocalDate day = LocalDate.now(ZoneId.of("UTC")).minusDays(3);
+        AtomicReference<String> receivedKey = new AtomicReference<>();
+        QuarkusMock.installMockForType(
+                new BingWebmasterGateway() {
+                    @Override
+                    public List<PropertyAccess> accessibleProperties(String apiKey) {
+                        receivedKey.set(apiKey);
+                        return List.of(new PropertyAccess(siteUrl, true));
+                    }
+
+                    @Override
+                    public List<TrafficStat> dailyTraffic(String apiKey, String url) {
+                        receivedKey.set(apiKey);
+                        assertEquals(siteUrl, url);
+                        return List.of(new TrafficStat(day, 10, 100), new TrafficStat(day.minusDays(1), 5, 60));
+                    }
+
+                    @Override
+                    public List<BreakdownStat> queryStats(String apiKey, String url) {
+                        receivedKey.set(apiKey);
+                        return List.of(
+                                new BreakdownStat(day, "privacy analytics", 6, 60, 2.0),
+                                new BreakdownStat(day, "privacy analytics", 2, 20, 4.0),
+                                new BreakdownStat(day, "web analytics", 2, 20, 5.0));
+                    }
+
+                    @Override
+                    public List<BreakdownStat> pageStats(String apiKey, String url) {
+                        receivedKey.set(apiKey);
+                        return List.of(new BreakdownStat(day, siteUrl, 10, 100, 3.0));
+                    }
+                },
+                BingWebmasterGateway.class);
+
+        Tokens owner = register("bing-webmaster" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Bing Webmaster site");
+        String endpoint = "/api/v1/sites/" + siteId + "/bing-webmaster";
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/property")
+                .then()
+                .statusCode(200)
+                .body("configured", is(false))
+                .body("credentialConfigured", is(false));
+
+        String propertyResponse = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(Map.of("siteUrl", siteUrl, "apiKey", secret))
+                .put(endpoint + "/property")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("credentialConfigured", is(true))
+                .extract()
+                .asString();
+        assertFalse(propertyResponse.contains(secret));
+        assertFalse(propertyResponse.contains("apiKey"));
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select api_key_ciphertext from bing_webmaster_property where site_id=?")) {
+            statement.setObject(1, UUID.fromString(siteId));
+            try (var rows = statement.executeQuery()) {
+                assertTrue(rows.next());
+                assertFalse(new String(rows.getBytes(1), StandardCharsets.UTF_8).contains(secret));
+            }
+        }
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .post(endpoint + "/validate")
+                .then()
+                .statusCode(200)
+                .body("accessible", is(true))
+                .body("verified", is(true));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/report?from=" + day + "&to=" + day + "&dimension=query")
+                .then()
+                .statusCode(200)
+                .body("siteUrl", is(siteUrl))
+                .body("dimension", is("query"))
+                .body("clicks", is(10.0f))
+                .body("impressions", is(100.0f))
+                .body("ctr", is(0.1f))
+                .body("rows.size()", is(2))
+                .body("rows[0].key", is("privacy analytics"))
+                .body("rows[0].averagePosition", is(2.5f))
+                .body("mayBeTruncated", is(true))
+                .body("dataLimitNote", containsString("updated weekly"));
+        assertEquals(secret, receivedKey.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(Map.of("siteUrl", "https://example.com/?leak=no", "apiKey", secret))
+                .put(endpoint + "/property")
+                .then()
+                .statusCode(400);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/audit-log?from=" + day + "&to=" + LocalDate.now(ZoneId.of("UTC")))
+                .then()
+                .statusCode(200)
+                .body("entries.find { it.resource == 'bing-webmaster' }.action", is("UPDATE"));
     }
 
     private static Tokens register(String email) {
