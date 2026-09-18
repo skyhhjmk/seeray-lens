@@ -143,4 +143,13 @@ class SiteAuditLogFilterTest {
         assertEquals("yandex-webmaster", update.resource());
         assertNull(SiteAuditLogFilter.classify("POST", "/api/v1/sites/" + siteId + "/yandex-webmaster/validate"));
     }
+
+    @Test
+    void auditsMicrosoftAdsConversionSends() {
+        var send = SiteAuditLogFilter.classify(
+                "POST", "/api/v1/sites/" + siteId + "/offline-conversions/microsoft-ads/send");
+        assertNotNull(send);
+        assertEquals("SEND_TO_MICROSOFT_ADS", send.action());
+        assertEquals("offline-conversions", send.resource());
+    }
 }

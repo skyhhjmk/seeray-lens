@@ -13,6 +13,7 @@ import io.seeray.lens.application.AnalyticsFactBuilder;
 import io.seeray.lens.application.BingWebmasterGateway;
 import io.seeray.lens.application.GoogleAdsDataManagerGateway;
 import io.seeray.lens.application.HeatmapAggregationService;
+import io.seeray.lens.application.MicrosoftAdsCapiGateway;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
 import io.seeray.lens.application.SearchConsoleGateway;
 import io.seeray.lens.application.YandexWebmasterGateway;
@@ -2204,6 +2205,120 @@ class ControlPlaneResourceTest {
                 assertTrue(result.next());
                 assertNotEquals(rawClickId, result.getString(1));
                 assertEquals("SEND_TO_GOOGLE_ADS", result.getString(2));
+            }
+        }
+    }
+
+    @Test
+    void sendsConsentedRecentOfflineConversionsToMicrosoftAdsWithoutExposingTheUetToken() throws Exception {
+        Tokens owner = register("microsoft-ads-capi" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Microsoft Ads CAPI site");
+        String goalId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Qualified lead\",\"triggerType\":\"page_view\","
+                        + "\"pathPattern\":\"/qualified\",\"pathMatchMode\":\"exact\",\"fixedValue\":25}")
+                .post("/api/v1/sites/" + siteId + "/goals")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        String microsoftAdsEndpoint = "/api/v1/sites/" + siteId + "/offline-conversions/microsoft-ads";
+        String rawClickId = "a0b1c2d3-e4f5-4678-9012-3456789abcde";
+        String convertedAt = Instant.now().minusSeconds(3_600).toString();
+        String row = "{\"conversionId\":\"crm-ms-lead-0081\",\"platform\":\"microsoft_ads\"," + "\"clickId\":\""
+                + rawClickId + "\",\"convertedAt\":\"" + convertedAt + "\"}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"rows\":[" + row + "]}")
+                .post("/api/v1/sites/" + siteId + "/offline-conversions/imports")
+                .then()
+                .statusCode(200)
+                .body("rowsImported", is(1));
+
+        AtomicReference<Map<String, Object>> outboundPayload = new AtomicReference<>();
+        AtomicReference<String> outboundToken = new AtomicReference<>();
+        QuarkusMock.installMockForType(
+                (MicrosoftAdsCapiGateway) (tagId, token, payload) -> {
+                    assertEquals("7654321", tagId);
+                    outboundToken.set(token);
+                    outboundPayload.set(payload);
+                    return new MicrosoftAdsCapiGateway.Result(1, List.of());
+                },
+                MicrosoftAdsCapiGateway.class);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"tagId\":\"7654321\",\"currencyCode\":\"USD\",\"apiToken\":\"uet-secret-value\"}")
+                .put(microsoftAdsEndpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("credentialConfigured", is(true))
+                .body("apiToken", nullValue());
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(microsoftAdsEndpoint + "/config")
+                .then()
+                .statusCode(200)
+                .body("apiToken", nullValue());
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select api_token_ciphertext from analytics_microsoft_ads_capi_config where site_id=?")) {
+            statement.setObject(1, UUID.fromString(siteId));
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertFalse(new String(result.getBytes(1), StandardCharsets.UTF_8).contains("uet-secret-value"));
+            }
+        }
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"eventName\":\"qualified_lead\"}")
+                .put(microsoftAdsEndpoint + "/config/goals/" + goalId)
+                .then()
+                .statusCode(200)
+                .body("goalMappings.size()", is(1))
+                .body("goalMappings[0].eventName", is("qualified_lead"));
+
+        String rows = "\"rows\":[" + row + "]";
+        String sendWithoutConsent = "{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":false," + rows + "}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(sendWithoutConsent)
+                .post(microsoftAdsEndpoint + "/send")
+                .then()
+                .statusCode(400)
+                .body("code", is("MICROSOFT_ADS_CONSENT_CONFIRMATION_REQUIRED"));
+        assertNull(outboundPayload.get());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"goalId\":\"" + goalId + "\",\"consentConfirmed\":true," + rows + "}")
+                .post(microsoftAdsEndpoint + "/send")
+                .then()
+                .log()
+                .ifValidationFails()
+                .statusCode(200)
+                .body("rowsProcessed", is(1))
+                .body("eventsReceived", is(1))
+                .body("validationWarnings.size()", is(0));
+        assertEquals("uet-secret-value", outboundToken.get());
+        Map<?, ?> event = (Map<?, ?>) ((List<?>) outboundPayload.get().get("data")).getFirst();
+        assertEquals("custom", event.get("eventType"));
+        assertEquals("qualified_lead", event.get("eventName"));
+        assertEquals("G", event.get("adStorageConsent"));
+        assertEquals(rawClickId, ((Map<?, ?>) event.get("userData")).get("msclkid"));
+        assertEquals(25.0, ((Number) ((Map<?, ?>) event.get("customData")).get("value")).doubleValue());
+        assertEquals("USD", ((Map<?, ?>) event.get("customData")).get("currency"));
+        assertNotEquals("crm-ms-lead-0081", event.get("eventId"));
+
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select action from site_audit_log where site_id=? and action='SEND_TO_MICROSOFT_ADS'")) {
+            statement.setObject(1, UUID.fromString(siteId));
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals("SEND_TO_MICROSOFT_ADS", result.getString(1));
             }
         }
     }

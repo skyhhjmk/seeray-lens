@@ -118,6 +118,8 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
         if ("send-now".equals(last)) return "SEND_NOW";
         if ("send".equals(last) && path.length > firstChild && "google-ads".equals(path[firstChild]))
             return "SEND_TO_GOOGLE_ADS";
+        if ("send".equals(last) && path.length > firstChild && "microsoft-ads".equals(path[firstChild]))
+            return "SEND_TO_MICROSOFT_ADS";
         if ("publish".equals(last)) return "PUBLISH";
         if ("duplicate".equals(last)) return "DUPLICATE";
         if ("approve".equals(last)) return "APPROVE_PRODUCTION";

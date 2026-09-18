@@ -433,3 +433,17 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0062-yandex-webmaster-property.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0063-microsoft-ads-capi-config
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0063-microsoft-ads-capi-config.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0064-microsoft-ads-export-audit-action
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0064-microsoft-ads-export-audit-action.sql
+            relativeToChangelogFile: false

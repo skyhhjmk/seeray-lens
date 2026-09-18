@@ -10,9 +10,11 @@ import jakarta.transaction.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.*;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.Currency;
 import javax.sql.DataSource;
@@ -34,6 +36,8 @@ public class OfflineConversionService {
     private final WorkspaceAccess access;
     private final SegmentService segments;
     private final GoogleAdsDataManagerGateway googleAds;
+    private final MicrosoftAdsCapiGateway microsoftAds;
+    private final SecretEncryptionService encryption;
 
     @Inject
     public OfflineConversionService(
@@ -41,12 +45,16 @@ public class OfflineConversionService {
             SiteService sites,
             WorkspaceAccess access,
             SegmentService segments,
-            GoogleAdsDataManagerGateway googleAds) {
+            GoogleAdsDataManagerGateway googleAds,
+            MicrosoftAdsCapiGateway microsoftAds,
+            SecretEncryptionService encryption) {
         this.dataSource = dataSource;
         this.sites = sites;
         this.access = access;
         this.segments = segments;
         this.googleAds = googleAds;
+        this.microsoftAds = microsoftAds;
+        this.encryption = encryption;
     }
 
     public GoogleAdsConfigView googleAdsConfig(UUID siteId) {
@@ -137,7 +145,7 @@ public class OfflineConversionService {
                     siteId, "offline-conversion:" + row.conversionId().trim());
             rawRows.put(key, row);
         }
-        ensureRowsMatchImportedConversions(siteId, input.goalId(), normalized);
+        ensureRowsMatchImportedConversions(siteId, input.goalId(), normalized, "google_ads");
 
         List<Map<String, Object>> events = new ArrayList<>(normalized.size());
         for (NormalizedRow row : normalized) {
@@ -171,6 +179,261 @@ public class OfflineConversionService {
         return new GoogleAdsTransferResult(validateOnly, events.size(), result.requestId(), result.fieldWarnings());
     }
 
+    public MicrosoftAdsConfigView microsoftAdsConfig(UUID siteId) {
+        Site site = readableSite(siteId);
+        var member = access.member(site.organization.id);
+        boolean canManage = member.role == WorkspaceRole.OWNER || member.role == WorkspaceRole.ADMIN;
+        String tagId = null;
+        String currencyCode = null;
+        boolean configured = false;
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select tag_id,currency_code from analytics_microsoft_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (row.next()) {
+                    tagId = row.getString(1);
+                    currencyCode = row.getString(2);
+                    configured = true;
+                }
+            }
+            List<MicrosoftAdsGoalMappingView> mappings = new ArrayList<>();
+            try (PreparedStatement mappingStatement = connection.prepareStatement(
+                    "select m.goal_id,g.name,m.event_name from analytics_microsoft_ads_goal_mapping m "
+                            + "join goal_definition g on g.id=m.goal_id and g.site_id=m.site_id "
+                            + "where m.site_id=? and g.enabled order by g.name,m.goal_id")) {
+                mappingStatement.setObject(1, siteId);
+                try (ResultSet rows = mappingStatement.executeQuery()) {
+                    while (rows.next()) {
+                        mappings.add(new MicrosoftAdsGoalMappingView(
+                                rows.getObject(1, UUID.class), rows.getString(2), rows.getString(3)));
+                    }
+                }
+            }
+            return new MicrosoftAdsConfigView(
+                    canManage, configured, configured, tagId, currencyCode, List.copyOf(mappings));
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read Microsoft Ads CAPI configuration", error);
+        }
+    }
+
+    @Transactional
+    public MicrosoftAdsConfigView saveMicrosoftAdsConfig(UUID siteId, MicrosoftAdsConfigInput input) {
+        writableSite(siteId);
+        if (input == null) throw invalid("Enter a Microsoft Ads UET tag ID and currency.");
+        String tagId = input.tagId() == null ? "" : input.tagId().strip();
+        if (!tagId.matches("[0-9]{1,32}")) throw invalid("Microsoft Ads UET tag ID must contain 1 to 32 digits.");
+        String currencyCode =
+                input.currencyCode() == null ? "" : input.currencyCode().strip().toUpperCase(Locale.ROOT);
+        try {
+            Currency.getInstance(currencyCode);
+        } catch (IllegalArgumentException error) {
+            throw invalid("Choose a valid three-letter ISO currency code.");
+        }
+        ExistingMicrosoftAdsConfig existing = existingMicrosoftAdsConfig(siteId);
+        byte[] encryptedToken;
+        if (input.apiToken() == null || input.apiToken().isBlank()) {
+            if (existing == null) {
+                throw new ControlPlaneException(
+                        400,
+                        "MICROSOFT_ADS_TOKEN_REQUIRED",
+                        "Enter the Conversions API token for the first connection.");
+            }
+            encryptedToken = existing.tokenCiphertext();
+        } else {
+            String token = input.apiToken().strip();
+            if (token.length() > 8_192) throw invalid("The Microsoft Ads Conversions API token is too long.");
+            encryptedToken = encryption.encrypt(token);
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_microsoft_ads_capi_config(site_id,tag_id,currency_code,api_token_ciphertext,updated_by,updated_at) "
+                                + "values(?,?,?,?,?,now()) on conflict(site_id) do update set tag_id=excluded.tag_id,"
+                                + "currency_code=excluded.currency_code,api_token_ciphertext=excluded.api_token_ciphertext,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, tagId);
+            statement.setString(3, currencyCode);
+            statement.setBytes(4, encryptedToken);
+            statement.setObject(5, access.userId());
+            statement.executeUpdate();
+            return microsoftAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save Microsoft Ads CAPI configuration", error);
+        }
+    }
+
+    @Transactional
+    public MicrosoftAdsConfigView mapMicrosoftAdsGoal(UUID siteId, UUID goalId, String eventNameValue) {
+        writableSite(siteId);
+        goal(siteId, goalId, true);
+        String eventName = eventNameValue == null ? "" : eventNameValue.strip();
+        if (eventName.isBlank() || eventName.length() > 128 || eventName.chars().anyMatch(Character::isISOControl)) {
+            throw invalid("Microsoft Ads event name is required and must be at most 128 characters.");
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "insert into analytics_microsoft_ads_goal_mapping(site_id,goal_id,event_name,updated_by,updated_at) "
+                                + "values(?,?,?,?,now()) on conflict(site_id,goal_id) do update set event_name=excluded.event_name,"
+                                + "updated_by=excluded.updated_by,updated_at=now()")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.setString(3, eventName);
+            statement.setObject(4, access.userId());
+            statement.executeUpdate();
+            return microsoftAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not save Microsoft Ads goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public MicrosoftAdsConfigView removeMicrosoftAdsGoalMapping(UUID siteId, UUID goalId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "delete from analytics_microsoft_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            statement.executeUpdate();
+            return microsoftAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove Microsoft Ads goal mapping", error);
+        }
+    }
+
+    @Transactional
+    public MicrosoftAdsConfigView removeMicrosoftAdsConfig(UUID siteId) {
+        writableSite(siteId);
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "delete from analytics_microsoft_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            statement.executeUpdate();
+            return microsoftAdsConfig(siteId);
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not remove Microsoft Ads CAPI configuration", error);
+        }
+    }
+
+    public MicrosoftAdsTransferResult transferToMicrosoftAds(UUID siteId, MicrosoftAdsTransferInput input) {
+        writableSite(siteId);
+        if (input == null
+                || input.goalId() == null
+                || input.rows() == null
+                || input.rows().isEmpty()
+                || input.rows().size() > 1_000) {
+            throw invalid("Choose 1 to 1,000 Microsoft Ads conversion rows per send.");
+        }
+        if (!input.consentConfirmed()) {
+            throw new ControlPlaneException(
+                    400,
+                    "MICROSOFT_ADS_CONSENT_CONFIRMATION_REQUIRED",
+                    "Confirm that ad-storage and conversion-measurement consent was granted for every exported row.");
+        }
+        MicrosoftAdsDestination destination = microsoftAdsDestination(siteId);
+        Goal goal = goal(siteId, input.goalId(), true);
+        String eventName = microsoftAdsEventName(siteId, input.goalId());
+        List<NormalizedRow> normalized = normalizeRows(siteId, input.rows());
+        ensureRowsMatchImportedConversions(siteId, input.goalId(), normalized, "microsoft_ads");
+        Instant now = Instant.now();
+        Map<String, RowInput> rawRows = new HashMap<>();
+        for (RowInput row : input.rows()) {
+            String key = TrackingIdentityHasher.hash(
+                    siteId, "offline-conversion:" + row.conversionId().trim());
+            rawRows.put(key, row);
+        }
+        List<Map<String, Object>> events = new ArrayList<>(normalized.size());
+        for (NormalizedRow row : normalized) {
+            RowInput raw = rawRows.get(row.conversionKeyHash());
+            if (!"microsoft_ads".equals(row.platform())) {
+                throw invalid("Every row must use platform microsoft_ads.");
+            }
+            String clickId = field(raw.clickId(), 2_048, "MSCLKID", 0);
+            if (!clickId.matches("(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) {
+                throw invalid("Every Microsoft Ads click ID must be a valid MSCLKID UUID.");
+            }
+            if (row.convertedAt().isBefore(now.minus(Duration.ofDays(7)))
+                    || row.convertedAt().isAfter(now.plus(Duration.ofMinutes(5)))) {
+                throw invalid("Microsoft Ads accepts conversion event times only within the last 7 days.");
+            }
+            Map<String, Object> customData = new LinkedHashMap<>();
+            customData.put("value", goal.fixedValue().doubleValue());
+            customData.put("currency", destination.currencyCode());
+            customData.put(
+                    "transactionId",
+                    TrackingIdentityHasher.hash(
+                            siteId,
+                            "microsoft-ads-transaction:" + raw.conversionId().trim()));
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("eventType", "custom");
+            event.put(
+                    "eventId",
+                    TrackingIdentityHasher.hash(
+                            siteId, "microsoft-ads-event:" + raw.conversionId().trim()));
+            event.put("eventName", eventName);
+            event.put("eventTime", row.convertedAt().getEpochSecond());
+            event.put("adStorageConsent", "G");
+            event.put("userData", Map.of("msclkid", clickId));
+            event.put("customData", customData);
+            events.add(event);
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("data", events);
+        payload.put("continueOnValidationError", false);
+        payload.put("dataProvider", "SeeRay Lens");
+        MicrosoftAdsCapiGateway.Result result =
+                microsoftAds.send(destination.tagId(), encryption.decrypt(destination.tokenCiphertext()), payload);
+        return new MicrosoftAdsTransferResult(events.size(), result.eventsReceived(), result.validationWarnings());
+    }
+
+    private ExistingMicrosoftAdsConfig existingMicrosoftAdsConfig(UUID siteId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select tag_id,currency_code,api_token_ciphertext from analytics_microsoft_ads_capi_config where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return null;
+                return new ExistingMicrosoftAdsConfig(row.getString(1), row.getString(2), row.getBytes(3));
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not read Microsoft Ads CAPI credentials", error);
+        }
+    }
+
+    private MicrosoftAdsDestination microsoftAdsDestination(UUID siteId) {
+        ExistingMicrosoftAdsConfig config = existingMicrosoftAdsConfig(siteId);
+        if (config == null) {
+            throw new ControlPlaneException(
+                    409,
+                    "MICROSOFT_ADS_CONFIG_REQUIRED",
+                    "Save the Microsoft Ads UET tag and Conversions API token first.");
+        }
+        return new MicrosoftAdsDestination(config.tagId(), config.currencyCode(), config.tokenCiphertext());
+    }
+
+    private String microsoftAdsEventName(UUID siteId, UUID goalId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select event_name from analytics_microsoft_ads_goal_mapping where site_id=? and goal_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, goalId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) {
+                    throw new ControlPlaneException(
+                            409,
+                            "MICROSOFT_ADS_GOAL_MAPPING_REQUIRED",
+                            "Map this SeeRay goal to a Microsoft Ads custom event before sending conversions.");
+                }
+                return row.getString(1);
+            }
+        } catch (ControlPlaneException error) {
+            throw error;
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not load Microsoft Ads goal mapping", error);
+        }
+    }
+
     private GoogleAdsDestination googleAdsDestination(UUID siteId) {
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(
@@ -190,7 +453,8 @@ public class OfflineConversionService {
         }
     }
 
-    private void ensureRowsMatchImportedConversions(UUID siteId, UUID goalId, List<NormalizedRow> rows) {
+    private void ensureRowsMatchImportedConversions(
+            UUID siteId, UUID goalId, List<NormalizedRow> rows, String expectedPlatform) {
         String placeholders = String.join(",", Collections.nCopies(rows.size(), "?"));
         String sql = "select conversion_key_hash,ad_click_platform,ad_click_id_hash,converted_at "
                 + "from analytics_offline_conversion where site_id=? and goal_id=? and conversion_key_hash in ("
@@ -212,18 +476,19 @@ public class OfflineConversionService {
                                     result.getTimestamp(4).toInstant()));
             }
         } catch (SQLException error) {
-            throw new IllegalStateException("Could not verify imported Google Ads conversions", error);
+            throw new IllegalStateException("Could not verify imported ad-platform conversions", error);
         }
         for (NormalizedRow row : rows) {
             StoredConversion existing = stored.get(row.conversionKeyHash());
             if (existing == null
-                    || !"google_ads".equals(existing.platform())
+                    || !expectedPlatform.equals(existing.platform())
                     || !existing.clickIdHash().equals(row.clickIdHash())
                     || !existing.convertedAt().equals(row.convertedAt()))
                 throw new ControlPlaneException(
                         409,
-                        "GOOGLE_ADS_EXPORT_ROW_NOT_IMPORTED",
-                        "Every exported row must exactly match a Google Ads conversion already imported for this site and goal.");
+                        expectedPlatform.toUpperCase(Locale.ROOT) + "_EXPORT_ROW_NOT_IMPORTED",
+                        "Every exported row must exactly match an already imported " + expectedPlatform
+                                + " conversion for this site and goal.");
         }
     }
 
@@ -469,7 +734,8 @@ public class OfflineConversionService {
             String timestampText = field(row.convertedAt(), 64, "converted_at", rowNumber);
             Instant convertedAt;
             try {
-                convertedAt = OffsetDateTime.parse(timestampText).toInstant();
+                // PostgreSQL TIMESTAMPTZ stores microseconds, so normalize before hashing/comparing imports.
+                convertedAt = OffsetDateTime.parse(timestampText).toInstant().truncatedTo(ChronoUnit.MICROS);
             } catch (DateTimeParseException error) {
                 throw invalid(
                         "Row " + rowNumber + ": converted_at must be an ISO-8601 date-time with a timezone offset.");
@@ -571,6 +837,23 @@ public class OfflineConversionService {
     public record GoogleAdsTransferResult(
             boolean validatedOnly, int rowsProcessed, String requestId, List<Map<String, Object>> fieldWarnings) {}
 
+    public record MicrosoftAdsConfigInput(String tagId, String currencyCode, String apiToken) {}
+
+    public record MicrosoftAdsConfigView(
+            boolean canManage,
+            boolean configured,
+            boolean credentialConfigured,
+            String tagId,
+            String currencyCode,
+            List<MicrosoftAdsGoalMappingView> goalMappings) {}
+
+    public record MicrosoftAdsGoalMappingView(UUID goalId, String goalName, String eventName) {}
+
+    public record MicrosoftAdsTransferInput(UUID goalId, boolean consentConfirmed, List<RowInput> rows) {}
+
+    public record MicrosoftAdsTransferResult(
+            int rowsProcessed, int eventsReceived, List<Map<String, Object>> validationWarnings) {}
+
     public record RowInput(String conversionId, String platform, String clickId, String convertedAt) {}
 
     public record ImportBatch(UUID id, UUID goalId, String goalName, int rowCount, Instant importedAt) {}
@@ -607,6 +890,10 @@ public class OfflineConversionService {
 
     private record GoogleAdsDestination(
             String customerId, String loginCustomerId, String conversionActionId, String currencyCode) {}
+
+    private record ExistingMicrosoftAdsConfig(String tagId, String currencyCode, byte[] tokenCiphertext) {}
+
+    private record MicrosoftAdsDestination(String tagId, String currencyCode, byte[] tokenCiphertext) {}
 
     private record StoredConversion(String platform, String clickIdHash, Instant convertedAt) {}
 
