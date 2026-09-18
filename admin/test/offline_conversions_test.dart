@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:seeray_lens_admin/core/network/seeray_api.dart';
+import 'package:seeray_lens_admin/features/analytics/application/analytics_attribution.dart';
 import 'package:seeray_lens_admin/features/analytics/application/offline_conversions.dart';
+import 'package:seeray_lens_admin/features/analytics/presentation/microsoft_ads_export_panel.dart';
 import 'package:seeray_lens_admin/features/analytics/presentation/offline_conversions_page.dart';
 import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 
@@ -67,6 +69,11 @@ void main() {
       expect(tester.takeException(), isNull);
 
       expect(find.text('Offline conversion attribution'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Matched click IDs'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('Matched click IDs'), findsOneWidget);
       expect(find.text('3.00'), findsOneWidget);
 
@@ -79,6 +86,23 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Save destination'), findsOneWidget);
       expect(find.text('Validate with Google'), findsNothing);
+
+      await tester.scrollUntilVisible(
+        find.text('Send conversions to Microsoft Ads'),
+        350,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Send conversions to Microsoft Ads'));
+      await tester.pumpAndSettle();
+      expect(find.text('UET tag ID'), findsOneWidget);
+      expect(find.text('UET Conversions API token'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Create or choose a UET tag in Microsoft Advertising',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
 
       await tester.scrollUntilVisible(
         find.text('Recent imports'),
@@ -102,10 +126,64 @@ void main() {
       );
     },
   );
+
+  testWidgets('renders saved UET goal mappings and saves the selected mapping', (
+    tester,
+  ) async {
+    final api = _OfflineConversionsApi(microsoftAdsConfigured: true);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: MaterialApp(
+          locale: Locale('en'),
+          supportedLocales: [Locale('en')],
+          home: Scaffold(
+            body: ListView(
+              children: [
+                MicrosoftAdsOfflineExportPanel(
+                  siteId: 'site-1',
+                  canManage: true,
+                  goals: [
+                    AttributionGoal(
+                      id: 'goal-1',
+                      name: 'Qualified lead',
+                      enabled: true,
+                      fixedValue: 25,
+                    ),
+                  ],
+                  selectedGoalId: 'goal-1',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send conversions to Microsoft Ads'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('7654321 · USD'), findsOneWidget);
+    expect(find.text('Qualified lead → lead_submitted'), findsOneWidget);
+    expect(find.text('Preview imported Microsoft Ads CSV'), findsOneWidget);
+    await tester.tap(find.text('Save mapping'));
+    await tester.pumpAndSettle();
+    expect(api.requests, hasLength(1));
+    expect(
+      api.requests.single['path'],
+      '/api/v1/sites/site-1/offline-conversions/microsoft-ads/config/goals/goal-1',
+    );
+    expect(api.requests.single['body'], {'eventName': 'lead_submitted'});
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _OfflineConversionsApi extends SeeRayApi {
-  _OfflineConversionsApi() : super(baseUrl: 'https://lens.example.test');
+  _OfflineConversionsApi({this.microsoftAdsConfigured = false})
+    : super(baseUrl: 'https://lens.example.test');
+
+  final bool microsoftAdsConfigured;
+  final requests = <Map<String, dynamic>>[];
 
   @override
   Future<dynamic> request(
@@ -115,8 +193,15 @@ class _OfflineConversionsApi extends SeeRayApi {
     bool retried = false,
   }) async {
     final uri = Uri.parse(path);
+    if (uri.path.contains('/offline-conversions/microsoft-ads/config/goals/')) {
+      requests.add({'method': method, 'path': path, 'body': body});
+      return _microsoftAdsConfig;
+    }
     if (uri.path.endsWith('/offline-conversions/google-ads/config')) {
       return {'canManage': true, 'configured': false};
+    }
+    if (uri.path.endsWith('/offline-conversions/microsoft-ads/config')) {
+      return _microsoftAdsConfig;
     }
     if (uri.path.endsWith('/goals')) {
       return [
@@ -172,4 +257,21 @@ class _OfflineConversionsApi extends SeeRayApi {
     }
     fail('Unexpected request: $method $path');
   }
+
+  Map<String, dynamic> get _microsoftAdsConfig => {
+    'canManage': true,
+    'configured': microsoftAdsConfigured,
+    'credentialConfigured': microsoftAdsConfigured,
+    'tagId': microsoftAdsConfigured ? '7654321' : null,
+    'currencyCode': microsoftAdsConfigured ? 'USD' : null,
+    'goalMappings': microsoftAdsConfigured
+        ? [
+            {
+              'goalId': 'goal-1',
+              'goalName': 'Qualified lead',
+              'eventName': 'lead_submitted',
+            },
+          ]
+        : const [],
+  };
 }

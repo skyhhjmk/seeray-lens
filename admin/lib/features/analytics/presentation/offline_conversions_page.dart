@@ -15,6 +15,7 @@ import '../application/analytics_range.dart';
 import '../application/analytics_segment.dart';
 import '../application/offline_conversions.dart';
 import '../application/analytics_export.dart';
+import 'microsoft_ads_export_panel.dart';
 
 class OfflineConversionsPage extends ConsumerStatefulWidget {
   const OfflineConversionsPage({
@@ -170,6 +171,13 @@ class _OfflineConversionsPageState
         _importPanel(context, data.history.canManage),
         const SizedBox(height: 12),
         GoogleAdsOfflineExportPanel(
+          siteId: widget.siteId,
+          canManage: data.history.canManage,
+          goals: goals,
+          selectedGoalId: selectedGoalId,
+        ),
+        const SizedBox(height: 12),
+        MicrosoftAdsOfflineExportPanel(
           siteId: widget.siteId,
           canManage: data.history.canManage,
           goals: goals,

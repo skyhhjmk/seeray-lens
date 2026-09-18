@@ -387,6 +387,101 @@ final googleAdsConversionConfigProvider =
       );
     });
 
+class MicrosoftAdsGoalMapping {
+  const MicrosoftAdsGoalMapping({
+    required this.goalId,
+    required this.goalName,
+    required this.eventName,
+  });
+
+  final String goalId;
+  final String goalName;
+  final String eventName;
+
+  factory MicrosoftAdsGoalMapping.fromJson(Map<String, dynamic> json) =>
+      MicrosoftAdsGoalMapping(
+        goalId: json['goalId'] as String? ?? '',
+        goalName: json['goalName'] as String? ?? 'Goal',
+        eventName: json['eventName'] as String? ?? '',
+      );
+}
+
+class MicrosoftAdsConversionConfig {
+  const MicrosoftAdsConversionConfig({
+    required this.canManage,
+    required this.configured,
+    required this.credentialConfigured,
+    required this.goalMappings,
+    this.tagId,
+    this.currencyCode,
+  });
+
+  final bool canManage;
+  final bool configured;
+  final bool credentialConfigured;
+  final String? tagId;
+  final String? currencyCode;
+  final List<MicrosoftAdsGoalMapping> goalMappings;
+
+  MicrosoftAdsGoalMapping? mappingFor(String? goalId) =>
+      goalMappings.where((mapping) => mapping.goalId == goalId).firstOrNull;
+
+  factory MicrosoftAdsConversionConfig.fromJson(Map<String, dynamic> json) =>
+      MicrosoftAdsConversionConfig(
+        canManage: json['canManage'] as bool? ?? false,
+        configured: json['configured'] as bool? ?? false,
+        credentialConfigured: json['credentialConfigured'] as bool? ?? false,
+        tagId: json['tagId'] as String?,
+        currencyCode: json['currencyCode'] as String?,
+        goalMappings: (json['goalMappings'] as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (mapping) => MicrosoftAdsGoalMapping.fromJson(
+                Map<String, dynamic>.from(mapping),
+              ),
+            )
+            .toList(growable: false),
+      );
+}
+
+class MicrosoftAdsTransferResult {
+  const MicrosoftAdsTransferResult({
+    required this.rowsProcessed,
+    required this.eventsReceived,
+    required this.validationWarnings,
+  });
+
+  final int rowsProcessed;
+  final int eventsReceived;
+  final List<Map<String, dynamic>> validationWarnings;
+
+  factory MicrosoftAdsTransferResult.fromJson(Map<String, dynamic> json) =>
+      MicrosoftAdsTransferResult(
+        rowsProcessed: (json['rowsProcessed'] as num?)?.toInt() ?? 0,
+        eventsReceived: (json['eventsReceived'] as num?)?.toInt() ?? 0,
+        validationWarnings: (json['validationWarnings'] as List? ?? const [])
+            .whereType<Map>()
+            .map(Map<String, dynamic>.from)
+            .toList(growable: false),
+      );
+}
+
+final microsoftAdsConversionConfigProvider =
+    FutureProvider.family<MicrosoftAdsConversionConfig, String>((
+      ref,
+      siteId,
+    ) async {
+      final response = await ref
+          .read(apiProvider)
+          .request(
+            'GET',
+            '/api/v1/sites/$siteId/offline-conversions/microsoft-ads/config',
+          );
+      return MicrosoftAdsConversionConfig.fromJson(
+        Map<String, dynamic>.from(response as Map),
+      );
+    });
+
 final offlineConversionAnalyticsProvider =
     FutureProvider.family<OfflineConversionData, OfflineConversionQuery>((
       ref,
