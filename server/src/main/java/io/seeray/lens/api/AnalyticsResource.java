@@ -9,6 +9,7 @@ import io.seeray.lens.application.CustomReportService;
 import io.seeray.lens.application.FormAnalyticsService;
 import io.seeray.lens.application.GeoLocationResolver;
 import io.seeray.lens.application.MediaAnalyticsService;
+import io.seeray.lens.application.OfflineConversionService;
 import io.seeray.lens.application.SegmentedAnalyticsQueryService;
 import io.seeray.lens.domain.common.ControlPlaneException;
 import jakarta.ws.rs.*;
@@ -27,6 +28,7 @@ public class AnalyticsResource {
     private final AttributionQueryService attribution;
     private final FormAnalyticsService forms;
     private final MediaAnalyticsService media;
+    private final OfflineConversionService offlineConversions;
     private final CrashAnalyticsService crashes;
 
     public AnalyticsResource(
@@ -38,6 +40,7 @@ public class AnalyticsResource {
             AttributionQueryService attribution,
             FormAnalyticsService forms,
             MediaAnalyticsService media,
+            OfflineConversionService offlineConversions,
             CrashAnalyticsService crashes) {
         this.analytics = analytics;
         this.segmented = segmented;
@@ -47,6 +50,7 @@ public class AnalyticsResource {
         this.attribution = attribution;
         this.forms = forms;
         this.media = media;
+        this.offlineConversions = offlineConversions;
         this.crashes = crashes;
     }
 
@@ -308,6 +312,19 @@ public class AnalyticsResource {
             @DefaultValue("last_touch") @QueryParam("model") String model,
             @DefaultValue("30") @QueryParam("lookbackDays") int lookbackDays) {
         return attribution.report(site, analytics.range(site, from, to), segmentId, goalId, model, lookbackDays);
+    }
+
+    @GET
+    @Path("/offline-conversions")
+    public OfflineConversionService.Report offlineConversions(
+            @PathParam("siteId") UUID site,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId,
+            @QueryParam("goalId") UUID goalId,
+            @DefaultValue("last_touch") @QueryParam("model") String model,
+            @DefaultValue("30") @QueryParam("lookbackDays") int lookbackDays) {
+        return offlineConversions.report(site, analytics.range(site, from, to), segmentId, goalId, model, lookbackDays);
     }
 
     @GET

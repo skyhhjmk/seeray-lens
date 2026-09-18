@@ -33,7 +33,8 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
             "heatmaps",
             "scheduled-reports",
             "analytics-alerts",
-            "annotations");
+            "annotations",
+            "offline-conversions");
 
     @Inject
     DataSource dataSource;
@@ -116,6 +117,7 @@ public class SiteAuditLogFilter implements ContainerResponseFilter {
         if ("reject".equals(last)) return "REJECT_PRODUCTION";
         if ("cancel".equals(last)) return "CANCEL_PRODUCTION";
         if ("production-requests".equals(last)) return "REQUEST_PRODUCTION";
+        if ("imports".equals(last) && "offline-conversions".equals(path[4])) return "IMPORT";
         return "CREATE";
     }
 

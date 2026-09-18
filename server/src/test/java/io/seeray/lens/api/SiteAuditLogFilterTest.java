@@ -104,4 +104,16 @@ class SiteAuditLogFilterTest {
                 SiteAuditLogFilter.classify("POST", root + "/" + request + "/cancel")
                         .action());
     }
+
+    @Test
+    void classifiesOfflineConversionImportsWithoutAuditingReportReads() {
+        String importPath = "/api/v1/sites/" + siteId + "/offline-conversions/imports";
+        var imported = SiteAuditLogFilter.classify("POST", importPath);
+        assertNotNull(imported);
+        assertEquals("IMPORT", imported.action());
+        assertEquals("offline-conversions", imported.resource());
+        assertNull(SiteAuditLogFilter.classify("GET", importPath));
+        assertNull(SiteAuditLogFilter.classify(
+                "POST", "/api/v1/sites/" + siteId + "/analytics/offline-conversions/imports"));
+    }
 }

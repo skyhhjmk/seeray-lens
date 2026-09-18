@@ -342,3 +342,17 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0049-tag-manager-approval-audit-actions.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0050-offline-conversion-imports
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0050-offline-conversion-imports.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0051-offline-conversion-audit-action
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0051-offline-conversion-audit-action.sql
+            relativeToChangelogFile: false

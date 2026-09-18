@@ -1717,6 +1717,95 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void importsOfflineConversionsIdempotentlyAndMatchesSiteScopedPaidClickIds() throws Exception {
+        Tokens owner = register("offline-conversions" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Offline conversion site");
+        String goalId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Qualified lead\",\"triggerType\":\"page_view\","
+                        + "\"pathPattern\":\"/qualified\",\"pathMatchMode\":\"exact\",\"fixedValue\":25}")
+                .post("/api/v1/sites/" + siteId + "/goals")
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        UUID siteUuid = UUID.fromString(siteId);
+        String day = LocalDate.now(ZoneId.of("UTC")).minusDays(1).toString();
+        Instant clickAt = LocalDate.parse(day).atTime(10, 0).toInstant(java.time.ZoneOffset.UTC);
+        insertAttributionPage(
+                siteUuid,
+                UUID.randomUUID().toString(),
+                "offline-click-session",
+                clickAt,
+                "/landing",
+                null,
+                "google",
+                "paid_search",
+                "spring-launch");
+        factBuilder.rebuild(siteUuid, clickAt.minusSeconds(1), clickAt.plusSeconds(1));
+        String rawClickId = "gclid-offline-secret-123";
+        String clickHash = io.seeray.lens.application.TrackingIdentityHasher.hash(siteUuid, "ad-click:" + rawClickId);
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update analytics_session set ad_click_platform='google_ads',ad_click_id_hash=? "
+                                + "where site_id=? and client_session_id='offline-click-session'")) {
+            statement.setString(1, clickHash);
+            statement.setObject(2, siteUuid);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        String endpoint = "/api/v1/sites/" + siteId + "/offline-conversions/imports";
+        String row = "{\"conversionId\":\"crm-lead-0081\",\"platform\":\"google_ads\"," + "\"clickId\":\"" + rawClickId
+                + "\",\"convertedAt\":\"" + clickAt.plusSeconds(3600) + "\"}";
+        String body = "{\"goalId\":\"" + goalId + "\",\"rows\":[" + row + "]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(body)
+                .post(endpoint)
+                .then()
+                .statusCode(200)
+                .body("rowsImported", is(1))
+                .body("alreadyImported", is(false));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(body)
+                .post(endpoint)
+                .then()
+                .statusCode(200)
+                .body("alreadyImported", is(true));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(body.replace(rawClickId, rawClickId + "-changed"))
+                .post(endpoint)
+                .then()
+                .statusCode(409);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/analytics/offline-conversions?from=" + day + "&to=" + day
+                        + "&goalId=" + goalId + "&model=last_touch")
+                .then()
+                .log()
+                .ifValidationFails()
+                .statusCode(200)
+                .body("totalImported", is(1))
+                .body("matchedConversions", is(1))
+                .body("unmatchedConversions", is(0))
+                .body("attributedConversions", is(1.0f))
+                .body("attributedValue", is(25.0f))
+                .body("rows.size()", is(1))
+                .body("rows[0].platform", is("google_ads"))
+                .body("rows[0].source", is("google"))
+                .body("rows[0].campaign", is("spring-launch"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/offline-conversions/imports")
+                .then()
+                .statusCode(200)
+                .body("imports.size()", is(1))
+                .body("imports[0].rowCount", is(1));
+    }
+
+    @Test
     void cohortReportCalculatesWeeklyRetentionAndLeavesImmatureWeeksBlank() throws Exception {
         Tokens owner = register("cohorts" + System.nanoTime() + "@example.test");
         String workspaceId = workspace(owner.access()).extract().path("[0].id");

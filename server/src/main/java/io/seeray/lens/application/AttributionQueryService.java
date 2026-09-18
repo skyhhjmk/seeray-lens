@@ -118,7 +118,7 @@ public class AttributionQueryService {
         return new Report(model, lookbackDays, creditedConversions, attributedValue, List.copyOf(rows));
     }
 
-    private static String conversionWeightExpression(String model) {
+    static String conversionWeightExpression(String model) {
         return switch (model) {
             case "first_touch" -> "case when touch_number=1 then 1::numeric else 0::numeric end";
             case "last_touch" -> "case when touch_number=touch_count then 1::numeric else 0::numeric end";

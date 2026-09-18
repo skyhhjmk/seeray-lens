@@ -35,6 +35,7 @@ public class RawAnalyticsRetentionService {
                 aggregateRows += deleteDatedAggregates(connection, policy.siteId, aggregateCutoff);
                 Instant aggregateInstantCutoff =
                         aggregateCutoff.atStartOfDay(policy.zone).toInstant();
+                aggregateRows += deleteExpiredOfflineConversions(connection, policy.siteId, aggregateInstantCutoff);
                 sessions += deleteOldSessions(connection, policy.siteId, aggregateInstantCutoff);
                 visitors += deleteOrphanVisitors(connection, policy.siteId);
                 refreshVisitorStats(connection, policy.siteId);
@@ -97,6 +98,17 @@ public class RawAnalyticsRetentionService {
         return deleteInBatches(
                 connection,
                 "delete from analytics_session where id in (select id from analytics_session where site_id=? and started_at < ? order by started_at,id limit ?)",
+                statement -> {
+                    statement.setObject(1, siteId);
+                    statement.setTimestamp(2, Timestamp.from(cutoff));
+                });
+    }
+
+    private static long deleteExpiredOfflineConversions(Connection connection, UUID siteId, Instant cutoff)
+            throws SQLException {
+        return deleteInBatches(
+                connection,
+                "delete from analytics_offline_conversion where id in (select id from analytics_offline_conversion where site_id=? and converted_at < ? order by converted_at,id limit ?)",
                 statement -> {
                     statement.setObject(1, siteId);
                     statement.setTimestamp(2, Timestamp.from(cutoff));
