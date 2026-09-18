@@ -39,18 +39,18 @@ class WorkspaceAuditPage {
   final List<WorkspaceAuditEntry> entries;
   final String? nextCursor;
 
-  factory WorkspaceAuditPage.fromJson(
-    Map<String, dynamic> json,
-  ) => WorkspaceAuditPage(
-    ((json['entries'] as List?) ?? const [])
-        .whereType<Map>()
-        .map(
-          (entry) =>
-              WorkspaceAuditEntry.fromJson(Map<String, dynamic>.from(entry)),
-        )
-        .toList(growable: false),
-    json['nextCursor'] as String?,
-  );
+  factory WorkspaceAuditPage.fromJson(Map<String, dynamic> json) =>
+      WorkspaceAuditPage(
+        ((json['entries'] as List?) ?? const [])
+            .whereType<Map>()
+            .map(
+              (entry) => WorkspaceAuditEntry.fromJson(
+                Map<String, dynamic>.from(entry),
+              ),
+            )
+            .toList(growable: false),
+        json['nextCursor'] as String?,
+      );
 }
 
 final workspaceAuditLogProvider = Provider(
@@ -261,6 +261,104 @@ class WorkspaceApiReadLogRepository {
       );
     }
     return WorkspaceApiReadPage.fromJson(Map<String, dynamic>.from(result));
+  }
+
+  String _date(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+}
+
+class WorkspaceApiWriteEntry {
+  const WorkspaceApiWriteEntry({
+    required this.id,
+    required this.actorEmail,
+    required this.siteId,
+    required this.siteName,
+    required this.method,
+    required this.routeTemplate,
+    required this.statusCode,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String? actorEmail;
+  final String? siteId;
+  final String? siteName;
+  final String method;
+  final String routeTemplate;
+  final int statusCode;
+  final DateTime createdAt;
+
+  factory WorkspaceApiWriteEntry.fromJson(Map<String, dynamic> json) =>
+      WorkspaceApiWriteEntry(
+        id: json['id'] as String,
+        actorEmail: json['actorEmail'] as String?,
+        siteId: json['siteId'] as String?,
+        siteName: json['siteName'] as String?,
+        method: json['method'] as String,
+        routeTemplate: json['routeTemplate'] as String,
+        statusCode: (json['statusCode'] as num).toInt(),
+        createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      );
+}
+
+class WorkspaceApiWritePage {
+  const WorkspaceApiWritePage(
+    this.entries,
+    this.nextCursor,
+    this.retentionDays,
+  );
+
+  final List<WorkspaceApiWriteEntry> entries;
+  final String? nextCursor;
+  final int retentionDays;
+
+  factory WorkspaceApiWritePage.fromJson(
+    Map<String, dynamic> json,
+  ) => WorkspaceApiWritePage(
+    ((json['entries'] as List?) ?? const [])
+        .whereType<Map>()
+        .map(
+          (entry) =>
+              WorkspaceApiWriteEntry.fromJson(Map<String, dynamic>.from(entry)),
+        )
+        .toList(growable: false),
+    json['nextCursor'] as String?,
+    (json['retentionDays'] as num?)?.toInt() ?? 30,
+  );
+}
+
+final workspaceApiWriteLogProvider = Provider(
+  (ref) => WorkspaceApiWriteLogRepository(ref),
+);
+
+class WorkspaceApiWriteLogRepository {
+  WorkspaceApiWriteLogRepository(this.ref);
+  final Ref ref;
+
+  Future<WorkspaceApiWritePage> load({
+    required String workspaceId,
+    required DateTime from,
+    required DateTime to,
+    String? cursor,
+  }) async {
+    final path = Uri(
+      path: '/api/v1/workspaces/$workspaceId/api-write-log',
+      queryParameters: {
+        'from': _date(from),
+        'to': _date(to),
+        'limit': '25',
+        'cursor': ?cursor,
+      },
+    ).toString();
+    final result = await ref.read(apiProvider).request('GET', path);
+    if (result is! Map) {
+      throw const FormatException(
+        'Invalid workspace API write history response',
+      );
+    }
+    return WorkspaceApiWritePage.fromJson(Map<String, dynamic>.from(result));
   }
 
   String _date(DateTime value) =>

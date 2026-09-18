@@ -49,6 +49,15 @@ void main() {
       contains('/api/v1/workspaces/workspace-1/api-read-log'),
     );
 
+    await tester.tap(find.text('API write history').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Human-user API write history'), findsOneWidget);
+    expect(find.textContaining('/api/v1/sites/{siteId}'), findsOneWidget);
+    expect(
+      api.lastPath,
+      contains('/api/v1/workspaces/workspace-1/api-write-log'),
+    );
+
     await tester.tap(find.text('Authentication').first);
     await tester.pumpAndSettle();
     expect(find.text('Authentication activity'), findsOneWidget);
@@ -101,6 +110,24 @@ class _WorkspaceAuditApi extends SeeRayApi {
             'routeTemplate': '/api/v1/sites/{siteId}/analytics/overview',
             'statusCode': 200,
             'createdAt': '2026-09-19T08:35:00Z',
+          },
+        ],
+        'nextCursor': null,
+        'retentionDays': 30,
+      };
+    }
+    if (path.contains('/api-write-log')) {
+      return {
+        'entries': [
+          {
+            'id': 'write-1',
+            'actorEmail': 'owner@example.test',
+            'siteId': 'site-1',
+            'siteName': 'Production',
+            'method': 'PATCH',
+            'routeTemplate': '/api/v1/sites/{siteId}',
+            'statusCode': 200,
+            'createdAt': '2026-09-19T08:37:00Z',
           },
         ],
         'nextCursor': null,
