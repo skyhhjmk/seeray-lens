@@ -1897,7 +1897,12 @@ class ControlPlaneResourceTest {
 
         LocalDate today = LocalDate.now(ZoneId.of("UTC"));
         given().header("Authorization", "Bearer " + owner.access())
-                .get(reportPath + "&period=custom&periodDays=366&periods=4")
+                .get(reportPath + "&period=custom&periodDays=3660&periods=4")
+                .then()
+                .statusCode(200)
+                .body("find { it.cohortPeriod == '" + cohortWeek + "' && it.periodIndex == 0 }.cohortSize", is(3));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=custom&periodDays=3661&periods=4")
                 .then()
                 .statusCode(400);
         given().header("Authorization", "Bearer " + owner.access())

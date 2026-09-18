@@ -14,7 +14,7 @@ import javax.sql.DataSource;
 @ApplicationScoped
 public class CohortQueryService {
     public static final int MAX_RANGE_DAYS = 3660;
-    public static final int MAX_CUSTOM_PERIOD_DAYS = 365;
+    public static final int MAX_CUSTOM_PERIOD_DAYS = MAX_RANGE_DAYS;
 
     private static final String MEANINGFUL_ACTIVITY = "(s.page_view_count>0 or exists(select 1 from raw_event e "
             + "where e.site_id=s.site_id and e.client_session_id=s.client_session_id "
