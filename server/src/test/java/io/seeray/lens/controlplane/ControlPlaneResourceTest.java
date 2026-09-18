@@ -1943,6 +1943,119 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void savedSegmentTargetsOnlyMatchingVisitorsWithinItsLookback() throws Exception {
+        Tokens owner = register("experiment-segment" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Segment-targeted tests\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String segmentsPath = "/api/v1/sites/" + site + "/segments";
+        String segment = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Pricing visitors\",\"matchMode\":\"all\",\"enabled\":true,"
+                        + "\"rules\":[{\"field\":\"page_path\",\"operator\":\"starts_with\",\"value\":\"/pricing\"}]}")
+                .post(segmentsPath)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        String experimentsPath = "/api/v1/sites/" + site + "/experiments";
+        String experiment = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Pricing hero\",\"variants\":[\"control\",\"variant\"],"
+                        + "\"targeting\":{\"pathPrefixes\":[\"/pricing\"],\"deviceTypes\":[\"desktop\"],"
+                        + "\"segmentId\":\"" + segment + "\",\"segmentLookbackDays\":30}}")
+                .post(experimentsPath)
+                .then()
+                .statusCode(200)
+                .body("targeting.segmentId", is(segment))
+                .body("targeting.segmentLookbackDays", is(30))
+                .extract()
+                .path("id");
+
+        UUID siteId = UUID.fromString(site);
+        String recentVisitor = UUID.randomUUID().toString();
+        String oldVisitor = UUID.randomUUID().toString();
+        String unmatchedVisitor = UUID.randomUUID().toString();
+        Instant recentVisit = Instant.now().minusSeconds(24 * 3600L);
+        Instant oldVisit = Instant.now().minusSeconds(45 * 24 * 3600L);
+        insertRaw(siteId, recentVisitor, "session-recent", "page_view", recentVisit, "/pricing/plan");
+        insertRaw(siteId, oldVisitor, "session-old", "page_view", oldVisit, "/pricing/plan");
+        insertRaw(siteId, unmatchedVisitor, "session-unmatched", "page_view", recentVisit, "/company/about");
+        factBuilder.rebuild(siteId, oldVisit.minusSeconds(1), Instant.now().plusSeconds(1));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"host\":\"experiment-segment.example.test\",\"allowSubdomains\":false,\"enabled\":true}")
+                .post("/api/v1/sites/" + site + "/domains")
+                .then()
+                .statusCode(201);
+        String trackingId = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("trackingId");
+        String publicPath = "/api/v1/experiments/" + trackingId + "/definitions";
+        String origin = "https://experiment-segment.example.test";
+        given().header("Origin", origin)
+                .get(publicPath + "?visitorId=" + recentVisitor)
+                .then()
+                .statusCode(200)
+                .header("Cache-Control", equalTo("private, no-store"))
+                .header("Vary", equalTo("Origin"))
+                .body("[0].name", is("Pricing hero"))
+                .body("[0].targeting.pathPrefixes", contains("/pricing"))
+                .body("[0].targeting.deviceTypes", contains("desktop"))
+                .body("[0].targeting.segmentId", nullValue());
+        given().header("Origin", origin)
+                .get(publicPath + "?visitorId=" + oldVisitor)
+                .then()
+                .statusCode(200)
+                .body("size()", is(0));
+        given().header("Origin", origin)
+                .get(publicPath + "?visitorId=" + unmatchedVisitor)
+                .then()
+                .statusCode(200)
+                .body("size()", is(0));
+        given().header("Origin", origin).get(publicPath).then().statusCode(200).body("size()", is(0));
+
+        String targeting90 = "{\"pathPrefixes\":[\"/pricing\"],\"deviceTypes\":[\"desktop\"]," + "\"segmentId\":\""
+                + segment + "\",\"segmentLookbackDays\":90}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Pricing hero\",\"variants\":[\"control\",\"variant\"]," + "\"targeting\":"
+                        + targeting90 + "}")
+                .put(experimentsPath + "/" + experiment)
+                .then()
+                .statusCode(200)
+                .body("targeting.segmentLookbackDays", is(90));
+        given().header("Origin", origin)
+                .get(publicPath + "?visitorId=" + oldVisitor)
+                .then()
+                .statusCode(200)
+                .body("[0].name", is("Pricing hero"));
+
+        String disabledSegment = "{\"name\":\"Pricing visitors\",\"matchMode\":\"all\",\"enabled\":false,"
+                + "\"rules\":[{\"field\":\"page_path\",\"operator\":\"starts_with\",\"value\":\"/pricing\"}]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(disabledSegment)
+                .put(segmentsPath + "/" + segment)
+                .then()
+                .statusCode(409);
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(segmentsPath + "/" + segment)
+                .then()
+                .statusCode(409);
+    }
+
+    @Test
     void experimentReportCountsUniqueExposedAndConvertedSessions() throws Exception {
         Tokens owner = register("experiment-counts" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");

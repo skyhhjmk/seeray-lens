@@ -106,6 +106,9 @@ public class SegmentService {
     public View update(UUID siteId, UUID segmentId, Update update) {
         writableSite(siteId);
         validate(update);
+        if (!update.enabled() && experimentReferences(siteId, segmentId))
+            throw new ControlPlaneException(
+                    409, "SEGMENT_IN_USE", "Remove this segment from experiments before disabling it");
         String sql =
                 "update segment_definition set name=?,description=?,match_mode=?,rules_json=?::jsonb,enabled=?,updated_at=? where site_id=? and id=?";
         try (Connection connection = dataSource.getConnection();
@@ -130,6 +133,9 @@ public class SegmentService {
     @Transactional
     public void delete(UUID siteId, UUID segmentId) {
         writableSite(siteId);
+        if (experimentReferences(siteId, segmentId))
+            throw new ControlPlaneException(
+                    409, "SEGMENT_IN_USE", "Remove this segment from experiments before deleting it");
         try (Connection connection = dataSource.getConnection();
                 PreparedStatement statement =
                         connection.prepareStatement("delete from segment_definition where site_id=? and id=?")) {
@@ -201,6 +207,51 @@ public class SegmentService {
                     409, "SEGMENT_DISABLED", "Enable this segment before applying it to reports");
         Criteria criteria = criteria(segment.matchMode(), segment.rules());
         return new SessionFilter(criteria.expression(), List.copyOf(criteria.values()));
+    }
+
+    /**
+     * Resolves an anonymous visitor against any recorded session in the selected lookback window.
+     * This is used only by the origin-checked public experiment-definition endpoint; segment rules
+     * and names are never returned to the browser.
+     */
+    public boolean matchesVisitor(UUID siteId, UUID segmentId, String clientVisitorId, int lookbackDays) {
+        if (siteId == null
+                || segmentId == null
+                || clientVisitorId == null
+                || clientVisitorId.isBlank()
+                || lookbackDays < 1
+                || lookbackDays > 365) return false;
+        try (Connection connection = dataSource.getConnection()) {
+            View segment;
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "select id,name,description,match_mode,rules_json,enabled,created_at,updated_at from segment_definition where site_id=? and id=?")) {
+                statement.setObject(1, siteId);
+                statement.setObject(2, segmentId);
+                try (ResultSet row = statement.executeQuery()) {
+                    if (!row.next()) return false;
+                    segment = view(row);
+                }
+            }
+            if (!segment.enabled()) return false;
+            Criteria criteria = criteria(segment.matchMode(), segment.rules());
+            String sql = "select exists(select 1 from analytics_session s "
+                    + "join analytics_visitor v on v.id=s.visitor_id and v.site_id=s.site_id "
+                    + "where s.site_id=? and v.client_visitor_id=? "
+                    + "and s.started_at >= now() - (? * interval '1 day') and (" + criteria.expression() + "))";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setObject(1, siteId);
+                statement.setString(2, clientVisitorId);
+                statement.setInt(3, lookbackDays);
+                int parameter = 4;
+                for (Object value : criteria.values()) statement.setObject(parameter++, value);
+                try (ResultSet row = statement.executeQuery()) {
+                    row.next();
+                    return row.getBoolean(1);
+                }
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not evaluate experiment audience segment", error);
+        }
     }
 
     /** Combines a saved segment with report-local rules using the same validated rule language. */
@@ -469,12 +520,27 @@ public class SegmentService {
         }
     }
 
-    private View get(UUID siteId, UUID segmentId) {
+    public View get(UUID siteId, UUID segmentId) {
         readableSite(siteId);
         try (Connection connection = dataSource.getConnection()) {
             return get(connection, siteId, segmentId);
         } catch (SQLException error) {
             throw new IllegalStateException("Could not read segment", error);
+        }
+    }
+
+    private boolean experimentReferences(UUID siteId, UUID segmentId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select exists(select 1 from experiment_definition where site_id=? and targeting_json->>'segmentId'=?)")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, segmentId.toString());
+            try (ResultSet row = statement.executeQuery()) {
+                row.next();
+                return row.getBoolean(1);
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not check experiment segment references", error);
         }
     }
 

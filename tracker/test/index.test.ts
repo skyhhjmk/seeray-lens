@@ -120,7 +120,10 @@ describe('tracker package', () => {
     const selected = tracker.assignExperiment('hero');
     await tracker.flush();
     expect(selected).toMatch(/control|variant/);
-    expect(fetch.mock.calls[0][0]).toBe('https://lens.example.test/api/v1/experiments/srl_experiment_config/definitions');
+    const definitionsUrl = new URL(fetch.mock.calls[0][0] as string);
+    expect(definitionsUrl.pathname).toBe('/api/v1/experiments/srl_experiment_config/definitions');
+    expect(definitionsUrl.searchParams.get('visitorId')).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(fetch.mock.calls[0][1]).toMatchObject({ cache: 'no-store' });
     const collectorCall = fetch.mock.calls.find((call) => call[1]?.method === 'POST');
     expect(JSON.parse(collectorCall?.[1].body as string).events).toEqual(
       expect.arrayContaining([

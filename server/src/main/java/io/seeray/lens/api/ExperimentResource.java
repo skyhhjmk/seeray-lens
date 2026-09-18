@@ -80,8 +80,14 @@ public class ExperimentResource {
         @Size(max = 4)
         public List<@NotBlank @Size(max = 16) String> deviceTypes = List.of();
 
+        public UUID segmentId;
+
+        @Min(7)
+        @Max(90)
+        public int segmentLookbackDays = 30;
+
         ExperimentService.Targeting update() {
-            return new ExperimentService.Targeting(pathPrefixes, deviceTypes);
+            return new ExperimentService.Targeting(pathPrefixes, deviceTypes, segmentId, segmentLookbackDays);
         }
     }
 }

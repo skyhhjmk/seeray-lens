@@ -19,16 +19,24 @@ import javax.sql.DataSource;
 public class ExperimentService {
     private static final TypeReference<List<String>> VARIANTS = new TypeReference<>() {};
     private static final Set<String> DEVICE_TYPES = Set.of("desktop", "mobile", "tablet", "other");
-    private static final Targeting DEFAULT_TARGETING = new Targeting(List.of(), List.of());
+    private static final Set<Integer> SEGMENT_LOOKBACK_DAYS = Set.of(7, 30, 90);
+    private static final Targeting DEFAULT_TARGETING = new Targeting(List.of(), List.of(), null, 30);
     private final SiteService sites;
     private final WorkspaceAccess access;
+    private final SegmentService segments;
     private final ObjectMapper mapper;
     private final DataSource dataSource;
 
     @Inject
-    public ExperimentService(SiteService sites, WorkspaceAccess access, ObjectMapper mapper, DataSource dataSource) {
+    public ExperimentService(
+            SiteService sites,
+            WorkspaceAccess access,
+            SegmentService segments,
+            ObjectMapper mapper,
+            DataSource dataSource) {
         this.sites = sites;
         this.access = access;
+        this.segments = segments;
         this.mapper = mapper;
         this.dataSource = dataSource;
     }
@@ -40,12 +48,26 @@ public class ExperimentService {
                 .toList();
     }
 
-    public List<PublicView> publicDefinitions(String trackingId) {
-        return ExperimentDefinition.<ExperimentDefinition>list(
-                        "site.trackingId = ?1 and enabled order by name", trackingId)
-                .stream()
-                .map(e -> new PublicView(e.name, read(e.variantsJson), readTargeting(e.targetingJson)))
-                .toList();
+    public List<PublicView> publicDefinitions(String trackingId, String clientVisitorId) {
+        Map<UUID, Boolean> segmentEligibility = new HashMap<>();
+        List<PublicView> result = new ArrayList<>();
+        for (ExperimentDefinition experiment : ExperimentDefinition.<ExperimentDefinition>list(
+                "site.trackingId = ?1 and enabled order by name", trackingId)) {
+            Targeting targeting = readTargeting(experiment.targetingJson);
+            if (targeting.segmentId() != null) {
+                if (clientVisitorId == null) continue;
+                boolean matches = segmentEligibility.computeIfAbsent(
+                        targeting.segmentId(),
+                        segmentId -> segments.matchesVisitor(
+                                experiment.site.id, segmentId, clientVisitorId, targeting.segmentLookbackDays()));
+                if (!matches) continue;
+            }
+            result.add(new PublicView(
+                    experiment.name,
+                    read(experiment.variantsJson),
+                    new PublicTargeting(targeting.pathPrefixes(), targeting.deviceTypes())));
+        }
+        return List.copyOf(result);
     }
 
     @Transactional
@@ -53,6 +75,7 @@ public class ExperimentService {
         Site s = writable(siteId);
         validate(u);
         Targeting targeting = normalizeTargeting(u.targeting());
+        validateSegmentTarget(siteId, targeting);
         if (ExperimentDefinition.count(
                         "site.id = ?1 and name = ?2", siteId, u.name().trim())
                 > 0) throw new ControlPlaneException(409, "EXPERIMENT_NAME_EXISTS", "Experiment already exists");
@@ -75,6 +98,7 @@ public class ExperimentService {
         ExperimentDefinition e = experiment(siteId, id);
         Targeting targeting =
                 u.targeting() == null ? readTargeting(e.targetingJson) : normalizeTargeting(u.targeting());
+        if (u.targeting() != null) validateSegmentTarget(siteId, targeting);
         e.name = u.name().trim();
         e.enabled = u.enabled();
         e.variantsJson = write(u.variants());
@@ -186,7 +210,7 @@ public class ExperimentService {
 
     private Targeting readTargeting(String json) {
         try {
-            return mapper.readValue(json, Targeting.class);
+            return normalizeTargeting(mapper.readValue(json, Targeting.class));
         } catch (Exception x) {
             throw new IllegalStateException("Stored experiment targeting is invalid", x);
         }
@@ -213,6 +237,14 @@ public class ExperimentService {
                 .firstResult();
         if (e == null) throw new ControlPlaneException(404, "EXPERIMENT_NOT_FOUND", "Experiment was not found");
         return e;
+    }
+
+    private void validateSegmentTarget(UUID siteId, Targeting targeting) {
+        if (targeting.segmentId() == null) return;
+        SegmentService.View segment = segments.get(siteId, targeting.segmentId());
+        if (!segment.enabled())
+            throw new ControlPlaneException(
+                    409, "SEGMENT_DISABLED", "Enable the saved segment before targeting it in an experiment");
     }
 
     private static void validate(Update u) {
@@ -243,6 +275,8 @@ public class ExperimentService {
                         .map(String::trim)
                         .filter(value -> !value.isEmpty())
                         .toList();
+        UUID segmentId = targeting.segmentId();
+        int lookbackDays = targeting.segmentLookbackDays() == 0 ? 30 : targeting.segmentLookbackDays();
         boolean validPaths = paths.size() <= 20
                 && paths.stream()
                         .allMatch(value -> value.length() <= 512
@@ -253,12 +287,13 @@ public class ExperimentService {
         boolean validDevices = devices.size() <= DEVICE_TYPES.size()
                 && devices.stream().allMatch(DEVICE_TYPES::contains)
                 && new HashSet<>(devices).size() == devices.size();
-        if (!validPaths || !validDevices)
+        boolean validLookback = SEGMENT_LOOKBACK_DAYS.contains(lookbackDays);
+        if (!validPaths || !validDevices || !validLookback)
             throw new ControlPlaneException(
                     400,
                     "INVALID_EXPERIMENT_TARGETING",
-                    "Targeting supports up to 20 unique path prefixes and known device types");
-        return new Targeting(paths, devices);
+                    "Targeting supports up to 20 unique path prefixes, known device types, and 7, 30, or 90 day segment windows");
+        return new Targeting(paths, devices, segmentId, lookbackDays);
     }
 
     private static Comparison compare(double controlRate, Counts control, double variantRate, Counts variant) {
@@ -285,11 +320,14 @@ public class ExperimentService {
 
     public record Update(boolean enabled, String name, List<String> variants, Targeting targeting) {}
 
-    public record Targeting(List<String> pathPrefixes, List<String> deviceTypes) {}
+    public record Targeting(
+            List<String> pathPrefixes, List<String> deviceTypes, UUID segmentId, int segmentLookbackDays) {}
+
+    public record PublicTargeting(List<String> pathPrefixes, List<String> deviceTypes) {}
 
     public record View(UUID id, String name, boolean enabled, List<String> variants, Targeting targeting) {}
 
-    public record PublicView(String name, List<String> variants, Targeting targeting) {}
+    public record PublicView(String name, List<String> variants, PublicTargeting targeting) {}
 
     public record VariantReport(
             String variant,
