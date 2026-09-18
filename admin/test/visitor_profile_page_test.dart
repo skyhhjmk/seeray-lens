@@ -63,6 +63,12 @@ void main() {
     expect(find.text('Chrome'), findsOneWidget);
     expect(find.textContaining('product_interaction'), findsOneWidget);
     expect(api.profilePath, contains('/visitors/visitor-123456'));
+    await tester.ensureVisible(find.text('Load older visits'));
+    await tester.tap(find.text('Load older visits'));
+    await tester.pumpAndSettle();
+    expect(find.text('/older-pricing'), findsOneWidget);
+    expect(api.historyPath, contains('sessionsCursor=sessions-next'));
+    expect(api.historyPath, isNot(contains('actionsCursor=')));
 
     router.dispose();
   });
@@ -72,6 +78,7 @@ class _VisitorApi extends SeeRayApi {
   _VisitorApi();
 
   String? profilePath;
+  String? historyPath;
 
   @override
   Future<dynamic> request(
@@ -96,6 +103,39 @@ class _VisitorApi extends SeeRayApi {
           'visitorType': 'returning',
         },
       ];
+    }
+    if (route.endsWith('/analytics/visitors/visitor-123456/history')) {
+      historyPath = path;
+      return {
+        'sessions': [
+          {
+            'sessionId': 'session-older123',
+            'startedAt': '2026-08-01T10:00:00Z',
+            'lastActivityAt': '2026-08-01T10:03:00Z',
+            'entryPage': '/older-pricing',
+            'exitPage': '/older-checkout',
+            'pageViews': 2,
+            'events': 3,
+            'durationMs': 180000,
+            'bounce': false,
+            'visitorType': 'returning',
+            'browser': 'Chrome',
+            'operatingSystem': 'Linux',
+            'deviceType': 'desktop',
+            'language': 'en-US',
+            'countryCode': 'US',
+            'region': 'California',
+            'city': 'San Francisco',
+            'referrerHost': 'search.example',
+            'campaignSource': 'newsletter',
+            'campaignMedium': 'email',
+            'campaignName': 'August',
+          },
+        ],
+        'nextSessionsCursor': null,
+        'actions': [],
+        'nextActionsCursor': null,
+      };
     }
     if (route.endsWith('/analytics/visitors/visitor-123456')) {
       profilePath = path;
@@ -134,7 +174,8 @@ class _VisitorApi extends SeeRayApi {
             'campaignName': 'September',
           },
         ],
-        'hasMoreSessions': false,
+        'hasMoreSessions': true,
+        'nextSessionsCursor': 'sessions-next',
         'actions': [
           {
             'at': '2026-09-18T10:02:00Z',
@@ -152,6 +193,7 @@ class _VisitorApi extends SeeRayApi {
           },
         ],
         'hasMoreActions': false,
+        'nextActionsCursor': null,
       };
     }
     throw StateError('Unexpected API request: $method $path');

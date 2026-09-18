@@ -241,6 +241,22 @@ public class AnalyticsResource {
     }
 
     @GET
+    @Path("/visitors/{visitorId}/history")
+    public AnalyticsQueryService.VisitorProfileHistoryPage visitorProfileHistory(
+            @PathParam("siteId") UUID site,
+            @PathParam("visitorId") String visitorId,
+            @QueryParam("from") String from,
+            @QueryParam("to") String to,
+            @QueryParam("segmentId") UUID segmentId,
+            @QueryParam("sessionsCursor") String sessionsCursor,
+            @QueryParam("actionsCursor") String actionsCursor) {
+        var page = segmented.visitorProfileHistory(
+                site, analytics.range(site, from, to), segmentId, visitorId, sessionsCursor, actionsCursor);
+        if (page == null) throw new NotFoundException();
+        return page;
+    }
+
+    @GET
     @Path("/goals")
     public List<AnalyticsQueryService.Goal> goals(
             @PathParam("siteId") UUID site,

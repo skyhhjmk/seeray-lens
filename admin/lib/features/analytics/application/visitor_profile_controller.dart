@@ -112,8 +112,10 @@ class AnalyticsVisitorProfile {
     required this.averageSessionDurationMs,
     required this.sessions,
     required this.hasMoreSessions,
+    required this.nextSessionsCursor,
     required this.actions,
     required this.hasMoreActions,
+    required this.nextActionsCursor,
   });
 
   final String visitorId;
@@ -127,8 +129,10 @@ class AnalyticsVisitorProfile {
   final int averageSessionDurationMs;
   final List<AnalyticsVisitorProfileSession> sessions;
   final bool hasMoreSessions;
+  final String? nextSessionsCursor;
   final List<AnalyticsVisitorProfileAction> actions;
   final bool hasMoreActions;
+  final String? nextActionsCursor;
 
   factory AnalyticsVisitorProfile.fromJson(Map<String, dynamic> json) =>
       AnalyticsVisitorProfile(
@@ -152,6 +156,7 @@ class AnalyticsVisitorProfile {
             )
             .toList(growable: false),
         hasMoreSessions: json['hasMoreSessions'] as bool? ?? false,
+        nextSessionsCursor: json['nextSessionsCursor'] as String?,
         actions: (json['actions'] as List? ?? const [])
             .whereType<Map>()
             .map(
@@ -161,7 +166,67 @@ class AnalyticsVisitorProfile {
             )
             .toList(growable: false),
         hasMoreActions: json['hasMoreActions'] as bool? ?? false,
+        nextActionsCursor: json['nextActionsCursor'] as String?,
       );
+}
+
+class AnalyticsVisitorProfileHistoryQuery {
+  const AnalyticsVisitorProfileHistoryQuery({
+    required this.profileQuery,
+    this.sessionsCursor,
+    this.actionsCursor,
+  });
+
+  final AnalyticsVisitorProfileQuery profileQuery;
+  final String? sessionsCursor;
+  final String? actionsCursor;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AnalyticsVisitorProfileHistoryQuery &&
+      other.profileQuery == profileQuery &&
+      other.sessionsCursor == sessionsCursor &&
+      other.actionsCursor == actionsCursor;
+
+  @override
+  int get hashCode => Object.hash(profileQuery, sessionsCursor, actionsCursor);
+}
+
+class AnalyticsVisitorProfileHistoryPage {
+  const AnalyticsVisitorProfileHistoryPage({
+    required this.sessions,
+    required this.nextSessionsCursor,
+    required this.actions,
+    required this.nextActionsCursor,
+  });
+
+  final List<AnalyticsVisitorProfileSession> sessions;
+  final String? nextSessionsCursor;
+  final List<AnalyticsVisitorProfileAction> actions;
+  final String? nextActionsCursor;
+
+  factory AnalyticsVisitorProfileHistoryPage.fromJson(
+    Map<String, dynamic> json,
+  ) => AnalyticsVisitorProfileHistoryPage(
+    sessions: (json['sessions'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => AnalyticsVisitorProfileSession.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .toList(growable: false),
+    nextSessionsCursor: json['nextSessionsCursor'] as String?,
+    actions: (json['actions'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => AnalyticsVisitorProfileAction.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .toList(growable: false),
+    nextActionsCursor: json['nextActionsCursor'] as String?,
+  );
 }
 
 class AnalyticsVisitorProfileSession {
@@ -290,4 +355,39 @@ final analyticsVisitorProfileProvider =
           await ref.read(apiProvider).request('GET', path.toString())
               as Map<String, dynamic>;
       return AnalyticsVisitorProfile.fromJson(result);
+    });
+
+final analyticsVisitorProfileHistoryProvider =
+    FutureProvider.family<
+      AnalyticsVisitorProfileHistoryPage,
+      AnalyticsVisitorProfileHistoryQuery
+    >((ref, query) async {
+      final profileQuery = query.profileQuery;
+      final path = Uri(
+        pathSegments: [
+          '',
+          'api',
+          'v1',
+          'sites',
+          profileQuery.siteId,
+          'analytics',
+          'visitors',
+          profileQuery.visitorId,
+          'history',
+        ],
+        queryParameters: {
+          'from': profileQuery.range.fromQuery,
+          'to': profileQuery.range.toQuery,
+          if (profileQuery.segmentId != null)
+            'segmentId': profileQuery.segmentId!,
+          if (query.sessionsCursor != null)
+            'sessionsCursor': query.sessionsCursor!,
+          if (query.actionsCursor != null)
+            'actionsCursor': query.actionsCursor!,
+        },
+      );
+      final result =
+          await ref.read(apiProvider).request('GET', path.toString())
+              as Map<String, dynamic>;
+      return AnalyticsVisitorProfileHistoryPage.fromJson(result);
     });

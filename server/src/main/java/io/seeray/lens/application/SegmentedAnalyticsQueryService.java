@@ -644,6 +644,13 @@ public class SegmentedAnalyticsQueryService {
                         row.getString(21)));
         boolean hasMoreSessions = sessions.size() > sessionLimit;
         if (hasMoreSessions) sessions.remove(sessions.size() - 1);
+        String nextSessionsCursor = hasMoreSessions
+                ? VisitorHistoryCursor.encode(
+                        "s",
+                        visitorId,
+                        sessions.get(sessions.size() - 1).startedAt(),
+                        sessions.get(sessions.size() - 1).sessionId())
+                : null;
 
         final int actionLimit = 100;
         String actionsSql = cte(context)
@@ -651,20 +658,31 @@ public class SegmentedAnalyticsQueryService {
                 + " action_at,e.ingest_id,e.event_type,e.page_path,e.page_title,ms.client_session_id "
                 + "from matching_sessions ms join raw_event e on " + eventScope("e", "ms")
                 + " where ms.client_visitor_id=? and e.event_type<>'web_vital') "
-                + "select action_at,event_type,page_path,page_title,client_session_id from visitor_actions "
+                + "select action_at,event_type,page_path,page_title,client_session_id,ingest_id from visitor_actions "
                 + "order by action_at desc,ingest_id desc limit ?";
-        List<AnalyticsQueryService.VisitorProfileAction> actions = list(
+        List<VisitorProfileActionCursor> actionRows = list(
                 context,
                 actionsSql,
                 List.of(visitorId, actionLimit + 1),
-                row -> new AnalyticsQueryService.VisitorProfileAction(
-                        row.getTimestamp(1).toInstant(),
-                        row.getString(2),
-                        row.getString(3),
-                        row.getString(4),
-                        row.getString(5)));
-        boolean hasMoreActions = actions.size() > actionLimit;
-        if (hasMoreActions) actions.remove(actions.size() - 1);
+                row -> new VisitorProfileActionCursor(
+                        new AnalyticsQueryService.VisitorProfileAction(
+                                row.getTimestamp(1).toInstant(),
+                                row.getString(2),
+                                row.getString(3),
+                                row.getString(4),
+                                row.getString(5)),
+                        row.getString(6)));
+        boolean hasMoreActions = actionRows.size() > actionLimit;
+        if (hasMoreActions) actionRows.remove(actionRows.size() - 1);
+        List<AnalyticsQueryService.VisitorProfileAction> actions =
+                actionRows.stream().map(VisitorProfileActionCursor::action).toList();
+        String nextActionsCursor = hasMoreActions
+                ? VisitorHistoryCursor.encode(
+                        "a",
+                        visitorId,
+                        actionRows.get(actionRows.size() - 1).action().at(),
+                        actionRows.get(actionRows.size() - 1).ingestId())
+                : null;
 
         return new AnalyticsQueryService.VisitorProfile(
                 visitorId,
@@ -678,8 +696,149 @@ public class SegmentedAnalyticsQueryService {
                 totals[0] == 0 ? 0 : totals[4],
                 List.copyOf(sessions),
                 hasMoreSessions,
+                nextSessionsCursor,
                 List.copyOf(actions),
-                hasMoreActions);
+                hasMoreActions,
+                nextActionsCursor);
+    }
+
+    public AnalyticsQueryService.VisitorProfileHistoryPage visitorProfileHistory(
+            UUID siteId,
+            AnalyticsQueryService.Range range,
+            UUID segmentId,
+            String visitorId,
+            String sessionsCursorToken,
+            String actionsCursorToken) {
+        if (visitorId == null || visitorId.isBlank() || visitorId.length() > 64)
+            throw new ControlPlaneException(400, "INVALID_VISITOR_ID", "Visitor ID is invalid");
+        if (!visitorExists(siteId, visitorId)) return null;
+        QueryContext context = context(siteId, range, segmentId);
+        final int sessionLimit = 50;
+        boolean includeSessions = sessionsCursorToken != null || actionsCursorToken == null;
+        boolean includeActions = actionsCursorToken != null || sessionsCursorToken == null;
+        List<AnalyticsQueryService.VisitorProfileSession> sessions = new ArrayList<>();
+        String nextSessionsCursor = null;
+        if (includeSessions) {
+            VisitorHistoryCursor sessionCursor = VisitorHistoryCursor.decode(sessionsCursorToken, "s", visitorId);
+            List<Object> sessionParameters = new ArrayList<>();
+            sessionParameters.add(visitorId);
+            String sessionCursorPredicate = "";
+            if (sessionCursor != null) {
+                sessionCursorPredicate = " and (started_at<? or (started_at=? and client_session_id>?))";
+                Timestamp cursorTime = Timestamp.from(sessionCursor.at());
+                sessionParameters.add(cursorTime);
+                sessionParameters.add(cursorTime);
+                sessionParameters.add(sessionCursor.rowId());
+            }
+            sessionParameters.add(sessionLimit + 1);
+            sessions = list(
+                    context,
+                    cte(context)
+                            + " select client_session_id,started_at,last_activity_at,entry_page,exit_page,page_view_count,"
+                            + "event_count,duration_ms,is_bounce,visitor_type,browser,operating_system,device_type,language,"
+                            + "country_code,region_name,city,initial_referrer_host,initial_utm_source,initial_utm_medium,"
+                            + "initial_utm_campaign from matching_sessions where client_visitor_id=?"
+                            + sessionCursorPredicate
+                            + " order by started_at desc,client_session_id limit ?",
+                    sessionParameters,
+                    SegmentedAnalyticsQueryService::mapVisitorProfileSession);
+            boolean hasMoreSessions = sessions.size() > sessionLimit;
+            if (hasMoreSessions) sessions.remove(sessions.size() - 1);
+            if (hasMoreSessions)
+                nextSessionsCursor = VisitorHistoryCursor.encode(
+                        "s",
+                        visitorId,
+                        sessions.get(sessions.size() - 1).startedAt(),
+                        sessions.get(sessions.size() - 1).sessionId());
+        }
+
+        List<VisitorProfileActionCursor> actionRows = new ArrayList<>();
+        String nextActionsCursor = null;
+        if (includeActions) {
+            VisitorHistoryCursor actionCursor = VisitorHistoryCursor.decode(actionsCursorToken, "a", visitorId);
+            List<Object> actionParameters = new ArrayList<>();
+            actionParameters.add(visitorId);
+            String actionCursorPredicate = "";
+            if (actionCursor != null) {
+                actionCursorPredicate = " and (" + EVENT_TIME + "<? or (" + EVENT_TIME + "=? and e.ingest_id<?))";
+                Timestamp cursorTime = Timestamp.from(actionCursor.at());
+                actionParameters.add(cursorTime);
+                actionParameters.add(cursorTime);
+                actionParameters.add(UUID.fromString(actionCursor.rowId()));
+            }
+            actionParameters.add(101);
+            String actionsSql = cte(context)
+                    + ", visitor_actions as (select " + EVENT_TIME
+                    + " action_at,e.ingest_id,e.event_type,e.page_path,e.page_title,ms.client_session_id "
+                    + "from matching_sessions ms join raw_event e on " + eventScope("e", "ms")
+                    + " where ms.client_visitor_id=? and e.event_type<>'web_vital'" + actionCursorPredicate + ") "
+                    + "select action_at,event_type,page_path,page_title,client_session_id,ingest_id from visitor_actions "
+                    + "order by action_at desc,ingest_id desc limit ?";
+            actionRows = list(
+                    context,
+                    actionsSql,
+                    actionParameters,
+                    row -> new VisitorProfileActionCursor(
+                            new AnalyticsQueryService.VisitorProfileAction(
+                                    row.getTimestamp(1).toInstant(),
+                                    row.getString(2),
+                                    row.getString(3),
+                                    row.getString(4),
+                                    row.getString(5)),
+                            row.getString(6)));
+            boolean hasMoreActions = actionRows.size() > 100;
+            if (hasMoreActions) actionRows.remove(actionRows.size() - 1);
+            if (hasMoreActions)
+                nextActionsCursor = VisitorHistoryCursor.encode(
+                        "a",
+                        visitorId,
+                        actionRows.get(actionRows.size() - 1).action().at(),
+                        actionRows.get(actionRows.size() - 1).ingestId());
+        }
+        List<AnalyticsQueryService.VisitorProfileAction> actions =
+                actionRows.stream().map(VisitorProfileActionCursor::action).toList();
+        return new AnalyticsQueryService.VisitorProfileHistoryPage(
+                List.copyOf(sessions), nextSessionsCursor, List.copyOf(actions), nextActionsCursor);
+    }
+
+    private boolean visitorExists(UUID siteId, String visitorId) {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select 1 from analytics_visitor where site_id=? and client_visitor_id=?")) {
+            statement.setObject(1, siteId);
+            statement.setString(2, visitorId);
+            try (ResultSet row = statement.executeQuery()) {
+                return row.next();
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException("Could not verify visitor profile", error);
+        }
+    }
+
+    private static AnalyticsQueryService.VisitorProfileSession mapVisitorProfileSession(ResultSet row)
+            throws SQLException {
+        return new AnalyticsQueryService.VisitorProfileSession(
+                row.getString(1),
+                row.getTimestamp(2).toInstant(),
+                row.getTimestamp(3).toInstant(),
+                row.getString(4),
+                row.getString(5),
+                row.getInt(6),
+                row.getInt(7),
+                row.getLong(8),
+                row.getBoolean(9),
+                row.getString(10),
+                row.getString(11),
+                row.getString(12),
+                row.getString(13),
+                row.getString(14),
+                row.getString(15),
+                row.getString(16),
+                row.getString(17),
+                row.getString(18),
+                row.getString(19),
+                row.getString(20),
+                row.getString(21));
     }
 
     public List<AnalyticsQueryService.Goal> goals(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
@@ -957,6 +1116,46 @@ public class SegmentedAnalyticsQueryService {
             long good,
             long needsImprovement,
             long poor) {}
+
+    private record VisitorProfileActionCursor(AnalyticsQueryService.VisitorProfileAction action, String ingestId) {}
+
+    private record VisitorHistoryCursor(Instant at, String rowId) {
+        private static String encode(String kind, String visitorId, Instant at, String rowId) {
+            String raw = String.join("|", kind, encodePart(visitorId), at.toString(), encodePart(rowId));
+            return Base64.getUrlEncoder()
+                    .withoutPadding()
+                    .encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+
+        private static VisitorHistoryCursor decode(String token, String expectedKind, String visitorId) {
+            if (token == null) return null;
+            try {
+                if (token.length() > 2048) throw new IllegalArgumentException("Cursor is too long");
+                String raw = new String(Base64.getUrlDecoder().decode(token), java.nio.charset.StandardCharsets.UTF_8);
+                String[] parts = raw.split("\\|", -1);
+                if (parts.length != 4 || !expectedKind.equals(parts[0]) || !visitorId.equals(decodePart(parts[1])))
+                    throw new IllegalArgumentException("Cursor mismatch");
+                Instant at = Instant.parse(parts[2]);
+                String rowId = decodePart(parts[3]);
+                if (rowId.isBlank() || rowId.length() > 128) throw new IllegalArgumentException("Invalid row key");
+                if ("a".equals(expectedKind)) UUID.fromString(rowId);
+                return new VisitorHistoryCursor(at, rowId);
+            } catch (RuntimeException error) {
+                throw new ControlPlaneException(
+                        400, "INVALID_VISITOR_HISTORY_CURSOR", "Visitor history cursor is invalid");
+            }
+        }
+
+        private static String encodePart(String value) {
+            return Base64.getUrlEncoder()
+                    .withoutPadding()
+                    .encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+
+        private static String decodePart(String value) {
+            return new String(Base64.getUrlDecoder().decode(value), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
 
     private interface Row<T> {
         T map(ResultSet row) throws SQLException;

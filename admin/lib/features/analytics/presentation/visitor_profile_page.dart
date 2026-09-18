@@ -58,7 +58,8 @@ class VisitorProfilePage extends ConsumerWidget {
           visitorId: visitorId,
           onRetry: () => ref.invalidate(analyticsVisitorProfileProvider(query)),
         ),
-        data: (data) => _VisitorProfileBody(siteId: siteId, profile: data),
+        data: (data) =>
+            _VisitorProfileBody(siteId: siteId, profile: data, query: query),
       ),
     );
   }
@@ -127,14 +128,130 @@ class _ProfileError extends StatelessWidget {
   );
 }
 
-class _VisitorProfileBody extends StatelessWidget {
-  const _VisitorProfileBody({required this.siteId, required this.profile});
+class _VisitorProfileBody extends ConsumerStatefulWidget {
+  const _VisitorProfileBody({
+    required this.siteId,
+    required this.profile,
+    required this.query,
+  });
 
   final String siteId;
   final AnalyticsVisitorProfile profile;
+  final AnalyticsVisitorProfileQuery query;
+
+  @override
+  ConsumerState<_VisitorProfileBody> createState() =>
+      _VisitorProfileBodyState();
+}
+
+class _VisitorProfileBodyState extends ConsumerState<_VisitorProfileBody> {
+  late List<AnalyticsVisitorProfileSession> _sessions;
+  late List<AnalyticsVisitorProfileAction> _actions;
+  String? _nextSessionsCursor;
+  String? _nextActionsCursor;
+  bool _loadingSessions = false;
+  bool _loadingActions = false;
+  String? _sessionsError;
+  String? _actionsError;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetHistory();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VisitorProfileBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query ||
+        oldWidget.profile != widget.profile) {
+      _resetHistory();
+    }
+  }
+
+  void _resetHistory() {
+    _sessions = List.of(widget.profile.sessions);
+    _actions = List.of(widget.profile.actions);
+    _nextSessionsCursor = widget.profile.nextSessionsCursor;
+    _nextActionsCursor = widget.profile.nextActionsCursor;
+    _loadingSessions = false;
+    _loadingActions = false;
+    _sessionsError = null;
+    _actionsError = null;
+  }
+
+  Future<void> _loadOlderSessions() async {
+    final cursor = _nextSessionsCursor;
+    if (cursor == null || _loadingSessions) return;
+    final pageQuery = AnalyticsVisitorProfileHistoryQuery(
+      profileQuery: widget.query,
+      sessionsCursor: cursor,
+    );
+    setState(() {
+      _loadingSessions = true;
+      _sessionsError = null;
+    });
+    try {
+      ref.invalidate(analyticsVisitorProfileHistoryProvider(pageQuery));
+      final page = await ref.read(
+        analyticsVisitorProfileHistoryProvider(pageQuery).future,
+      );
+      if (!mounted) return;
+      setState(() {
+        _sessions.addAll(page.sessions);
+        _nextSessionsCursor = page.nextSessionsCursor;
+        _loadingSessions = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingSessions = false;
+        _sessionsError = context.tr(
+          'Could not load older visits. Please retry.',
+          '无法加载更早访问，请重试。',
+        );
+      });
+    }
+  }
+
+  Future<void> _loadOlderActions() async {
+    final cursor = _nextActionsCursor;
+    if (cursor == null || _loadingActions) return;
+    final pageQuery = AnalyticsVisitorProfileHistoryQuery(
+      profileQuery: widget.query,
+      actionsCursor: cursor,
+    );
+    setState(() {
+      _loadingActions = true;
+      _actionsError = null;
+    });
+    try {
+      ref.invalidate(analyticsVisitorProfileHistoryProvider(pageQuery));
+      final page = await ref.read(
+        analyticsVisitorProfileHistoryProvider(pageQuery).future,
+      );
+      if (!mounted) return;
+      setState(() {
+        _actions.addAll(page.actions);
+        _nextActionsCursor = page.nextActionsCursor;
+        _loadingActions = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingActions = false;
+        _actionsError = context.tr(
+          'Could not load earlier actions. Please retry.',
+          '无法加载更早动作，请重试。',
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final profile = widget.profile;
+    final siteId = widget.siteId;
     final shortId = profile.visitorId.length > 20
         ? '${profile.visitorId.substring(0, 12)}…${profile.visitorId.substring(profile.visitorId.length - 6)}'
         : profile.visitorId;
@@ -254,7 +371,7 @@ class _VisitorProfileBody extends StatelessWidget {
             '显示所选周期内最近 ${profile.sessions.length} 次访问',
           ),
         ),
-        if (profile.sessions.isEmpty)
+        if (_sessions.isEmpty)
           _EmptyCard(
             text: context.tr(
               'No visits match the selected date range and audience.',
@@ -262,15 +379,15 @@ class _VisitorProfileBody extends StatelessWidget {
             ),
           )
         else ...[
-          for (final visit in profile.sessions) _VisitCard(visit: visit),
-          if (profile.hasMoreSessions)
-            _LimitNotice(
-              text: context.tr(
-                'Only the latest 50 matching visits are shown. Narrow the date range to inspect an earlier period.',
-                '仅显示最近 50 次匹配访问。可缩小日期范围查看更早的周期。',
-              ),
-            ),
+          for (final visit in _sessions) _VisitCard(visit: visit),
         ],
+        if (_nextSessionsCursor != null || _sessionsError != null)
+          _HistoryPageButton(
+            label: context.tr('Load older visits', '加载更早访问'),
+            loading: _loadingSessions,
+            error: _sessionsError,
+            onPressed: _loadOlderSessions,
+          ),
         const SizedBox(height: 18),
         _SectionTitle(
           icon: Icons.timeline,
@@ -280,7 +397,7 @@ class _VisitorProfileBody extends StatelessWidget {
             '显示匹配访问中最近记录的动作；为保护隐私，此处不展示事件属性。',
           ),
         ),
-        if (profile.actions.isEmpty)
+        if (_actions.isEmpty)
           _EmptyCard(
             text: context.tr('No actions in this period.', '此周期内暂无动作。'),
           )
@@ -289,19 +406,18 @@ class _VisitorProfileBody extends StatelessWidget {
             elevation: 0,
             child: Column(
               children: [
-                for (final action in profile.actions)
-                  _ActionTile(action: action),
+                for (final action in _actions) _ActionTile(action: action),
               ],
             ),
           ),
-          if (profile.hasMoreActions)
-            _LimitNotice(
-              text: context.tr(
-                'Only the latest 100 matching actions are shown. Narrow the date range to inspect earlier activity.',
-                '仅显示最近 100 条匹配动作。可缩小日期范围查看更早的活动。',
-              ),
-            ),
         ],
+        if (_nextActionsCursor != null || _actionsError != null)
+          _HistoryPageButton(
+            label: context.tr('Load earlier actions', '加载更早动作'),
+            loading: _loadingActions,
+            error: _actionsError,
+            onPressed: _loadOlderActions,
+          ),
         const SizedBox(height: 20),
         Text(
           context.tr(
@@ -545,15 +661,45 @@ class _EmptyCard extends StatelessWidget {
   );
 }
 
-class _LimitNotice extends StatelessWidget {
-  const _LimitNotice({required this.text});
+class _HistoryPageButton extends StatelessWidget {
+  const _HistoryPageButton({
+    required this.label,
+    required this.loading,
+    required this.error,
+    required this.onPressed,
+  });
 
-  final String text;
+  final String label;
+  final bool loading;
+  final String? error;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-    child: Text(text, style: Theme.of(context).textTheme.bodySmall),
+    padding: const EdgeInsets.only(left: 4, bottom: 10),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        TextButton.icon(
+          onPressed: loading ? null : onPressed,
+          icon: loading
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.expand_more),
+          label: Text(label),
+        ),
+      ],
+    ),
   );
 }
 

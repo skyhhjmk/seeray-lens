@@ -2395,6 +2395,96 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void visitorProfileHistoryPaginatesSessionsAndActionsWithIndependentStableCursors() throws Exception {
+        Tokens owner = register("visitor-history" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Visitor history\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+
+        UUID siteId = UUID.fromString(site);
+        String visitor = UUID.randomUUID().toString();
+        LocalDate startDate = LocalDate.now(ZoneId.of("UTC")).minusDays(4);
+        Instant base = startDate.atTime(1, 0).toInstant(java.time.ZoneOffset.UTC);
+        for (int index = 0; index < 53; index++) {
+            String session = "history-session-" + index;
+            Instant occurred = base.plusSeconds(index * 3600L);
+            String path = "/journey/" + index;
+            insertRaw(siteId, visitor, session, "page_view", occurred, path);
+            insertRaw(siteId, visitor, session, "custom", occurred.plusSeconds(15), path);
+        }
+        factBuilder.rebuild(siteId, base.minusSeconds(1), base.plusSeconds(53 * 3600L));
+
+        String api = "/api/v1/sites/" + site + "/analytics/visitors/" + visitor;
+        String range = "?from=" + startDate + "&to=" + startDate.plusDays(3);
+        var initial = given().header("Authorization", "Bearer " + owner.access())
+                .get(api + range)
+                .then()
+                .statusCode(200)
+                .body("sessions.size()", is(50))
+                .body("actions.size()", is(100))
+                .body("hasMoreSessions", is(true))
+                .body("hasMoreActions", is(true))
+                .extract();
+        String sessionsCursor = initial.path("nextSessionsCursor");
+        String actionsCursor = initial.path("nextActionsCursor");
+        assertNotNull(sessionsCursor);
+        assertNotNull(actionsCursor);
+
+        List<String> firstSessionExpected = new java.util.ArrayList<>();
+        List<String> firstActionExpected = new java.util.ArrayList<>();
+        for (int index = 52; index >= 3; index--) {
+            firstSessionExpected.add("history-session-" + index);
+            firstActionExpected.add("/journey/" + index);
+            firstActionExpected.add("/journey/" + index);
+        }
+        assertEquals(firstSessionExpected, initial.jsonPath().getList("sessions.sessionId", String.class));
+        assertEquals(firstActionExpected, initial.jsonPath().getList("actions.path", String.class));
+
+        var sessionPage = given().header("Authorization", "Bearer " + owner.access())
+                .get(api + "/history" + range + "&sessionsCursor=" + sessionsCursor)
+                .then()
+                .statusCode(200)
+                .body("sessions.size()", is(3))
+                .body("actions.size()", is(0))
+                .body("nextSessionsCursor", nullValue())
+                .extract();
+        assertEquals(
+                List.of("history-session-2", "history-session-1", "history-session-0"),
+                sessionPage.jsonPath().getList("sessions.sessionId", String.class));
+
+        var actionPage = given().header("Authorization", "Bearer " + owner.access())
+                .get(api + "/history" + range + "&actionsCursor=" + actionsCursor)
+                .then()
+                .statusCode(200)
+                .body("sessions.size()", is(0))
+                .body("actions.size()", is(6))
+                .body("nextActionsCursor", nullValue())
+                .extract();
+        assertEquals(
+                List.of("/journey/2", "/journey/2", "/journey/1", "/journey/1", "/journey/0", "/journey/0"),
+                actionPage.jsonPath().getList("actions.path", String.class));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(api + "/history" + range + "&sessionsCursor=invalid")
+                .then()
+                .statusCode(400);
+        String anotherVisitor = UUID.randomUUID().toString();
+        insertRaw(siteId, anotherVisitor, "other-history-session", "page_view", base, "/other");
+        factBuilder.rebuild(siteId, base.minusSeconds(1), base.plusSeconds(53 * 3600L));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/analytics/visitors/" + anotherVisitor + "/history" + range
+                        + "&sessionsCursor=" + sessionsCursor)
+                .then()
+                .statusCode(400);
+    }
+
+    @Test
     void savedSegmentTargetsOnlyMatchingVisitorsWithinItsLookback() throws Exception {
         Tokens owner = register("experiment-segment" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");

@@ -419,8 +419,16 @@ public class AnalyticsQueryService {
             long averageSessionDurationMs,
             List<VisitorProfileSession> sessions,
             boolean hasMoreSessions,
+            String nextSessionsCursor,
             List<VisitorProfileAction> actions,
-            boolean hasMoreActions) {}
+            boolean hasMoreActions,
+            String nextActionsCursor) {}
+
+    public record VisitorProfileHistoryPage(
+            List<VisitorProfileSession> sessions,
+            String nextSessionsCursor,
+            List<VisitorProfileAction> actions,
+            String nextActionsCursor) {}
 
     public record VisitorProfileSession(
             String sessionId,
