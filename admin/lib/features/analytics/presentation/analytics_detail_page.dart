@@ -1770,11 +1770,23 @@ class _Body extends StatelessWidget {
               ),
             ),
             if (view == AnalyticsView.acquisition)
-              FilledButton.tonalIcon(
-                onPressed: () =>
-                    context.go('/sites/$siteId/acquisition/attribution'),
-                icon: const Icon(Icons.compare_arrows),
-                label: Text(context.tr('Attribution models', '多触点归因')),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: () =>
+                        context.go('/sites/$siteId/acquisition/attribution'),
+                    icon: const Icon(Icons.compare_arrows),
+                    label: Text(context.tr('Attribution models', '多触点归因')),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: () =>
+                        context.go('/sites/$siteId/acquisition/campaign-costs'),
+                    icon: const Icon(Icons.payments_outlined),
+                    label: Text(context.tr('Campaign costs', '广告活动费用')),
+                  ),
+                ],
               ),
           ],
         ),

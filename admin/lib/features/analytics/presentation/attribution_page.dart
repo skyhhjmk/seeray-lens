@@ -106,11 +106,24 @@ class _AttributionPageState extends ConsumerState<AttributionPage> {
                 ],
               ),
             ),
-            TextButton.icon(
-              onPressed: () =>
-                  context.go('/sites/${widget.siteId}/acquisition'),
-              icon: const Icon(Icons.arrow_back),
-              label: Text(context.tr('Acquisition', '流量获取')),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                TextButton.icon(
+                  onPressed: () =>
+                      context.go('/sites/${widget.siteId}/acquisition'),
+                  icon: const Icon(Icons.arrow_back),
+                  label: Text(context.tr('Acquisition', '流量获取')),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: () => context.go(
+                    '/sites/${widget.siteId}/acquisition/campaign-costs',
+                  ),
+                  icon: const Icon(Icons.payments_outlined),
+                  label: Text(context.tr('Campaign costs', '广告活动费用')),
+                ),
+              ],
             ),
           ],
         ),
