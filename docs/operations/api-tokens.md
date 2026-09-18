@@ -8,7 +8,7 @@ API tokens provide server-to-server access without reusing a person's login sess
 - `sites:write` permits site-scoped mutations as well as reads. It also implies `sites:read`.
 - Tokens cannot create workspaces, manage members/invitations/tokens, change workspace settings, or use unrelated account APIs.
 - A site in another workspace is not accessible. The token is also invalidated when its creating user is disabled or removed from that workspace.
-- A revoked or expired token immediately stops authenticating. The settings page reports its creation, expiry, and last-used time; the product does not yet retain a full API request history.
+- A revoked or expired token immediately stops authenticating. The settings page reports its creation, expiry, and last-used time, and can expand each token to inspect its recent request method, route template, response status and timestamp. Request history is retained for 30 days. Query strings, request bodies, response bodies, credentials, IP addresses and user-agent values are not recorded.
 
 ## Usage
 

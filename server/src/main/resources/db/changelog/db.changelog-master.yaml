@@ -398,3 +398,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0057-api-token-authentication.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0058-api-token-request-history
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0058-api-token-request-history.sql
+            relativeToChangelogFile: false

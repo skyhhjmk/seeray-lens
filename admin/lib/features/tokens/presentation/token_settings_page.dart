@@ -6,6 +6,7 @@ import '../../../core/i18n/app_i18n.dart';
 import '../../../shared/presentation/app_back_button.dart';
 import '../../../shared/presentation/page_help_button.dart';
 import '../application/token_controller.dart';
+import '../../workspaces/application/workspace_controller.dart';
 
 class TokenSettingsPage extends ConsumerWidget {
   const TokenSettingsPage({super.key});
@@ -13,6 +14,7 @@ class TokenSettingsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tokens = ref.watch(apiTokensProvider);
+    final workspaceId = ref.watch(currentWorkspaceProvider)?.id;
     return Scaffold(
       appBar: AppBar(
         leading: const AppBackButton(fallback: '/sites'),
@@ -46,24 +48,48 @@ class TokenSettingsPage extends ConsumerWidget {
           children: items
               .map(
                 (token) => Card(
-                  child: ListTile(
-                    title: Text(token.name),
-                    subtitle: Text(
-                      '${token.prefix} • ${_scopeLabels(context, token.scopes)}'
-                      '\n${context.tr('Created', '创建于')} ${token.createdAt}'
-                      '\n${context.tr('Last used', '上次使用')} ${token.lastUsedAt ?? context.tr('Never', '从未使用')}'
-                      '${token.expiresAt == null ? '' : '\n${context.tr('Expires', '到期于')} ${token.expiresAt}'}',
-                    ),
-                    trailing: token.revokedAt != null
-                        ? Chip(label: Text(context.tr('Revoked', '已撤销')))
-                        : token.isExpired
-                        ? Chip(label: Text(context.tr('Expired', '已过期')))
-                        : TextButton(
-                            onPressed: () => ref
-                                .read(apiTokensProvider.notifier)
-                                .revoke(token.id),
-                            child: Text(context.tr('Revoke', '撤销')),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      ListTile(
+                        title: Text(token.name),
+                        subtitle: Text(
+                          '${token.prefix} • ${_scopeLabels(context, token.scopes)}'
+                          '\n${context.tr('Created', '创建于')} ${token.createdAt}'
+                          '\n${context.tr('Last used', '上次使用')} ${token.lastUsedAt ?? context.tr('Never', '从未使用')}'
+                          '${token.expiresAt == null ? '' : '\n${context.tr('Expires', '到期于')} ${token.expiresAt}'}',
+                        ),
+                        trailing: token.revokedAt != null
+                            ? Chip(label: Text(context.tr('Revoked', '已撤销')))
+                            : token.isExpired
+                            ? Chip(label: Text(context.tr('Expired', '已过期')))
+                            : TextButton(
+                                onPressed: () => ref
+                                    .read(apiTokensProvider.notifier)
+                                    .revoke(token.id),
+                                child: Text(context.tr('Revoke', '撤销')),
+                              ),
+                      ),
+                      const Divider(height: 1),
+                      ExpansionTile(
+                        title: Text(
+                          context.tr('Recent API activity', '近期 API 活动'),
+                        ),
+                        subtitle: Text(
+                          context.tr(
+                            'Request method, route and response status · 30 days',
+                            '仅记录请求方法、路由和状态码 · 保留 30 天',
                           ),
+                        ),
+                        children: [
+                          _ApiTokenUsagePanel(
+                            key: ValueKey('$workspaceId/${token.id}'),
+                            workspaceId: workspaceId,
+                            tokenId: token.id,
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               )
@@ -137,6 +163,188 @@ class TokenSettingsPage extends ConsumerWidget {
           context,
         ).showSnackBar(SnackBar(content: Text('$error')));
       }
+    }
+  }
+}
+
+class _ApiTokenUsagePanel extends ConsumerStatefulWidget {
+  const _ApiTokenUsagePanel({
+    required this.workspaceId,
+    required this.tokenId,
+    super.key,
+  });
+
+  final String? workspaceId;
+  final String tokenId;
+
+  @override
+  ConsumerState<_ApiTokenUsagePanel> createState() =>
+      _ApiTokenUsagePanelState();
+}
+
+class _ApiTokenUsagePanelState extends ConsumerState<_ApiTokenUsagePanel> {
+  List<ApiTokenUsageEntry> _entries = const [];
+  String? _nextCursor;
+  int _retentionDays = 30;
+  bool _loading = false;
+  bool _loadingMore = false;
+  Object? _error;
+  Object? _moreError;
+  bool _requested = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_requested && !_loading && widget.workspaceId != null) {
+      _requested = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load();
+      });
+    }
+    if (widget.workspaceId == null) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(context.tr('Select a workspace first.', '请先选择工作区。')),
+      );
+    }
+    if ((!_requested || _loading) && _entries.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null && _entries.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Text(context.tr('Could not load token activity.', '无法加载令牌活动。')),
+            TextButton(
+              onPressed: _load,
+              child: Text(context.tr('Retry', '重试')),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_entries.isEmpty && !_loading) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Text(
+          context.tr(
+            'No API requests recorded in the last $_retentionDays days.',
+            '最近 $_retentionDays 天没有 API 请求记录。',
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        for (final entry in _entries)
+          ListTile(
+            dense: true,
+            leading: SizedBox(
+              width: 80,
+              child: Chip(
+                visualDensity: VisualDensity.compact,
+                label: Text(entry.method),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+            title: SelectableText(
+              entry.routeTemplate,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+            subtitle: Text(
+              '${context.tr('Status', '状态')} ${entry.statusCode} · ${entry.createdAt}',
+            ),
+            trailing: Icon(
+              entry.statusCode < 400
+                  ? Icons.check_circle_outline
+                  : Icons.error_outline,
+              color: entry.statusCode < 400 ? Colors.green : Colors.deepOrange,
+            ),
+          ),
+        if (_moreError != null)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              context.tr('Could not load more activity.', '无法加载更多活动。'),
+            ),
+          ),
+        if (_nextCursor != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: OutlinedButton.icon(
+              onPressed: _loadingMore ? null : _loadMore,
+              icon: _loadingMore
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.expand_more),
+              label: Text(context.tr('Load older requests', '加载更早请求')),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _load() async {
+    final workspaceId = widget.workspaceId;
+    if (workspaceId == null || !mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final page = await ref
+          .read(apiTokenUsageRepositoryProvider)
+          .load(workspaceId: workspaceId, tokenId: widget.tokenId);
+      if (!mounted) return;
+      setState(() {
+        _entries = page.entries;
+        _nextCursor = page.nextCursor;
+        _retentionDays = page.retentionDays;
+        _loading = false;
+      });
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    final workspaceId = widget.workspaceId;
+    final cursor = _nextCursor;
+    if (workspaceId == null || cursor == null) return;
+    setState(() {
+      _loadingMore = true;
+      _moreError = null;
+    });
+    try {
+      final page = await ref
+          .read(apiTokenUsageRepositoryProvider)
+          .load(
+            workspaceId: workspaceId,
+            tokenId: widget.tokenId,
+            cursor: cursor,
+          );
+      if (!mounted) return;
+      setState(() {
+        _entries = [..._entries, ...page.entries];
+        _nextCursor = page.nextCursor;
+        _loadingMore = false;
+      });
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _moreError = error;
+        _loadingMore = false;
+      });
     }
   }
 }

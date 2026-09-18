@@ -137,6 +137,7 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("size()", is(1));
         given().header("Authorization", auth)
+                .queryParam("private_marker", "never-store-this")
                 .get("/api/v1/sites/" + siteId + "/analytics/overview")
                 .then()
                 .statusCode(200);
@@ -149,6 +150,10 @@ class ControlPlaneResourceTest {
                 .body("code", is("API_TOKEN_SCOPE_REQUIRED"));
         given().header("Authorization", auth)
                 .get("/api/v1/workspaces/" + workspaceId + "/api-tokens")
+                .then()
+                .statusCode(403);
+        given().header("Authorization", auth)
+                .get("/api/v1/workspaces/" + workspaceId + "/api-tokens/" + readId + "/usage")
                 .then()
                 .statusCode(403);
         given().header("Authorization", auth)
@@ -205,6 +210,39 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("find { it.id == '" + readId + "' }.lastUsedAt", notNullValue());
+
+        String usagePath = "/api/v1/workspaces/" + workspaceId + "/api-tokens/" + readId + "/usage";
+        var usagePage = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("limit", 1)
+                .get(usagePath)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", is(1))
+                .body("retentionDays", is(30))
+                .extract();
+        String usageCursor = usagePage.path("nextCursor");
+        assertNotNull(usageCursor);
+        var usageHistory = given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("limit", 100)
+                .get(usagePath)
+                .then()
+                .statusCode(200)
+                .extract();
+        assertFalse(usageHistory.asString().contains("never-store-this"));
+        assertFalse(usageHistory.asString().contains(siteId));
+        assertTrue(usageHistory.path("entries").toString().contains("/api/v1/sites/{siteId}/analytics/overview"));
+        assertTrue(usageHistory.path("entries").toString().contains("statusCode=403"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .queryParam("limit", 1)
+                .queryParam("cursor", usageCursor)
+                .get(usagePath)
+                .then()
+                .statusCode(200)
+                .body("entries.size()", is(1));
+        given().header("Authorization", "Bearer " + other.access())
+                .get(usagePath)
+                .then()
+                .statusCode(404);
 
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")

@@ -48,6 +48,81 @@ class CreatedApiToken {
   final String plainToken;
 }
 
+class ApiTokenUsageEntry {
+  const ApiTokenUsageEntry({
+    required this.id,
+    required this.method,
+    required this.routeTemplate,
+    required this.statusCode,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String method;
+  final String routeTemplate;
+  final int statusCode;
+  final DateTime createdAt;
+
+  factory ApiTokenUsageEntry.fromJson(Map<String, dynamic> json) =>
+      ApiTokenUsageEntry(
+        id: json['id'] as String,
+        method: json['method'] as String,
+        routeTemplate: json['routeTemplate'] as String,
+        statusCode: (json['statusCode'] as num).toInt(),
+        createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      );
+}
+
+class ApiTokenUsagePage {
+  const ApiTokenUsagePage({
+    required this.entries,
+    required this.nextCursor,
+    required this.retentionDays,
+  });
+
+  final List<ApiTokenUsageEntry> entries;
+  final String? nextCursor;
+  final int retentionDays;
+
+  factory ApiTokenUsagePage.fromJson(Map<String, dynamic> json) =>
+      ApiTokenUsagePage(
+        entries: ((json['entries'] as List?) ?? const [])
+            .whereType<Map>()
+            .map(
+              (entry) =>
+                  ApiTokenUsageEntry.fromJson(Map<String, dynamic>.from(entry)),
+            )
+            .toList(growable: false),
+        nextCursor: json['nextCursor'] as String?,
+        retentionDays: (json['retentionDays'] as num?)?.toInt() ?? 30,
+      );
+}
+
+final apiTokenUsageRepositoryProvider = Provider(
+  (ref) => ApiTokenUsageRepository(ref),
+);
+
+class ApiTokenUsageRepository {
+  ApiTokenUsageRepository(this.ref);
+  final Ref ref;
+
+  Future<ApiTokenUsagePage> load({
+    required String workspaceId,
+    required String tokenId,
+    String? cursor,
+  }) async {
+    final path = Uri(
+      path: '/api/v1/workspaces/$workspaceId/api-tokens/$tokenId/usage',
+      queryParameters: {'limit': '25', 'cursor': ?cursor},
+    ).toString();
+    final response = await ref.read(apiProvider).request('GET', path);
+    if (response is! Map) {
+      throw const FormatException('Invalid API token activity response');
+    }
+    return ApiTokenUsagePage.fromJson(Map<String, dynamic>.from(response));
+  }
+}
+
 final apiTokensProvider =
     AsyncNotifierProvider<ApiTokensController, List<ApiTokenSummary>>(
       ApiTokensController.new,

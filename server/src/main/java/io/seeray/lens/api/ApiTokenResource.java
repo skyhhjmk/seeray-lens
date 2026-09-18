@@ -2,6 +2,7 @@ package io.seeray.lens.api;
 
 import io.quarkus.security.Authenticated;
 import io.seeray.lens.application.ApiTokenService;
+import io.seeray.lens.application.ApiTokenUsageService;
 import io.seeray.lens.domain.token.ApiToken;
 import jakarta.validation.constraints.*;
 import jakarta.ws.rs.*;
@@ -15,9 +16,11 @@ import java.util.*;
 @Produces(MediaType.APPLICATION_JSON)
 public class ApiTokenResource {
     private final ApiTokenService tokens;
+    private final ApiTokenUsageService usage;
 
-    public ApiTokenResource(ApiTokenService tokens) {
+    public ApiTokenResource(ApiTokenService tokens, ApiTokenUsageService usage) {
         this.tokens = tokens;
+        this.usage = usage;
     }
 
     @GET
@@ -38,6 +41,16 @@ public class ApiTokenResource {
     public Response revoke(@PathParam("workspaceId") UUID workspace, @PathParam("tokenId") UUID token) {
         tokens.revoke(workspace, token);
         return Response.noContent().build();
+    }
+
+    @GET
+    @Path("/{tokenId}/usage")
+    public ApiTokenUsageService.Page usage(
+            @PathParam("workspaceId") UUID workspace,
+            @PathParam("tokenId") UUID token,
+            @QueryParam("cursor") String cursor,
+            @DefaultValue("25") @QueryParam("limit") int limit) {
+        return usage.list(workspace, token, cursor, limit);
     }
 
     static TokenDto dto(ApiToken t) {

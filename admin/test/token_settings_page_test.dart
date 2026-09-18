@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:seeray_lens_admin/core/network/seeray_api.dart';
+import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 import 'package:seeray_lens_admin/features/tokens/application/token_controller.dart';
 import 'package:seeray_lens_admin/features/tokens/presentation/token_settings_page.dart';
 import 'package:seeray_lens_admin/features/workspaces/application/workspace_controller.dart';
@@ -13,6 +15,7 @@ void main() {
       overrides: [
         currentWorkspaceProvider.overrideWith(CurrentWorkspaceController.new),
         apiTokensProvider.overrideWith(_FakeTokensController.new),
+        apiProvider.overrideWithValue(_TokenUsageApi()),
       ],
     );
     addTearDown(container.dispose);
@@ -29,6 +32,20 @@ void main() {
     expect(find.textContaining('Sites: read'), findsNWidgets(2));
     expect(find.textContaining('Never'), findsNWidgets(2));
     expect(find.text('Expired'), findsOneWidget);
+    await tester.tap(find.text('Recent API activity').first);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('/api/v1/sites/{siteId}/analytics/overview'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Status 200'), findsOneWidget);
+    await tester.tap(find.text('Load older requests'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('/api/v1/sites/{siteId}/analytics/events'),
+      findsOneWidget,
+    );
+    expect(_TokenUsageApi.lastCursor, contains('usage-1'));
     await tester.tap(find.text('Create token'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'test token');
@@ -50,6 +67,53 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('srl_secret_once'), findsNothing);
   });
+}
+
+class _TokenUsageApi extends SeeRayApi {
+  _TokenUsageApi() : super(baseUrl: 'https://lens.example.test');
+  static String? lastCursor;
+
+  @override
+  Future<dynamic> request(
+    String method,
+    String path, {
+    Object? body,
+    bool retried = false,
+  }) async {
+    if (path.contains('/api-tokens/existing-token/usage')) {
+      final cursor = Uri.parse(path).queryParameters['cursor'];
+      lastCursor = cursor;
+      if (cursor != null) {
+        return {
+          'entries': [
+            {
+              'id': 'usage-2',
+              'method': 'GET',
+              'routeTemplate': '/api/v1/sites/{siteId}/analytics/events',
+              'statusCode': 200,
+              'createdAt': '2026-09-18T01:00:00Z',
+            },
+          ],
+          'nextCursor': null,
+          'retentionDays': 30,
+        };
+      }
+      return {
+        'entries': [
+          {
+            'id': 'usage-1',
+            'method': 'GET',
+            'routeTemplate': '/api/v1/sites/{siteId}/analytics/overview',
+            'statusCode': 200,
+            'createdAt': '2026-09-19T01:00:00Z',
+          },
+        ],
+        'nextCursor': '2026-09-19T01:00:00Z|usage-1',
+        'retentionDays': 30,
+      };
+    }
+    throw StateError('Unexpected request $method $path');
+  }
 }
 
 class _FakeTokensController extends ApiTokensController {
