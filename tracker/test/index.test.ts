@@ -96,6 +96,45 @@ describe('tracker package', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('attaches only explicitly set User IDs to opted-in non-anonymous events', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    vi.stubGlobal('localStorage', storageStub(new Map<string, string>()));
+    vi.stubGlobal('sessionStorage', storageStub(new Map<string, string>()));
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+
+    const tracker = new Tracker({ siteId: 'srl_user_identity', requireConsent: true });
+    tracker.setUserId('opaque-account-42');
+    tracker.track('before-consent');
+    await tracker.flush();
+    expect(fetch).not.toHaveBeenCalled();
+
+    tracker.setConsent(true);
+    tracker.setUserId('opaque-account-42');
+    tracker.track('identified');
+    tracker.track('anonymous-event', { anonymous: true });
+    tracker.setUserId(null);
+    tracker.track('after-clear');
+    await tracker.flush();
+
+    const body = JSON.parse(fetch.mock.calls[0]![1]!.body as string) as {
+      events: Array<{ type: string; userId?: string }>;
+    };
+    expect(body.events).toEqual([
+      expect.objectContaining({ type: 'identified', userId: 'opaque-account-42' }),
+      expect.objectContaining({ type: 'anonymous-event' }),
+      expect.objectContaining({ type: 'after-clear' }),
+    ]);
+    expect(body.events[1]).not.toHaveProperty('userId');
+    expect(body.events[2]).not.toHaveProperty('userId');
+
+    tracker.setUserId('opaque-account-42');
+    tracker.optOut();
+    tracker.track('after-opt-out');
+    await tracker.flush();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('honors opt-out even when consent is not required by site policy', async () => {
     vi.stubGlobal('navigator', { doNotTrack: '0' });
     const local = new Map<string, string>();

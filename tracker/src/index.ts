@@ -11,7 +11,7 @@ export interface TrackOptions { url?: string; title?: string; referrer?: string;
 export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
 export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
 interface ClientContext { browser: string; browserVersion?: string; operatingSystem: string; operatingSystemVersion?: string; deviceType: string; language?: string; screenWidth?: number; screenHeight?: number; viewportWidth?: number; viewportHeight?: number; pixelRatio?: number; }
-interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId?: string; sessionId?: string; context: ClientContext; }
+interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId?: string; sessionId?: string; userId?: string; context: ClientContext; }
 interface HeatmapConfig { enabled: boolean; sampleRate: number; version?: number; autoSnapshotEnabled: boolean; recordingEnabled: boolean; recordingSampleRate: number; }
 interface TagDefinition { type?: unknown; trigger?: unknown; triggers?: unknown; eventType?: unknown; category?: unknown; action?: unknown; name?: unknown; code?: unknown; properties?: unknown; }
 interface TagPreviewEvent { tagIndex: number; triggerEvent: string; outcome: 'fired' | 'no_match' | 'blocked'; pagePath: string; }
@@ -135,7 +135,7 @@ export class Tracker {
   private readonly tagManagerPreviewEndpoint?: string;
   private readonly tagManagerPreviewEventsEndpoint?: string;
   private readonly tagManagerPreviewToken?: string;
-  private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false;
+  private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false; private userId: string | undefined;
   private heatmapConfig: HeatmapConfig | undefined; private heatmapQueue: HeatmapEvent[] = []; private heatmapTimer: ReturnType<typeof setTimeout> | undefined; private heatmapInstance: string | undefined; private heatmapUrl = ''; private heatmapLayoutVersion = 'unversioned'; private heatmapSelected = false; private heatmapNavigating = false;
   private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private formListenerInstalled = false; private mediaListenerInstalled = false; private errorListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private formViewObserver: IntersectionObserver | undefined; private formMutationObserver: MutationObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private formSeen = new WeakSet<Element>(); private formStarted = new WeakSet<Element>(); private interactedFormFields = new WeakSet<Element>(); private activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>(); private mediaStarted = new WeakSet<Element>(); private mediaCompleted = new WeakSet<Element>(); private mediaMilestones = new WeakMap<Element, Set<number>>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
   private readonly containers = new Map<string, ContainerRegistration>(); private readonly scrollBins = new Map<string, Set<number>>(); private readonly lastScroll = new Map<string, number>();
@@ -175,11 +175,13 @@ export class Tracker {
     return this.options.requireConsent ? 'unknown' : 'granted';
   }
   hasConsent(): boolean { return this.getConsentState() === 'granted'; }
+  setUserId(userId: string | null): void { this.userId = userId === null || !this.collectionAllowed() ? undefined : boundedText(userId, 256); }
   setConsent(granted: boolean): void {
     const state = granted ? 'granted' : 'denied';
     this.consentOverride = state;
     try { globalThis.localStorage?.setItem(this.consentKey(), state); } catch { /* Storage may be unavailable in restrictive browser contexts. */ }
     if (!granted) {
+      this.userId = undefined;
       this.queue = [];
       this.heatmapQueue = [];
       this.heatmapRetry = undefined;
@@ -544,7 +546,7 @@ export class Tracker {
     });
   }
   push(data: DataLayerEvent): void { if (!data?.event) return; this.track(data.event, { url: data.url, title: data.title, referrer: data.referrer, category: data.eventCategory, action: data.eventAction, name: data.eventName, properties: data.properties }); this.fireTagTriggers(data); }
-  track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title === null ? undefined : options.title ?? globalThis.document?.title, referrer: options.referrer === null ? undefined : options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: options.anonymous ? undefined : this.visitorId, sessionId: options.anonymous ? undefined : this.sessionId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
+  track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title === null ? undefined : options.title ?? globalThis.document?.title, referrer: options.referrer === null ? undefined : options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: options.anonymous ? undefined : this.visitorId, sessionId: options.anonymous ? undefined : this.sessionId, userId: options.anonymous ? undefined : this.userId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
   async flush(unload = false): Promise<void> { if (this.timer) clearTimeout(this.timer); this.timer = undefined; if (!this.queue.length || !this.collectionAllowed()) return; const events = this.queue.splice(0, this.maxBatchSize); const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events }); if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return; try { const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok) throw new Error(`collector returned ${response.status}`); } catch { this.queue.unshift(...events); this.schedule(); } }
 
   beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); this.formViewObserver?.disconnect(); } this.pageViewRecorded = false; }
@@ -1188,6 +1190,7 @@ export const SeeRay = {
   },
   ready(): Promise<void> { return Promise.all([...trackers.values()].map(t => t.ready())).then(() => undefined); },
   trackPageView(options?: TrackOptions): void { trackers.forEach(t => t.trackPageView(options)); },
+  setUserId(userId: string | null, siteId?: string): void { if (siteId) trackers.get(siteId)?.setUserId(userId); else trackers.forEach(t => t.setUserId(userId)); },
   track(type: string, options?: TrackOptions): void { trackers.forEach(t => t.track(type, options)); },
   push(data: DataLayerEvent): void { if (!data || !data.event) return; trackers.forEach(t => t.push(data)); },
   assignExperiment(experiment: string, variations?: string[]): string | undefined { return [...trackers.values()][0]?.assignExperiment(experiment, variations); },
