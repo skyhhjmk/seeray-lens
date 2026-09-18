@@ -18,9 +18,11 @@ public class AuthService {
     long refreshDays;
 
     private final JwtService jwt;
+    private final WorkspaceInvitationService invitations;
 
-    public AuthService(JwtService jwt) {
+    public AuthService(JwtService jwt, WorkspaceInvitationService invitations) {
         this.jwt = jwt;
+        this.invitations = invitations;
     }
 
     @Transactional
@@ -52,6 +54,27 @@ public class AuthService {
         member.role = WorkspaceRole.OWNER;
         member.createdAt = now;
         member.persist();
+        return issue(user, now);
+    }
+
+    @Transactional
+    public Tokens registerForInvitation(String email, String password, String displayName, String invitationToken) {
+        String normalized = email.trim().toLowerCase(Locale.ROOT);
+        if (AppUser.count("email", normalized) > 0)
+            throw new ControlPlaneException(
+                    409, "EMAIL_EXISTS", "Email already registered; sign in to accept this invitation.");
+        Instant now = Instant.now();
+        AppUser user = new AppUser();
+        user.id = UuidV7.next();
+        user.email = normalized;
+        user.passwordHash = BcryptUtil.bcryptHash(password);
+        String safeDisplayName = displayName == null ? "" : displayName.trim();
+        user.displayName = safeDisplayName.isBlank() ? "User" : safeDisplayName;
+        user.status = UserStatus.ACTIVE;
+        user.createdAt = now;
+        user.updatedAt = now;
+        user.persist();
+        invitations.acceptForNewAccount(invitationToken, normalized, user);
         return issue(user, now);
     }
 

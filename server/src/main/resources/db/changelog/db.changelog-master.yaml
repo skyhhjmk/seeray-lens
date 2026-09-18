@@ -377,3 +377,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0054-search-console-property.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0055-workspace-invitations
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0055-workspace-invitations.sql
+            relativeToChangelogFile: false

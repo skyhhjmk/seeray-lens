@@ -4,6 +4,8 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.quarkus.mailer.Mail;
+import io.quarkus.mailer.MockMailbox;
 import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.seeray.lens.application.AnalyticsAggregationService;
@@ -28,6 +30,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.sql.DataSource;
@@ -40,6 +43,9 @@ class ControlPlaneResourceTest {
 
     @Inject
     DataSource dataSource;
+
+    @Inject
+    MockMailbox mailbox;
 
     @Inject
     AnalyticsFactBuilder factBuilder;
@@ -384,6 +390,124 @@ class ControlPlaneResourceTest {
                 .get("/api/v1/workspaces/" + workspaceId)
                 .then()
                 .statusCode(404);
+    }
+
+    @Test
+    void workspaceInvitationsCoverRegistrationAcceptanceAndRevocation() {
+        mailbox.clear();
+
+        String ownerEmail = "invite-owner" + System.nanoTime() + "@example.test";
+        String newEmail = "invite-new" + System.nanoTime() + "@example.test";
+        String existingEmail = "invite-existing" + System.nanoTime() + "@example.test";
+        Tokens owner = register(ownerEmail);
+        Tokens existingUser = register(existingEmail);
+        Tokens wrongUser = register("invite-wrong" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String endpoint = "/api/v1/workspaces/" + workspaceId + "/invitations";
+
+        var newInvitation = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + newEmail + "\",\"role\":\"viewer\"}")
+                .post(endpoint)
+                .then()
+                .statusCode(201)
+                .body("email", is(newEmail))
+                .body("role", is("viewer"))
+                .body("status", is("pending"))
+                .body("canRevoke", is(true))
+                .body("tokenHash", nullValue())
+                .extract();
+        Mail newInviteMail = mailbox.getMailsSentTo(newEmail).getFirst();
+        assertTrue(newInviteMail.getSubject().contains("Workspace invitation"));
+        assertTrue(newInviteMail.getText().contains("Accept this invitation"));
+        String token = java.util.regex.Pattern.compile("accept-invitation\\?token=([A-Za-z0-9_-]+)")
+                .matcher(newInviteMail.getText())
+                .results()
+                .findFirst()
+                .orElseThrow()
+                .group(1);
+        String publicPreview = "/api/v1/auth/invitations/" + token;
+        given().get(publicPreview)
+                .then()
+                .statusCode(200)
+                .body("email", is(newEmail))
+                .body("role", is("viewer"))
+                .body("accountExists", is(false));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + newEmail + "\",\"role\":\"viewer\"}")
+                .post(endpoint)
+                .then()
+                .statusCode(409);
+        given().header("Authorization", "Bearer " + wrongUser.access())
+                .contentType("application/json")
+                .body("{\"invitationToken\":\"" + token + "\"}")
+                .post("/api/v1/workspace-invitations/accept")
+                .then()
+                .statusCode(403);
+
+        var newAccount = given().contentType("application/json")
+                .body("{\"email\":\"" + newEmail + "\",\"password\":\"correct-horse-battery\","
+                        + "\"displayName\":\"Invited User\",\"invitationToken\":\"" + token + "\"}")
+                .post("/api/v1/auth/register-invitation")
+                .then()
+                .statusCode(200)
+                .extract();
+        String newUserAccess = newAccount.path("accessToken");
+        workspace(newUserAccess).statusCode(200).body("size()", is(1)).body("[0].role", is("viewer"));
+        given().header("Authorization", "Bearer " + newUserAccess)
+                .get(endpoint)
+                .then()
+                .statusCode(403);
+        given().get(publicPreview).then().statusCode(410);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + existingEmail + "\",\"role\":\"admin\"}")
+                .post(endpoint)
+                .then()
+                .statusCode(201);
+        Matcher existingTokenMatcher = java.util.regex.Pattern.compile("accept-invitation\\?token=([A-Za-z0-9_-]+)")
+                .matcher(mailbox.getMailsSentTo(existingEmail).getFirst().getText());
+        assertTrue(existingTokenMatcher.find());
+        String existingToken = existingTokenMatcher.group(1);
+        given().header("Authorization", "Bearer " + existingUser.access())
+                .contentType("application/json")
+                .body("{\"invitationToken\":\"" + existingToken + "\"}")
+                .post("/api/v1/workspace-invitations/accept")
+                .then()
+                .statusCode(200)
+                .body("workspaceId", is(workspaceId))
+                .body("role", is("admin"));
+        given().header("Authorization", "Bearer " + existingUser.access())
+                .get(endpoint)
+                .then()
+                .statusCode(200)
+                .body("canManage", is(false));
+        given().header("Authorization", "Bearer " + wrongUser.access())
+                .contentType("application/json")
+                .body("{\"invitationToken\":\"" + existingToken + "\"}")
+                .post("/api/v1/workspace-invitations/accept")
+                .then()
+                .statusCode(410);
+
+        String revokeEmail = "invite-revoke" + System.nanoTime() + "@example.test";
+        var revokeInvitation = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"email\":\"" + revokeEmail + "\",\"role\":\"viewer\"}")
+                .post(endpoint)
+                .then()
+                .statusCode(201)
+                .extract();
+        Matcher revokeTokenMatcher = java.util.regex.Pattern.compile("accept-invitation\\?token=([A-Za-z0-9_-]+)")
+                .matcher(mailbox.getMailsSentTo(revokeEmail).getFirst().getText());
+        assertTrue(revokeTokenMatcher.find());
+        String revokeToken = revokeTokenMatcher.group(1);
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(endpoint + "/" + revokeInvitation.path("id"))
+                .then()
+                .statusCode(204);
+        given().get("/api/v1/auth/invitations/" + revokeToken).then().statusCode(410);
     }
 
     @Test

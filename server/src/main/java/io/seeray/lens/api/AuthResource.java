@@ -22,6 +22,12 @@ public class AuthResource {
     }
 
     @POST
+    @Path("/register-invitation")
+    public TokenResponse registerInvitation(RegisterInvitationRequest r) {
+        return tokens(auth.registerForInvitation(r.email, r.password, r.displayName, r.invitationToken));
+    }
+
+    @POST
     @Path("/login")
     public TokenResponse login(LoginRequest r) {
         return tokens(auth.login(r.email, r.password));
@@ -48,6 +54,12 @@ public class AuthResource {
             @Email @NotBlank String email,
             @NotBlank @Size(min = 12, max = 200) String password,
             @Size(max = 120) String displayName) {}
+
+    public record RegisterInvitationRequest(
+            @Email @NotBlank String email,
+            @NotBlank @Size(min = 12, max = 200) String password,
+            @Size(max = 120) String displayName,
+            @NotBlank @Size(max = 128) String invitationToken) {}
 
     public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}
 
