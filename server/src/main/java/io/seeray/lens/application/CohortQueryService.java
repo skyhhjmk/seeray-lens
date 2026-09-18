@@ -14,6 +14,7 @@ import javax.sql.DataSource;
 @ApplicationScoped
 public class CohortQueryService {
     public static final int MAX_RANGE_DAYS = 3660;
+    public static final int MAX_CUSTOM_PERIOD_DAYS = 365;
 
     private static final String MEANINGFUL_ACTIVITY = "(s.page_view_count>0 or exists(select 1 from raw_event e "
             + "where e.site_id=s.site_id and e.client_session_id=s.client_session_id "
@@ -70,7 +71,21 @@ public class CohortQueryService {
             UUID goalId,
             String metric,
             UUID metricGoalId) {
-        if (!validPeriodWindow(period, periods)) {
+        return report(siteId, range, segmentId, period, periods, basis, goalId, metric, metricGoalId, 14);
+    }
+
+    public List<RetentionCell> report(
+            UUID siteId,
+            AnalyticsQueryService.Range range,
+            UUID segmentId,
+            String period,
+            int periods,
+            String basis,
+            UUID goalId,
+            String metric,
+            UUID metricGoalId,
+            int periodDays) {
+        if (!validPeriodWindow(period, periods, periodDays)) {
             throw new ControlPlaneException(400, "INVALID_COHORT_WINDOW", "Cohort period or window is invalid");
         }
         if (!"first_visit".equals(basis) && !"goal_conversion".equals(basis)) {
@@ -91,8 +106,9 @@ public class CohortQueryService {
         }
         Site site = sites.site(siteId);
         SegmentService.SessionFilter filter = segments.sessionFilter(siteId, segmentId);
-        String cohortBucket = periodBucket("s.cohort_at", period);
-        String activityBucket = periodBucket("s.started_at", period);
+        String periodAnchor = range.from().toString();
+        String cohortBucket = periodBucket("s.cohort_at", period, periodDays, periodAnchor);
+        String activityBucket = periodBucket("s.started_at", period, periodDays, periodAnchor);
         String retentionIndex =
                 switch (period) {
                     case "day" -> "(a.activity_period-c.cohort_period)::int";
@@ -100,6 +116,7 @@ public class CohortQueryService {
                     case "month" -> "((extract(year from a.activity_period)-extract(year from c.cohort_period))*12+"
                             + "extract(month from a.activity_period)-extract(month from c.cohort_period))::int";
                     case "year" -> "(extract(year from a.activity_period)-extract(year from c.cohort_period))::int";
+                    case "custom" -> "((a.activity_period-c.cohort_period)/" + periodDays + ")::int";
                     default -> throw new IllegalStateException("Validated cohort period was not supported");
                 };
         String completionDate =
@@ -108,12 +125,13 @@ public class CohortQueryService {
                     case "week" -> "s.cohort_period+((a.period_index+1)*7-1)<=?::date";
                     case "month" -> "(s.cohort_period+(a.period_index+1)*interval '1 month'-interval '1 day')::date<=?::date";
                     case "year" -> "(s.cohort_period+(a.period_index+1)*interval '1 year'-interval '1 day')::date<=?::date";
+                    case "custom" -> "(s.cohort_period+(a.period_index+1)*" + periodDays + "-1)<=?::date";
                     default -> throw new IllegalStateException("Validated cohort period was not supported");
                 };
         String goalActivityCtes;
         if ("goal_conversions".equals(metric) || "goal_value".equals(metric)) {
-            String conversionBucket = periodBucket(GOAL_EVENT_TIMESTAMP, period);
-            String conversionIndex = periodIndex("a.activity_period", "a.cohort_period", period);
+            String conversionBucket = periodBucket(GOAL_EVENT_TIMESTAMP, period, periodDays, periodAnchor);
+            String conversionIndex = periodIndex("a.activity_period", "a.cohort_period", period, periodDays);
             String selectedGoalFilter = "goal_conversions".equals(metric) ? "and g.id=? " : "";
             goalActivityCtes = "goal_events as (select c.cohort_period,c.visitor_id," + conversionBucket
                     + " activity_period,g.fixed_value from cohort_members c "
@@ -136,8 +154,8 @@ public class CohortQueryService {
         }
         String visitActivityCtes;
         if ("visits".equals(metric)) {
-            String visitBucket = periodBucket("s.started_at", period);
-            String visitIndex = periodIndex("a.activity_period", "a.cohort_period", period);
+            String visitBucket = periodBucket("s.started_at", period, periodDays, periodAnchor);
+            String visitIndex = periodIndex("a.activity_period", "a.cohort_period", period, periodDays);
             visitActivityCtes = "visit_events as (select c.cohort_period,c.visitor_id,s.id session_id," + visitBucket
                     + " activity_period from cohort_members c join eligible_sessions s "
                     + "on s.visitor_id=c.visitor_id and s.started_at>=c.cohort_at "
@@ -253,34 +271,44 @@ public class CohortQueryService {
         }
     }
 
-    private static boolean validPeriodWindow(String period, int periods) {
+    private static boolean validPeriodWindow(String period, int periods, int periodDays) {
         if (period == null) return false;
         return switch (period) {
             case "day" -> periods == 7 || periods == 14 || periods == 30;
             case "week" -> periods == 4 || periods == 8 || periods == 12;
             case "month" -> periods == 3 || periods == 6 || periods == 12;
             case "year" -> periods == 2 || periods == 3 || periods == 5 || periods == 10;
+            case "custom" -> (periods == 2 || periods == 4 || periods == 8 || periods == 12)
+                    && periodDays >= 1
+                    && periodDays <= MAX_CUSTOM_PERIOD_DAYS;
             default -> false;
         };
     }
 
-    private static String periodBucket(String value, String period) {
+    private static String periodBucket(String value, String period, int periodDays, String periodAnchor) {
         return switch (period) {
             case "day" -> "(" + value + " at time zone ?)::date";
             case "week" -> "date_trunc('week',(" + value + " at time zone ?)::date)::date";
             case "month" -> "date_trunc('month',(" + value + " at time zone ?)::date)::date";
             case "year" -> "date_trunc('year',(" + value + " at time zone ?)::date)::date";
+            case "custom" -> {
+                String anchor = "date '" + periodAnchor + "'";
+                String localDate = "(" + value + " at time zone ?)::date";
+                String offset = "(" + localDate + " - " + anchor + ")";
+                yield "(" + anchor + "+(floor(" + offset + "::numeric/" + periodDays + ")*" + periodDays + ")::int)";
+            }
             default -> throw new IllegalStateException("Validated cohort period was not supported");
         };
     }
 
-    private static String periodIndex(String activityPeriod, String cohortPeriod, String period) {
+    private static String periodIndex(String activityPeriod, String cohortPeriod, String period, int periodDays) {
         return switch (period) {
             case "day" -> "(" + activityPeriod + "-" + cohortPeriod + ")::int";
             case "week" -> "((" + activityPeriod + "-" + cohortPeriod + ")/7)::int";
             case "month" -> "((extract(year from " + activityPeriod + ")-extract(year from " + cohortPeriod + "))*12+"
                     + "extract(month from " + activityPeriod + ")-extract(month from " + cohortPeriod + "))::int";
             case "year" -> "(extract(year from " + activityPeriod + ")-extract(year from " + cohortPeriod + "))::int";
+            case "custom" -> "((" + activityPeriod + "-" + cohortPeriod + ")/" + periodDays + ")::int";
             default -> throw new IllegalStateException("Validated cohort period was not supported");
         };
     }

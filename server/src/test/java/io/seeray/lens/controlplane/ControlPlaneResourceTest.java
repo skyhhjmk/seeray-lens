@@ -1790,6 +1790,69 @@ class ControlPlaneResourceTest {
                 .getList(".");
         LocalDate cohortMonth = cohortWeek.plusDays(1).withDayOfMonth(1);
         assertTrue(monthly.stream().anyMatch(cell -> cohortMonth.toString().equals(cell.get("cohortPeriod"))));
+
+        List<java.util.Map<String, Object>> custom = given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=custom&periodDays=14&periods=4")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var customZero = custom.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(3, customZero.get("cohortSize"));
+        var customOne = custom.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertFalse(Boolean.TRUE.equals(customOne.get("complete")));
+        List<java.util.Map<String, Object>> customVisits = given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=custom&periodDays=14&periods=4&metric=visits")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var customVisitZero = customVisits.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(((Number) customVisitZero.get("visits")).longValue() > 0);
+        List<java.util.Map<String, Object>> customGoalValue = given().header(
+                        "Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=custom&periodDays=14&periods=4&metric=goal_value")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var customGoalValueZero = customGoalValue.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(17, ((Number) customGoalValueZero.get("goalValue")).intValue());
+        List<java.util.Map<String, Object>> customConversions = given().header(
+                        "Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=custom&periodDays=14&periods=4&metric=goal_conversions&metricGoalId="
+                        + goalId)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var customConversionZero = customConversions.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(1, customConversionZero.get("goalConversions"));
+        assertEquals(1, customConversionZero.get("goalConvertedVisitors"));
         String yearRangeFrom = cohortWeek.minusYears(3).toString();
         String yearReportPath = "/api/v1/sites/" + siteId + "/analytics/cohorts?from=" + yearRangeFrom + "&to=" + to
                 + "&period=year&periods=3";
@@ -1816,6 +1879,10 @@ class ControlPlaneResourceTest {
         assertFalse(Boolean.TRUE.equals(immatureYear.get("complete")));
 
         LocalDate today = LocalDate.now(ZoneId.of("UTC"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&period=custom&periodDays=366&periods=4")
+                .then()
+                .statusCode(400);
         given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + siteId + "/analytics/cohorts?from=" + today.minusDays(3660) + "&to=" + today
                         + "&period=year&periods=3")

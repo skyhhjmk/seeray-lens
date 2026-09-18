@@ -73,6 +73,7 @@ public class AnalyticsResource {
             @QueryParam("goalId") UUID goalId,
             @QueryParam("period") @DefaultValue("week") String period,
             @QueryParam("periods") Integer periods,
+            @QueryParam("periodDays") @DefaultValue("14") int periodDays,
             @QueryParam("metric") @DefaultValue("returning_visitors") String metric,
             @QueryParam("metricGoalId") UUID metricGoalId) {
         int window = periods != null ? periods : legacyWeeks != null ? legacyWeeks : 8;
@@ -85,7 +86,8 @@ public class AnalyticsResource {
                 basis,
                 goalId,
                 metric,
-                metricGoalId);
+                metricGoalId,
+                periodDays);
     }
 
     @GET
