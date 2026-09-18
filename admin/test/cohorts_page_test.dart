@@ -41,6 +41,13 @@ void main() {
     expect(api.paths.last, contains('period=month'));
     expect(api.paths.last, contains('periods=6'));
 
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Yearly').last);
+    await tester.pumpAndSettle();
+    expect(api.paths.last, contains('period=year'));
+    expect(api.paths.last, contains('periods=5'));
+
     container
         .read(analyticsSegmentSelectionProvider('site-1').notifier)
         .select('segment-1');

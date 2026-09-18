@@ -42,6 +42,8 @@ AnalyticsDateRange analyticsLastDays(int days) {
 DateTime analyticsDateOnly(DateTime value) =>
     DateTime(value.year, value.month, value.day);
 
+const int analyticsCohortMaximumRangeDays = 3660;
+
 String analyticsRangeLabel(BuildContext context, AnalyticsRangeState state) {
   return switch (state.period) {
     AnalyticsPeriod.realtime => context.tr('Realtime', '实时'),
@@ -55,8 +57,9 @@ String analyticsRangeLabel(BuildContext context, AnalyticsRangeState state) {
 
 Future<AnalyticsRangeState?> showAnalyticsRangePicker(
   BuildContext context,
-  AnalyticsRangeState current,
-) async {
+  AnalyticsRangeState current, {
+  int? maximumRangeDays,
+}) async {
   final selection = await showModalBottomSheet<_RangeSelection>(
     context: context,
     showDragHandle: true,
@@ -73,10 +76,39 @@ Future<AnalyticsRangeState?> showAnalyticsRangePicker(
         start: current.range.from,
         end: current.range.to,
       ),
-      helpText: context.tr('Select reporting range', '选择统计日期范围'),
+      helpText: maximumRangeDays == null
+          ? context.tr('Select reporting range', '选择统计日期范围')
+          : context.tr(
+              'Select a range of up to $maximumRangeDays days',
+              '请选择不超过 $maximumRangeDays 天的范围',
+            ),
     );
     if (picked == null) return null;
     if (!context.mounted) return null;
+    final selectedDays =
+        DateTime.utc(picked.end.year, picked.end.month, picked.end.day)
+            .difference(
+              DateTime.utc(
+                picked.start.year,
+                picked.start.month,
+                picked.start.day,
+              ),
+            )
+            .inDays +
+        1;
+    if (maximumRangeDays != null && selectedDays > maximumRangeDays) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.tr(
+              'Cohort reports support ranges up to $maximumRangeDays days.',
+              '队列报告最多支持 $maximumRangeDays 天的日期范围。',
+            ),
+          ),
+        ),
+      );
+      return null;
+    }
     return AnalyticsRangeState(
       period: AnalyticsPeriod.custom,
       range: AnalyticsDateRange(

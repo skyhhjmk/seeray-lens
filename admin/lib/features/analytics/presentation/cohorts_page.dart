@@ -132,6 +132,8 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
           _period = period;
           _periods = period == 'day'
               ? 14
+              : period == 'year'
+              ? 5
               : period == 'month'
               ? 6
               : 8;
@@ -146,7 +148,11 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
     BuildContext context,
     AnalyticsRangeState current,
   ) async {
-    final selected = await showAnalyticsRangePicker(context, current);
+    final selected = await showAnalyticsRangePicker(
+      context,
+      current,
+      maximumRangeDays: analyticsCohortMaximumRangeDays,
+    );
     if (selected == null || !mounted) return;
     ref.read(analyticsRangeProvider(widget.siteId).notifier).setRange(selected);
   }
@@ -213,6 +219,7 @@ class _CohortReport extends StatelessWidget {
     final periodName = switch (period) {
       'day' => context.tr('day', '日'),
       'month' => context.tr('month', '月'),
+      'year' => context.tr('year', '年'),
       _ => context.tr('week', '周'),
     };
     final periodTitle = metric == 'goal_conversions'
@@ -224,16 +231,19 @@ class _CohortReport extends StatelessWidget {
         : switch (period) {
             'day' => context.tr('Daily retention', '每日留存'),
             'month' => context.tr('Monthly retention', '每月留存'),
+            'year' => context.tr('Yearly retention', '每年留存'),
             _ => context.tr('Weekly retention', '每周留存'),
           };
     final periodOptions = switch (period) {
       'day' => const [7, 14, 30],
       'month' => const [3, 6, 12],
+      'year' => const [2, 3, 5, 10],
       _ => const [4, 8, 12],
     };
     final periodNamePlural = switch (period) {
       'day' => 'days',
       'month' => 'months',
+      'year' => 'years',
       _ => 'weeks',
     };
     return ListView(
@@ -483,7 +493,15 @@ class _CohortReport extends StatelessWidget {
                       for (final cohortPeriod in cohorts)
                         DataRow(
                           cells: [
-                            DataCell(Text(cohortPeriod)),
+                            DataCell(
+                              Text(
+                                period == 'year'
+                                    ? DateTime.parse(
+                                        cohortPeriod,
+                                      ).year.toString()
+                                    : cohortPeriod,
+                              ),
+                            ),
                             DataCell(
                               Text(
                                 '${grouped[cohortPeriod]?[0]?.cohortSize ?? 0}',
@@ -589,6 +607,10 @@ class _CohortReport extends StatelessWidget {
                 DropdownMenuItem(
                   value: 'month',
                   child: Text(context.tr('Monthly', '按月')),
+                ),
+                DropdownMenuItem(
+                  value: 'year',
+                  child: Text(context.tr('Yearly', '按年')),
                 ),
               ],
               onChanged: (value) {
