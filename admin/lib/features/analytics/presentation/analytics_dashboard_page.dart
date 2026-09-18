@@ -85,9 +85,9 @@ class _AnalyticsDashboardPageState
                 englishTitle: 'Analytics dashboard',
                 chineseTitle: '分析仪表盘',
                 englishBody:
-                    'This dashboard summarizes the selected site for the chosen reporting period. Visitors are exact across the whole range; bounce rate and average visit duration are calculated from sessions.',
+                    'This dashboard summarizes the selected site for the chosen reporting period. Consented, unambiguous User IDs are deduplicated across devices; other visitors remain browser-scoped. Bounce rate and average visit duration are calculated from sessions.',
                 chineseBody:
-                    '此仪表盘汇总所选站点在当前统计周期内的数据。独立访客会在整个范围内精确去重；跳出率和平均访问时长由会话数据计算。',
+                    '此仪表盘汇总所选站点在当前统计周期内的数据。已同意采集且身份无歧义的 User ID 会跨设备去重；其他访客仍按浏览器统计。跳出率和平均访问时长由会话数据计算。',
               ),
               rangeState: rangeState,
               onSelectRange: () => _selectRange(rangeState),
@@ -496,8 +496,9 @@ class _TopBar extends ConsumerWidget implements PreferredSizeWidget {
         englishTitle: 'Analytics dashboard',
         chineseTitle: '分析仪表盘',
         englishBody:
-            'This dashboard summarizes the selected site for the chosen reporting period. Visitors are exact across the whole range; bounce rate and average visit duration are calculated from sessions.',
-        chineseBody: '此仪表盘汇总所选站点在当前统计周期内的数据。独立访客会在整个范围内精确去重；跳出率和平均访问时长由会话数据计算。',
+            'This dashboard summarizes the selected site for the chosen reporting period. Consented, unambiguous User IDs are deduplicated across devices; other visitors remain browser-scoped. Bounce rate and average visit duration are calculated from sessions.',
+        chineseBody:
+            '此仪表盘汇总所选站点在当前统计周期内的数据。已同意采集且身份无歧义的 User ID 会跨设备去重；其他访客仍按浏览器统计。跳出率和平均访问时长由会话数据计算。',
       ),
       IconButton(
         tooltip: context.tr('Site settings', '站点设置'),

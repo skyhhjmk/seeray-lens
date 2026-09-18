@@ -73,8 +73,7 @@ class _RealtimePageState extends ConsumerState<RealtimePage> {
 
   Widget _body(BuildContext context, List<AnalyticsLiveVisitor> visitors) {
     final uniqueVisitors = visitors
-        .map((visitor) => visitor.visitorId)
-        .toSet()
+        .where((visitor) => visitor.uniqueIdentity)
         .length;
     final eventCount = visitors.fold<int>(
       0,

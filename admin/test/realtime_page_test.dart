@@ -23,10 +23,11 @@ void main() {
     expect(api.lastPath, contains('/analytics/realtime?windowMinutes=30'));
     expect(find.text('Live visitors'), findsOneWidget);
     expect(find.text('Active visitors'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
     expect(find.textContaining('Visitor 12345678'), findsOneWidget);
-    expect(find.text('Pricing overview'), findsOneWidget);
+    expect(find.text('Pricing overview'), findsNWidgets(2));
 
-    await tester.tap(find.byType(ExpansionTile));
+    await tester.tap(find.byType(ExpansionTile).first);
     await tester.pumpAndSettle();
 
     expect(find.text('Recent activity'), findsOneWidget);
@@ -49,34 +50,42 @@ class _LiveApi extends SeeRayApi {
   }) async {
     lastPath = path;
     final now = DateTime.now().toUtc().toIso8601String();
+    final sharedVisit = <String, dynamic>{
+      'visitorId': '12345678-1234-4234-8234-123456789012',
+      'sessionId': '22345678-1234-4234-8234-123456789012',
+      'startedAt': now,
+      'lastActivityAt': now,
+      'events': 2,
+      'pageViews': 1,
+      'entryPage': '/pricing',
+      'lastEventType': 'page_view',
+      'currentPage': '/pricing',
+      'currentTitle': 'Pricing overview',
+      'countryCode': 'US',
+      'region': 'California',
+      'city': 'San Francisco',
+      'browser': 'Chrome',
+      'operatingSystem': 'Linux',
+      'deviceType': 'desktop',
+      'language': 'en-US',
+      'durationMs': 1800,
+      'uniqueIdentity': true,
+      'actions': [
+        {
+          'at': now,
+          'eventType': 'page_view',
+          'path': '/pricing',
+          'title': 'Pricing overview',
+        },
+      ],
+    };
     return [
+      sharedVisit,
       {
-        'visitorId': '12345678-1234-4234-8234-123456789012',
-        'sessionId': '22345678-1234-4234-8234-123456789012',
-        'startedAt': now,
-        'lastActivityAt': now,
-        'events': 2,
-        'pageViews': 1,
-        'entryPage': '/pricing',
-        'lastEventType': 'page_view',
-        'currentPage': '/pricing',
-        'currentTitle': 'Pricing overview',
-        'countryCode': 'US',
-        'region': 'California',
-        'city': 'San Francisco',
-        'browser': 'Chrome',
-        'operatingSystem': 'Linux',
-        'deviceType': 'desktop',
-        'language': 'en-US',
-        'durationMs': 1800,
-        'actions': [
-          {
-            'at': now,
-            'eventType': 'page_view',
-            'path': '/pricing',
-            'title': 'Pricing overview',
-          },
-        ],
+        ...sharedVisit,
+        'visitorId': '32345678-1234-4234-8234-123456789012',
+        'sessionId': '42345678-1234-4234-8234-123456789012',
+        'uniqueIdentity': false,
       },
     ];
   }

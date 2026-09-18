@@ -47,6 +47,7 @@ class AnalyticsLiveVisitor {
     required this.language,
     required this.durationMs,
     required this.actions,
+    required this.uniqueIdentity,
   });
 
   final String visitorId;
@@ -68,6 +69,7 @@ class AnalyticsLiveVisitor {
   final String? language;
   final int durationMs;
   final List<AnalyticsLiveAction> actions;
+  final bool uniqueIdentity;
 
   factory AnalyticsLiveVisitor.fromJson(Map<String, dynamic> json) =>
       AnalyticsLiveVisitor(
@@ -91,6 +93,7 @@ class AnalyticsLiveVisitor {
         deviceType: json['deviceType'] as String?,
         language: json['language'] as String?,
         durationMs: (json['durationMs'] as num?)?.toInt() ?? 0,
+        uniqueIdentity: json['uniqueIdentity'] as bool? ?? true,
         actions: (json['actions'] as List? ?? const [])
             .whereType<Map>()
             .map(
