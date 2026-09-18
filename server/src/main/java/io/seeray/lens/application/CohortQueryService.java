@@ -77,7 +77,7 @@ public class CohortQueryService {
         if ("goal_conversion".equals(basis) && goalId == null) {
             throw new ControlPlaneException(400, "GOAL_REQUIRED", "A goal is required for goal-conversion cohorts");
         }
-        if (!"returning_visitors".equals(metric) && !"goal_conversions".equals(metric)) {
+        if (!"returning_visitors".equals(metric) && !"visits".equals(metric) && !"goal_conversions".equals(metric)) {
             throw new ControlPlaneException(400, "INVALID_COHORT_METRIC", "Cohort metric is invalid");
         }
         if ("goal_conversions".equals(metric) && metricGoalId == null) {
@@ -115,7 +115,8 @@ public class CohortQueryService {
                     + "join raw_event e on e.site_id=s.site_id and e.client_session_id=s.client_session_id "
                     + "and e.client_visitor_id=v.client_visitor_id and " + GOAL_EVENT_TIMESTAMP
                     + " between s.started_at and s.last_activity_at where " + GOAL_EVENT_MATCH
-                    + " and (" + GOAL_EVENT_TIMESTAMP + " at time zone ?)::date<=?),"
+                    + " and " + GOAL_EVENT_TIMESTAMP + ">=c.cohort_at "
+                    + "and (" + GOAL_EVENT_TIMESTAMP + " at time zone ?)::date<=?),"
                     + " goal_activity as (select a.cohort_period," + conversionIndex
                     + " period_index,count(*)::bigint goal_conversions,count(distinct a.visitor_id)::bigint "
                     + "goal_converted_visitors,coalesce(sum(a.fixed_value),0)::numeric goal_value "
@@ -124,6 +125,21 @@ public class CohortQueryService {
         } else {
             goalActivityCtes = "goal_activity as (select null::date cohort_period,0::int period_index,"
                     + "0::bigint goal_conversions,0::bigint goal_converted_visitors,0::numeric goal_value where false)";
+        }
+        String visitActivityCtes;
+        if ("visits".equals(metric)) {
+            String visitBucket = periodBucket("s.started_at", period);
+            String visitIndex = periodIndex("a.activity_period", "a.cohort_period", period);
+            visitActivityCtes = "visit_events as (select c.cohort_period,c.visitor_id,s.id session_id," + visitBucket
+                    + " activity_period from cohort_members c join eligible_sessions s "
+                    + "on s.visitor_id=c.visitor_id and s.started_at>=c.cohort_at "
+                    + "where (s.started_at at time zone ?)::date<=?),"
+                    + " visit_activity as (select a.cohort_period," + visitIndex
+                    + " period_index,count(distinct a.session_id)::bigint visits from visit_events a "
+                    + "where a.activity_period>=a.cohort_period group by a.cohort_period,period_index)";
+        } else {
+            visitActivityCtes = "visit_activity as (select null::date cohort_period,0::int period_index,"
+                    + "0::bigint visits where false)";
         }
         String cohortCandidates;
         if ("goal_conversion".equals(basis)) {
@@ -148,12 +164,13 @@ public class CohortQueryService {
                 + cohortCandidates
                 + " ranked_sessions as (select e.*,row_number() over(partition by visitor_id order by cohort_at,id) first_rank "
                 + "from cohort_candidates e),"
-                + " cohort_members as (select s.visitor_id," + cohortBucket + " cohort_period "
+                + " cohort_members as (select s.visitor_id,s.cohort_at," + cohortBucket + " cohort_period "
                 + "from ranked_sessions s where s.first_rank=1 and "
                 + "(s.cohort_at at time zone ?)::date between ? and ? and (" + filter.expression() + ")),"
                 + " cohort_sizes as (select cohort_period,count(distinct visitor_id)::bigint cohort_size "
                 + "from cohort_members group by cohort_period),"
                 + goalActivityCtes + ","
+                + visitActivityCtes + ","
                 + " activity_periods as (select distinct s.visitor_id," + activityBucket + " activity_period "
                 + "from eligible_sessions s where (s.started_at at time zone ?)::date<=?),"
                 + " retained as (select c.cohort_period," + retentionIndex + " period_index,"
@@ -165,13 +182,15 @@ public class CohortQueryService {
                 + "case when a.period_index=0 then s.cohort_size else coalesce(r.retained_visitors,0) end retained_visitors,"
                 + "coalesce(g.goal_conversions,0) goal_conversions,"
                 + "coalesce(g.goal_converted_visitors,0) goal_converted_visitors,coalesce(g.goal_value,0)::numeric goal_value,"
+                + "coalesce(v.visits,0) visits,"
                 + "(a.period_index=0 or " + completionDate + ") complete "
                 + "from cohort_sizes s cross join ages a left join retained r "
                 + "on r.cohort_period=s.cohort_period and r.period_index=a.period_index "
-                + "left join goal_activity g on g.cohort_period=s.cohort_period and g.period_index=a.period_index) "
+                + "left join goal_activity g on g.cohort_period=s.cohort_period and g.period_index=a.period_index "
+                + "left join visit_activity v on v.cohort_period=s.cohort_period and v.period_index=a.period_index) "
                 + "select cohort_period,period_index,cohort_size,retained_visitors,"
                 + "case when cohort_size=0 then 0 else retained_visitors::double precision/cohort_size end,"
-                + "goal_conversions,goal_converted_visitors,goal_value,complete "
+                + "goal_conversions,goal_converted_visitors,goal_value,visits,complete "
                 + "from cells order by cohort_period desc,period_index";
 
         List<RetentionCell> result = new ArrayList<>();
@@ -195,6 +214,11 @@ public class CohortQueryService {
                 statement.setString(next++, site.timezone);
                 statement.setObject(next++, range.to());
             }
+            if ("visits".equals(metric)) {
+                statement.setString(next++, site.timezone);
+                statement.setString(next++, site.timezone);
+                statement.setObject(next++, range.to());
+            }
             statement.setString(next++, site.timezone);
             statement.setString(next++, site.timezone);
             statement.setObject(next++, range.to());
@@ -211,12 +235,13 @@ public class CohortQueryService {
                             rows.getLong(6),
                             rows.getLong(7),
                             rows.getBigDecimal(8),
-                            rows.getBoolean(9)));
+                            rows.getLong(9),
+                            rows.getBoolean(10)));
                 }
             }
             return result;
         } catch (SQLException error) {
-            throw new IllegalStateException("Could not query cohort retention", error);
+            throw new IllegalStateException("Could not query cohort report", error);
         }
     }
 
@@ -261,5 +286,6 @@ public class CohortQueryService {
             long goalConversions,
             long goalConvertedVisitors,
             BigDecimal goalValue,
+            long visits,
             boolean complete) {}
 }

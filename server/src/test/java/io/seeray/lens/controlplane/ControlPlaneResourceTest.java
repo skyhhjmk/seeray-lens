@@ -1558,9 +1558,17 @@ class ControlPlaneResourceTest {
                 "page_view",
                 cohortWeek.plusDays(8).atTime(12, 0).toInstant(java.time.ZoneOffset.UTC),
                 "/return");
+        String goalVisitor = UUID.randomUUID().toString();
         insertRaw(
                 site,
+                goalVisitor,
                 UUID.randomUUID().toString(),
+                "page_view",
+                cohortWeek.plusDays(2).atTime(10, 0).toInstant(java.time.ZoneOffset.UTC),
+                "/before-goal");
+        insertRaw(
+                site,
+                goalVisitor,
                 UUID.randomUUID().toString(),
                 "page_view",
                 cohortWeek.plusDays(2).atTime(12, 0).toInstant(java.time.ZoneOffset.UTC),
@@ -1612,6 +1620,26 @@ class ControlPlaneResourceTest {
         assertEquals(0, immatureWeek.get("retainedVisitors"));
         assertTrue(Boolean.FALSE.equals(immatureWeek.get("complete")));
 
+        List<java.util.Map<String, Object>> visitCells = given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&metric=visits")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var visitWeekZero = visitCells.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(3, visitWeekZero.get("visits"));
+        var visitWeekOne = visitCells.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(1, visitWeekOne.get("visits"));
+
         String segmentId = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"First page A\",\"matchMode\":\"all\",\"enabled\":true,"
@@ -1657,6 +1685,19 @@ class ControlPlaneResourceTest {
                 .orElseThrow();
         assertEquals(1, goalWeekZero.get("cohortSize"));
         assertEquals(1, goalWeekZero.get("retainedVisitors"));
+        List<java.util.Map<String, Object>> goalVisits = given().header("Authorization", "Bearer " + owner.access())
+                .get(goalCohortPath + "&metric=visits")
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList(".");
+        var postConversionVisits = goalVisits.stream()
+                .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
+                .filter(cell -> Integer.valueOf(0).equals(cell.get("periodIndex")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(1, postConversionVisits.get("visits"));
         var goalWeekOne = goalCohorts.stream()
                 .filter(cell -> cohortWeek.toString().equals(cell.get("cohortPeriod")))
                 .filter(cell -> Integer.valueOf(1).equals(cell.get("periodIndex")))
@@ -1688,6 +1729,10 @@ class ControlPlaneResourceTest {
         assertEquals(0, conversionWeekOne.get("goalConversions"));
         given().header("Authorization", "Bearer " + owner.access())
                 .get(reportPath + "&metric=goal_conversions")
+                .then()
+                .statusCode(400);
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(reportPath + "&metric=unknown")
                 .then()
                 .statusCode(400);
 
