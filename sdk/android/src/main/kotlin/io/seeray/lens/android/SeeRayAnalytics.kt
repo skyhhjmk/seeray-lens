@@ -74,7 +74,7 @@ class SeeRayAnalytics internal constructor(
     }
 
     fun consentState(): AnalyticsConsent = synchronized(lock) {
-        when (store.get(KEY_CONSENT)) {
+        when (readStored(KEY_CONSENT)) {
             CONSENT_GRANTED -> AnalyticsConsent.GRANTED
             CONSENT_DENIED -> AnalyticsConsent.DENIED
             else -> if (options.requireConsent) AnalyticsConsent.UNKNOWN else AnalyticsConsent.GRANTED
@@ -85,10 +85,10 @@ class SeeRayAnalytics internal constructor(
     fun setConsent(granted: Boolean) {
         synchronized(lock) {
             if (granted) {
-                store.put(KEY_CONSENT, CONSENT_GRANTED)
+                writeStored(KEY_CONSENT, CONSENT_GRANTED)
                 ensureIdentity(clock.millis())
             } else {
-                store.put(KEY_CONSENT, CONSENT_DENIED)
+                writeStored(KEY_CONSENT, CONSENT_DENIED)
                 clearIdentity()
                 queue.clear()
                 userId = null
@@ -244,7 +244,7 @@ class SeeRayAnalytics internal constructor(
         synchronized(lock) {
             if (consentState() == AnalyticsConsent.GRANTED) {
                 if (success) {
-                    store.put(KEY_SESSION_LAST_ACTIVITY, clock.millis().toString())
+                    writeStored(KEY_SESSION_LAST_ACTIVITY, clock.millis().toString())
                     sessionLastActivity = clock.millis()
                 } else {
                     for (event in batch.asReversed()) {
@@ -258,19 +258,19 @@ class SeeRayAnalytics internal constructor(
     }
 
     private fun ensureIdentity(nowMillis: Long): Pair<String, String> {
-        if (visitorId == null) visitorId = store.get(KEY_VISITOR_ID) ?: UUID.randomUUID().toString().also {
-            store.put(KEY_VISITOR_ID, it)
+        if (visitorId == null) visitorId = readStored(KEY_VISITOR_ID) ?: UUID.randomUUID().toString().also {
+            writeStored(KEY_VISITOR_ID, it)
         }
-        val persistedLastActivity = sessionLastActivity ?: store.get(KEY_SESSION_LAST_ACTIVITY)?.toLongOrNull()
-        val currentSession = sessionId ?: store.get(KEY_SESSION_ID)
+        val persistedLastActivity = sessionLastActivity ?: readStored(KEY_SESSION_LAST_ACTIVITY)?.toLongOrNull()
+        val currentSession = sessionId ?: readStored(KEY_SESSION_ID)
         if (currentSession == null || persistedLastActivity == null || nowMillis - persistedLastActivity >= SESSION_TIMEOUT_MS) {
             sessionId = UUID.randomUUID().toString()
-            store.put(KEY_SESSION_ID, sessionId!!)
+            writeStored(KEY_SESSION_ID, sessionId!!)
         } else {
             sessionId = currentSession
         }
         sessionLastActivity = nowMillis
-        store.put(KEY_SESSION_LAST_ACTIVITY, nowMillis.toString())
+        writeStored(KEY_SESSION_LAST_ACTIVITY, nowMillis.toString())
         return visitorId!! to sessionId!!
     }
 
@@ -278,10 +278,16 @@ class SeeRayAnalytics internal constructor(
         visitorId = null
         sessionId = null
         sessionLastActivity = null
-        store.remove(KEY_VISITOR_ID)
-        store.remove(KEY_SESSION_ID)
-        store.remove(KEY_SESSION_LAST_ACTIVITY)
+        removeStored(KEY_VISITOR_ID)
+        removeStored(KEY_SESSION_ID)
+        removeStored(KEY_SESSION_LAST_ACTIVITY)
     }
+
+    private fun readStored(key: String): String? = store.get("${options.siteId}:$key")
+
+    private fun writeStored(key: String, value: String) = store.put("${options.siteId}:$key", value)
+
+    private fun removeStored(key: String) = store.remove("${options.siteId}:$key")
 
     private data class AnalyticsEvent(
         val eventId: String,

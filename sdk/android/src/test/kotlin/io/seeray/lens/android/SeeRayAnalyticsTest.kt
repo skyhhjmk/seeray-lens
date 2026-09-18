@@ -35,15 +35,15 @@ class SeeRayAnalyticsTest {
         client.setConsent(true)
         client.trackPageView("https://www.example.test/home", title = "Home")
         assertEquals(1, client.pendingEventCount())
-        val visitorId = store.get("visitor_id")
+        val visitorId = store.get("srl_test:visitor_id")
         assertTrue(visitorId != null)
 
         client.optOut()
         assertEquals(AnalyticsConsent.DENIED, client.consentState())
         assertEquals(0, client.pendingEventCount())
-        assertEquals(null, store.get("visitor_id"))
-        assertEquals(null, store.get("session_id"))
-        assertEquals(null, store.get("session_last_activity"))
+        assertEquals(null, store.get("srl_test:visitor_id"))
+        assertEquals(null, store.get("srl_test:session_id"))
+        assertEquals(null, store.get("srl_test:session_last_activity"))
         assertTrue(transport.bodies.isEmpty())
     }
 
@@ -97,13 +97,41 @@ class SeeRayAnalyticsTest {
         )
 
         client.trackPageView("https://www.example.test/first")
-        val first = store.get("session_id")
-        val visitor = store.get("visitor_id")
+        val first = store.get("srl_test:session_id")
+        val visitor = store.get("srl_test:visitor_id")
         clock.advance(Duration.ofMinutes(31))
         client.trackPageView("https://www.example.test/second")
 
-        assertNotEquals(first, store.get("session_id"))
-        assertEquals(visitor, store.get("visitor_id"))
+        assertNotEquals(first, store.get("srl_test:session_id"))
+        assertEquals(visitor, store.get("srl_test:visitor_id"))
+    }
+
+    @Test
+    fun identitiesAndConsentAreIsolatedPerTrackingId() {
+        val store = MemoryAnalyticsStore()
+        val first = client(
+            SeeRayAnalyticsOptions("srl_first", "https://lens.example.test", requireConsent = true),
+            store,
+            RecordingTransport(),
+        )
+        val second = client(
+            SeeRayAnalyticsOptions("srl_second", "https://lens.example.test", requireConsent = true),
+            store,
+            RecordingTransport(),
+        )
+
+        first.setConsent(true)
+        first.trackPageView("https://first.example.test/")
+        second.setConsent(true)
+        second.trackPageView("https://second.example.test/")
+        val firstVisitor = store.get("srl_first:visitor_id")
+        val secondVisitor = store.get("srl_second:visitor_id")
+
+        assertNotEquals(firstVisitor, secondVisitor)
+        first.optOut()
+        assertEquals(null, store.get("srl_first:visitor_id"))
+        assertEquals(secondVisitor, store.get("srl_second:visitor_id"))
+        assertEquals(AnalyticsConsent.GRANTED, second.consentState())
     }
 
     @Test
