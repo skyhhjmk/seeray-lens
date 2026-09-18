@@ -343,6 +343,50 @@ class OfflineConversionData {
   final OfflineConversionHistory history;
 }
 
+class GoogleAdsConversionConfig {
+  const GoogleAdsConversionConfig({
+    required this.canManage,
+    required this.configured,
+    this.customerId,
+    this.loginCustomerId,
+    this.conversionActionId,
+    this.currencyCode,
+  });
+
+  final bool canManage;
+  final bool configured;
+  final String? customerId;
+  final String? loginCustomerId;
+  final String? conversionActionId;
+  final String? currencyCode;
+
+  factory GoogleAdsConversionConfig.fromJson(Map<String, dynamic> json) =>
+      GoogleAdsConversionConfig(
+        canManage: json['canManage'] as bool? ?? false,
+        configured: json['configured'] as bool? ?? false,
+        customerId: json['customerId'] as String?,
+        loginCustomerId: json['loginCustomerId'] as String?,
+        conversionActionId: json['conversionActionId'] as String?,
+        currencyCode: json['currencyCode'] as String?,
+      );
+}
+
+final googleAdsConversionConfigProvider =
+    FutureProvider.family<GoogleAdsConversionConfig, String>((
+      ref,
+      siteId,
+    ) async {
+      final response = await ref
+          .read(apiProvider)
+          .request(
+            'GET',
+            '/api/v1/sites/$siteId/offline-conversions/google-ads/config',
+          );
+      return GoogleAdsConversionConfig.fromJson(
+        Map<String, dynamic>.from(response as Map),
+      );
+    });
+
 final offlineConversionAnalyticsProvider =
     FutureProvider.family<OfflineConversionData, OfflineConversionQuery>((
       ref,

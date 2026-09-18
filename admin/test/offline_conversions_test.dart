@@ -71,6 +71,16 @@ void main() {
       expect(find.text('3.00'), findsOneWidget);
 
       await tester.scrollUntilVisible(
+        find.text('Send conversions to Google Ads'),
+        350,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Send conversions to Google Ads'));
+      await tester.pumpAndSettle();
+      expect(find.text('Save destination'), findsOneWidget);
+      expect(find.text('Validate with Google'), findsNothing);
+
+      await tester.scrollUntilVisible(
         find.text('Recent imports'),
         400,
         scrollable: find.byType(Scrollable).first,
@@ -105,6 +115,9 @@ class _OfflineConversionsApi extends SeeRayApi {
     bool retried = false,
   }) async {
     final uri = Uri.parse(path);
+    if (uri.path.endsWith('/offline-conversions/google-ads/config')) {
+      return {'canManage': true, 'configured': false};
+    }
     if (uri.path.endsWith('/goals')) {
       return [
         {

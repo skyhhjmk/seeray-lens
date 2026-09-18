@@ -168,6 +168,13 @@ class _OfflineConversionsPageState
         _controls(context, goals, segments, selectedGoalId, selectedSegmentId),
         const SizedBox(height: 16),
         _importPanel(context, data.history.canManage),
+        const SizedBox(height: 12),
+        GoogleAdsOfflineExportPanel(
+          siteId: widget.siteId,
+          canManage: data.history.canManage,
+          goals: goals,
+          selectedGoalId: selectedGoalId,
+        ),
         if (_importError != null) ...[
           const SizedBox(height: 12),
           _MessageCard(message: _importError!, error: true),
@@ -788,6 +795,501 @@ class _OfflineConversionsPageState
         backgroundColor: error ? Theme.of(context).colorScheme.error : null,
       ),
     );
+  }
+}
+
+class GoogleAdsOfflineExportPanel extends ConsumerStatefulWidget {
+  const GoogleAdsOfflineExportPanel({
+    required this.siteId,
+    required this.canManage,
+    required this.goals,
+    required this.selectedGoalId,
+    super.key,
+  });
+
+  final String siteId;
+  final bool canManage;
+  final List<AttributionGoal> goals;
+  final String? selectedGoalId;
+
+  @override
+  ConsumerState<GoogleAdsOfflineExportPanel> createState() =>
+      _GoogleAdsOfflineExportPanelState();
+}
+
+class _GoogleAdsOfflineExportPanelState
+    extends ConsumerState<GoogleAdsOfflineExportPanel> {
+  final _customerId = TextEditingController();
+  final _loginCustomerId = TextEditingController();
+  final _actionId = TextEditingController();
+  final _currency = TextEditingController(text: 'USD');
+  OfflineConversionImportPreview? _preview;
+  String? _goalId;
+  String _clickIdType = 'gclid';
+  String _eventSource = 'WEB';
+  String? _error;
+  String? _result;
+  bool _busy = false;
+  bool _initialized = false;
+
+  @override
+  void dispose() {
+    _customerId.dispose();
+    _loginCustomerId.dispose();
+    _actionId.dispose();
+    _currency.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final config = ref.watch(googleAdsConversionConfigProvider(widget.siteId));
+    if (!_initialized && config.hasValue) {
+      final value = config.value!;
+      _customerId.text = value.customerId ?? '';
+      _loginCustomerId.text = value.loginCustomerId ?? '';
+      _actionId.text = value.conversionActionId ?? '';
+      _currency.text = value.currencyCode ?? 'USD';
+      _goalId = widget.selectedGoalId;
+      _initialized = true;
+    }
+    return Card(
+      elevation: 0,
+      child: ExpansionTile(
+        leading: const Icon(Icons.ads_click_outlined),
+        title: Text(
+          context.tr('Send conversions to Google Ads', '回传转化到 Google Ads'),
+        ),
+        subtitle: Text(
+          widget.canManage
+              ? context.tr(
+                  'Configure a destination, reselect an imported CSV, validate it, then send.',
+                  '配置接收账户，重新选择已导入的 CSV，预检后再发送。',
+                )
+              : context.tr(
+                  'Only workspace owners and admins can configure or send conversions.',
+                  '仅工作区所有者和管理员可以配置或发送转化。',
+                ),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          config.when(
+            loading: () => const LinearProgressIndicator(),
+            error: (error, stack) => _MessageCard(
+              error: true,
+              message: context.tr(
+                'Could not load Google Ads destination settings.',
+                '无法加载 Google Ads 接收配置。',
+              ),
+            ),
+            data: (value) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr(
+                    'Server credentials: configure Google Application Default Credentials for the Data Manager API and grant that identity access to the Ads account. Credentials and raw click IDs are never stored in this site configuration.',
+                    '服务器凭据：为 Data Manager API 配置 Google Application Default Credentials，并将该身份授权给 Ads 账户。本页不保存凭据或原始点击 ID。',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 10,
+                  children: [
+                    _configField(
+                      context,
+                      _customerId,
+                      context.tr(
+                        'Ads customer ID (10 digits)',
+                        'Ads 客户 ID（10 位数字）',
+                      ),
+                    ),
+                    _configField(
+                      context,
+                      _loginCustomerId,
+                      context.tr('Manager ID (optional)', '经理账户 ID（可选）'),
+                    ),
+                    _configField(
+                      context,
+                      _actionId,
+                      context.tr(
+                        'Upload-click conversion action ID',
+                        '点击导入转化动作 ID',
+                      ),
+                    ),
+                    _configField(
+                      context,
+                      _currency,
+                      context.tr('Currency', '币种'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.tr(
+                    'The conversion action must use the “Import from clicks / Upload clicks” source. The goal fixed value is sent as the conversion value.',
+                    '转化动作来源必须是“从点击导入 / Upload clicks”；发送时使用目标配置的固定价值。',
+                  ),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: !widget.canManage || _busy
+                          ? null
+                          : _saveConfig,
+                      icon: const Icon(Icons.save_outlined),
+                      label: Text(context.tr('Save destination', '保存接收配置')),
+                    ),
+                    if (value.configured)
+                      Chip(
+                        avatar: const Icon(
+                          Icons.check_circle_outline,
+                          size: 18,
+                        ),
+                        label: Text(
+                          '${value.customerId} · ${value.currencyCode}',
+                        ),
+                      ),
+                  ],
+                ),
+                const Divider(height: 28),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: !widget.canManage || _busy
+                        ? null
+                        : _chooseExportFile,
+                    icon: const Icon(Icons.folder_open_outlined),
+                    label: Text(
+                      context.tr('Reselect imported CSV', '重新选择已导入的 CSV'),
+                    ),
+                  ),
+                ),
+                if (_preview != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    context.tr(
+                      '${_preview!.rows.length} rows · ${_preview!.rows.length > 2000 ? 'split into smaller files before sending' : 'ready for Google Ads'}',
+                      '${_preview!.rows.length} 行 · ${_preview!.rows.length > 2000 ? '请拆分为不超过 2,000 行的文件' : '可以发送到 Google Ads'}',
+                    ),
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _preview!.rows
+                        .take(4)
+                        .map(
+                          (row) =>
+                              '${_maskIdentifier(row.conversionId)} · ${_maskIdentifier(row.clickId)}',
+                        )
+                        .join('   '),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 10,
+                    children: [
+                      SizedBox(
+                        width: 250,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _goalId,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: context.tr('Imported goal', '导入目标'),
+                            border: const OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: widget.goals
+                              .map(
+                                (goal) => DropdownMenuItem(
+                                  value: goal.id,
+                                  child: Text(goal.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) => setState(() => _goalId = value),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 220,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _clickIdType,
+                          decoration: InputDecoration(
+                            labelText: context.tr(
+                              'Click identifier type',
+                              '点击标识类型',
+                            ),
+                            border: const OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'gclid',
+                              child: Text('GCLID'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'gbraid',
+                              child: Text('GBRAID'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'wbraid',
+                              child: Text('WBRAID'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() => _clickIdType = value);
+                            }
+                          },
+                        ),
+                      ),
+                      SizedBox(
+                        width: 220,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _eventSource,
+                          decoration: InputDecoration(
+                            labelText: context.tr('Conversion source', '转化来源'),
+                            border: const OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'WEB', child: Text('Web')),
+                            DropdownMenuItem(value: 'APP', child: Text('App')),
+                            DropdownMenuItem(
+                              value: 'IN_STORE',
+                              child: Text('In store'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'PHONE',
+                              child: Text('Phone'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'MESSAGE',
+                              child: Text('Message'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'OTHER',
+                              child: Text('Other'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() => _eventSource = value);
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: !_canTransfer(value) || _busy
+                            ? null
+                            : () => _transfer(validateOnly: true),
+                        icon: const Icon(Icons.fact_check_outlined),
+                        label: Text(
+                          context.tr('Validate with Google', '通过 Google 预检'),
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: !_canTransfer(value) || _busy
+                            ? null
+                            : () => _confirmAndSend(),
+                        icon: const Icon(Icons.send_outlined),
+                        label: Text(context.tr('Send conversions', '发送转化')),
+                      ),
+                    ],
+                  ),
+                ],
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  _MessageCard(message: _error!, error: true),
+                ],
+                if (_result != null) ...[
+                  const SizedBox(height: 10),
+                  _MessageCard(message: _result!),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _configField(
+    BuildContext context,
+    TextEditingController controller,
+    String label,
+  ) => SizedBox(
+    width: 260,
+    child: TextField(
+      controller: controller,
+      enabled: widget.canManage && !_busy,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+    ),
+  );
+
+  bool _canTransfer(GoogleAdsConversionConfig config) =>
+      widget.canManage &&
+      config.configured &&
+      _preview != null &&
+      _goalId != null &&
+      _preview!.rows.length <= 2000;
+
+  Future<void> _saveConfig() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _result = null;
+    });
+    try {
+      await ref
+          .read(apiProvider)
+          .request(
+            'PUT',
+            '/api/v1/sites/${widget.siteId}/offline-conversions/google-ads/config',
+            body: {
+              'customerId': _customerId.text,
+              'loginCustomerId': _loginCustomerId.text,
+              'conversionActionId': _actionId.text,
+              'currencyCode': _currency.text,
+            },
+          );
+      ref.invalidate(googleAdsConversionConfigProvider(widget.siteId));
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _chooseExportFile() async {
+    try {
+      final selection = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['csv'],
+        allowMultiple: false,
+        withData: true,
+      );
+      if (selection == null || selection.files.isEmpty || !mounted) return;
+      final bytes = selection.files.single.bytes;
+      if (bytes == null ||
+          bytes.length > OfflineConversionImportPreview.maximumBytes) {
+        throw const FormatException(
+          'Choose a readable CSV file no larger than 2 MiB.',
+        );
+      }
+      final preview = OfflineConversionImportPreview.parse(utf8.decode(bytes));
+      if (preview.rows.any((row) => row.platform != 'google_ads')) {
+        throw const FormatException(
+          'Every export row must use platform google_ads.',
+        );
+      }
+      setState(() {
+        _preview = preview;
+        _goalId = widget.selectedGoalId;
+        _error = null;
+        _result = null;
+      });
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error = context.tr(
+            'Could not open that CSV file.',
+            '无法读取该 CSV 文件。',
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmAndSend() async {
+    final shouldSend = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          context.tr('Send conversions to Google Ads?', '向 Google Ads 发送转化？'),
+        ),
+        content: Text(
+          context.tr(
+            'This sends the selected raw click IDs, conversion timestamps, goal value, and stable hashed transaction IDs to the configured Google Ads account. Retry-safe transaction IDs help prevent duplicate conversions.',
+            '这会把选中行的原始点击 ID、转化时间、目标价值和稳定哈希交易 ID 发送到配置的 Google Ads 账户。重试时会复用交易 ID，以降低重复转化风险。',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(context.tr('Cancel', '取消')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(context.tr('Send', '发送')),
+          ),
+        ],
+      ),
+    );
+    if (shouldSend == true) await _transfer(validateOnly: false);
+  }
+
+  Future<void> _transfer({required bool validateOnly}) async {
+    final preview = _preview;
+    final goalId = _goalId;
+    if (preview == null || goalId == null) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _result = null;
+    });
+    try {
+      final response =
+          await ref
+                  .read(apiProvider)
+                  .request(
+                    'POST',
+                    '/api/v1/sites/${widget.siteId}/offline-conversions/google-ads/${validateOnly ? 'validate' : 'send'}',
+                    body: {
+                      'goalId': goalId,
+                      'clickIdType': _clickIdType,
+                      'eventSource': _eventSource,
+                      'rows': preview.rows.map((row) => row.toJson()).toList(),
+                    },
+                  )
+              as Map;
+      final rows =
+          (response['rowsProcessed'] as num?)?.toInt() ?? preview.rows.length;
+      final warnings = (response['fieldWarnings'] as List? ?? const []).length;
+      final requestId = response['requestId']?.toString() ?? '—';
+      if (!mounted) return;
+      setState(() {
+        _result = validateOnly
+            ? context.tr(
+                'Google validated $rows rows · request $requestId · $warnings warnings. No conversions were sent.',
+                'Google 已预检 $rows 行 · 请求 $requestId · $warnings 条警告。未实际发送转化。',
+              )
+            : context.tr(
+                'Google accepted $rows rows · request $requestId · $warnings warnings.',
+                'Google 已接收 $rows 行 · 请求 $requestId · $warnings 条警告。',
+              );
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 }
 
