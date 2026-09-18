@@ -6,7 +6,7 @@ export interface HeatmapOptions { enabled?: boolean; sampleRate?: number; naviga
 export interface PageReadyOptions { url?: string; layoutVersion?: string; }
 export interface ScrollContainerOptions { id: string; element: HTMLElement; }
 export interface TagManagerPreviewOptions { sessionId: string; token: string; }
-export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
+export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
 export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; }
 export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
 export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
@@ -110,7 +110,7 @@ export class Tracker {
   private readonly tagManagerPreviewToken?: string;
   private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false;
   private heatmapConfig: HeatmapConfig | undefined; private heatmapQueue: HeatmapEvent[] = []; private heatmapTimer: ReturnType<typeof setTimeout> | undefined; private heatmapInstance: string | undefined; private heatmapUrl = ''; private heatmapLayoutVersion = 'unversioned'; private heatmapSelected = false; private heatmapNavigating = false;
-  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
+  private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private formListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private formViewObserver: IntersectionObserver | undefined; private formMutationObserver: MutationObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private formSeen = new WeakSet<Element>(); private formStarted = new WeakSet<Element>(); private interactedFormFields = new WeakSet<Element>(); private activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
   private readonly containers = new Map<string, ContainerRegistration>(); private readonly scrollBins = new Map<string, Set<number>>(); private readonly lastScroll = new Map<string, number>();
   private readonly layoutSegments = new Map<string, string>();
   private tagDefinitions: TagDefinition[] = [];
@@ -160,6 +160,8 @@ export class Tracker {
       this.experimentDefinitions.clear();
       this.experimentLayerAssignments.clear();
       this.contentObserver?.disconnect();
+      this.formViewObserver?.disconnect();
+      this.formMutationObserver?.disconnect();
       this.stopRecorder();
       this.removeStoredIdentity();
       this.useEphemeralIdentity();
@@ -200,13 +202,167 @@ export class Tracker {
   trackContentInteraction(contentName: string, options: ContentTrackingOptions = {}): void {
     this.trackContentEvent('content_interaction', contentName, boundedText(options.interaction, 120) ?? 'click', options);
   }
+  private normalizeFormId(value: unknown): string | undefined {
+    return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value) ? value : undefined;
+  }
+  private formId(form: Element): string | undefined {
+    if (form.closest('[data-seeray-no-track]')) return undefined;
+    return this.normalizeFormId(form.getAttribute('data-seeray-form'));
+  }
+  private elementVisible(element: Element): boolean {
+    const rect = element.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const width = globalThis.innerWidth || globalThis.document?.documentElement?.clientWidth || 0;
+    const height = globalThis.innerHeight || globalThis.document?.documentElement?.clientHeight || 0;
+    return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width;
+  }
+  private recordFormView(form: Element): void {
+    const formId = this.formId(form);
+    if (!formId || !this.collectionAllowed()) return;
+    this.track('form_view', { category: 'form', action: 'view', name: formId, properties: { formId } });
+  }
+  private recordFormStart(form: Element): string | undefined {
+    const formId = this.formId(form);
+    if (!formId || !this.collectionAllowed()) return undefined;
+    if (!this.formStarted.has(form)) {
+      this.formStarted.add(form);
+      this.track('form_start', { category: 'form', action: 'start', name: formId, properties: { formId } });
+    }
+    return formId;
+  }
+  private formField(target: EventTarget | null): { field: HTMLElement; form: HTMLFormElement; formId: string; fieldType: string } | undefined {
+    if (!(target instanceof HTMLElement) || target.closest('[data-seeray-no-track]')) return undefined;
+    const field = target.closest<HTMLElement>('input,select,textarea');
+    const form = field?.closest<HTMLFormElement>('form[data-seeray-form]');
+    if (!field || !form) return undefined;
+    const formId = this.formId(form);
+    if (!formId || ('disabled' in field && field.disabled)) return undefined;
+    const tag = field.tagName.toLowerCase();
+    const type = tag === 'input' ? ((field as HTMLInputElement).type || 'text').toLowerCase() : tag;
+    if (['hidden', 'password', 'file', 'button', 'reset', 'submit', 'image'].includes(type)) return undefined;
+    const autocomplete = field.getAttribute('autocomplete')?.toLowerCase() ?? '';
+    if (/password|cc-|one-time-code|current-password|new-password/.test(autocomplete)) return undefined;
+    const fieldType = type === 'email' || type === 'tel' || type === 'url' || type === 'search' || type === 'text' || type === 'textarea'
+      ? 'text'
+      : type === 'number' || type === 'range' ? 'number'
+        : ['checkbox', 'radio', 'select', 'select-one', 'select-multiple'].includes(type) ? 'choice'
+          : type === 'date' || type === 'time' || type === 'datetime-local' ? 'date_time'
+            : 'other';
+    return { field, form, formId, fieldType };
+  }
+  private recordFormField(target: EventTarget | null): void {
+    if (!this.collectionAllowed()) return;
+    const item = this.formField(target);
+    if (!item) return;
+    if (this.interactedFormFields.has(item.field)) return;
+    this.interactedFormFields.add(item.field);
+    if (!this.recordFormStart(item.form)) return;
+    this.activeFormFields.set(item.field, { formId: item.formId, startedAt: Date.now(), fieldType: item.fieldType });
+    this.track('form_field', { category: 'form', action: 'field', name: item.formId, properties: { formId: item.formId, fieldType: item.fieldType } });
+  }
+  private installFormTracking(): void {
+    if (this.formListenerInstalled || !this.options.trackForms) return;
+    this.formListenerInstalled = true;
+    const document = globalThis.document;
+    if (!document?.addEventListener) return;
+    document.addEventListener('focusin', event => {
+      if (!this.collectionAllowed()) return;
+      const item = this.formField(event.target);
+      if (!item) return;
+      this.recordFormField(event.target);
+      if (!this.activeFormFields.has(item.field)) this.activeFormFields.set(item.field, { formId: item.formId, startedAt: Date.now(), fieldType: item.fieldType });
+    }, true);
+    document.addEventListener('input', event => this.recordFormField(event.target), true);
+    document.addEventListener('change', event => this.recordFormField(event.target), true);
+    document.addEventListener('focusout', event => {
+      if (!this.collectionAllowed()) return;
+      const item = this.formField(event.target);
+      const active = item && this.activeFormFields.get(item.field);
+      if (!item || !active) return;
+      this.activeFormFields.delete(item.field);
+      const durationMs = Math.min(3_600_000, Math.max(0, Date.now() - active.startedAt));
+      if (durationMs > 0) this.track('form_field_time', { category: 'form', action: 'field_time', name: active.formId, durationMs, properties: { formId: active.formId, fieldType: active.fieldType } });
+    }, true);
+    document.addEventListener('invalid', event => {
+      if (!this.collectionAllowed()) return;
+      const item = this.formField(event.target);
+      if (!item || !this.recordFormStart(item.form)) return;
+      this.track('form_error', { category: 'form', action: 'validation_error', name: item.formId, properties: { formId: item.formId, fieldType: item.fieldType } });
+    }, true);
+    document.addEventListener('submit', event => {
+      if (!this.collectionAllowed() || !(event.target instanceof HTMLFormElement)) return;
+      const formId = this.formId(event.target);
+      if (!formId) return;
+      this.recordFormStart(event.target);
+      this.track('form_submit', { category: 'form', action: 'submit', name: formId, properties: { formId } });
+    }, true);
+  }
+  refreshFormTracking(reset = false): void {
+    if (!this.options.trackForms) return;
+    const document = globalThis.document;
+    if (!document || !this.collectionAllowed()) {
+      this.formViewObserver?.disconnect();
+      this.formMutationObserver?.disconnect();
+      return;
+    }
+    if (reset) {
+      this.formViewObserver?.disconnect();
+      this.formMutationObserver?.disconnect();
+      this.formSeen = new WeakSet<Element>();
+      this.formStarted = new WeakSet<Element>();
+      this.interactedFormFields = new WeakSet<Element>();
+      this.activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>();
+    }
+    const observe = (form: Element): void => {
+      if (this.formSeen.has(form) || !this.formId(form)) return;
+      this.formSeen.add(form);
+      if (typeof IntersectionObserver !== 'undefined') {
+        this.formViewObserver ??= new IntersectionObserver(entries => {
+          for (const entry of entries) {
+            if (entry.isIntersecting && entry.intersectionRatio >= 0.1) {
+              this.recordFormView(entry.target);
+              this.formViewObserver?.unobserve(entry.target);
+            }
+          }
+        }, { threshold: [0.1] });
+        this.formViewObserver.observe(form);
+      } else if (this.elementVisible(form)) this.recordFormView(form);
+    };
+    const scan = (root: ParentNode): void => {
+      root.querySelectorAll?.('form[data-seeray-form]')?.forEach(observe);
+      if (root instanceof Element && root.matches('form[data-seeray-form]')) observe(root);
+    };
+    scan(document);
+    if (typeof MutationObserver !== 'undefined') {
+      const target = document.body ?? document.documentElement;
+      if (target) {
+        this.formMutationObserver ??= new MutationObserver(records => {
+          for (const record of records) record.addedNodes.forEach(node => {
+            if (node instanceof Element) scan(node);
+          });
+        });
+        this.formMutationObserver.observe(target, { childList: true, subtree: true });
+      }
+    }
+  }
+  trackFormResult(formId: string, successful: boolean): void {
+    if (!this.options.trackForms || typeof successful !== 'boolean') return;
+    const id = this.normalizeFormId(formId);
+    if (!id) return;
+    this.track(successful ? 'form_success' : 'form_failure', {
+      category: 'form',
+      action: successful ? 'success' : 'failure',
+      name: id,
+      properties: { formId: id },
+    });
+  }
   push(data: DataLayerEvent): void { if (!data?.event) return; this.track(data.event, { url: data.url, title: data.title, referrer: data.referrer, category: data.eventCategory, action: data.eventAction, name: data.eventName, properties: data.properties }); this.fireTagTriggers(data); }
   track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title ?? globalThis.document?.title, referrer: options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: this.visitorId, sessionId: this.sessionId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
   async flush(unload = false): Promise<void> { if (this.timer) clearTimeout(this.timer); this.timer = undefined; if (!this.queue.length || !this.collectionAllowed()) return; const events = this.queue.splice(0, this.maxBatchSize); const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events }); if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return; try { const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok) throw new Error(`collector returned ${response.status}`); } catch { this.queue.unshift(...events); this.schedule(); } }
 
-  beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); } this.pageViewRecorded = false; }
-  cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); this.refreshContentTracking(true); }
-  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); this.refreshContentTracking(true); } if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
+  beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); this.formViewObserver?.disconnect(); } this.pageViewRecorded = false; }
+  cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); this.refreshContentTracking(true); this.refreshFormTracking(true); }
+  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); this.refreshContentTracking(true); this.refreshFormTracking(true); } if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
   registerScrollContainer(options: ScrollContainerOptions): () => void { if (!options.id.trim() || this.containers.has(options.id)) return () => undefined; const listener = () => this.recordScroll(options.id); options.element.addEventListener('scroll', listener, { passive: true }); this.containers.set(options.id, { element: options.element, remove: () => options.element.removeEventListener('scroll', listener) }); this.resizeObserver?.observe(options.element); if (this.heatmapInstance && this.heatmapSelected) this.captureTargetStart(options.id, options.element, true); return () => { const entry = this.containers.get(options.id); entry?.remove(); this.resizeObserver?.unobserve(options.element); this.containers.delete(options.id); this.scrollBins.delete(options.id); this.lastScroll.delete(options.id); this.layoutSegments.delete(options.id); }; }
   refreshHeatmapLayout(): void { if (!this.heatmapInstance || !this.heatmapSelected) return; if (this.layoutTimer) clearTimeout(this.layoutTimer); this.layoutTimer = setTimeout(() => this.captureStart(), 200); }
   private collectionAllowed(): boolean { return !doNotTrack() && this.hasConsent(); }
@@ -218,6 +374,8 @@ export class Tracker {
     this.installSiteSearchListener();
     this.installContentTracking();
     this.refreshContentTracking(true);
+    this.installFormTracking();
+    this.refreshFormTracking(true);
     if (this.options.trackDownloads !== false || this.options.trackOutlinks !== false)
       this.installBehaviourListener();
   }
@@ -676,7 +834,9 @@ export const SeeRay = {
   trackSiteSearch(keyword: string, options?: SiteSearchOptions): void { trackers.forEach(t => t.trackSiteSearch(keyword, options)); },
   trackContentImpression(name: string, options?: ContentTrackingOptions): void { trackers.forEach(t => t.trackContentImpression(name, options)); },
   trackContentInteraction(name: string, options?: ContentTrackingOptions): void { trackers.forEach(t => t.trackContentInteraction(name, options)); },
+  trackFormResult(formId: string, successful: boolean): void { trackers.forEach(t => t.trackFormResult(formId, successful)); },
   refreshContentTracking(): void { trackers.forEach(t => t.refreshContentTracking()); },
+  refreshFormTracking(): void { trackers.forEach(t => t.refreshFormTracking()); },
   getConsentState(siteId?: string): 'granted' | 'denied' | 'unknown' {
     if (siteId) return trackers.get(siteId)?.getConsentState() ?? 'unknown';
     const states = [...trackers.values()].map(t => t.getConsentState());

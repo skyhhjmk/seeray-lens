@@ -424,6 +424,60 @@ describe('tracker package', () => {
     expect(JSON.stringify(events)).not.toContain('private@example.test');
   });
 
+  it('collects only explicitly enabled form interactions and never reads field values', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const listeners = new Map<string, (event: Event) => void>();
+    class FakeElement {
+      constructor(
+        readonly tagName: string,
+        readonly attributes: Record<string, string> = {},
+        readonly parentElement?: FakeElement,
+      ) {}
+      get disabled(): boolean { return false; }
+      getAttribute(name: string): string | null { return this.attributes[name] ?? null; }
+      closest(selector: string): FakeElement | null {
+        const find = (element: FakeElement | undefined): FakeElement | null => {
+          if (!element) return null;
+          if (selector === 'input,select,textarea' && ['INPUT', 'SELECT', 'TEXTAREA'].includes(element.tagName)) return element;
+          if (selector === 'form[data-seeray-form]' && element.tagName === 'FORM' && 'data-seeray-form' in element.attributes) return element;
+          if (selector === '[data-seeray-no-track]' && 'data-seeray-no-track' in element.attributes) return element;
+          return find(element.parentElement);
+        };
+        return find(this);
+      }
+    }
+    class FakeForm extends FakeElement {
+      constructor(attributes: Record<string, string>) { super('FORM', attributes); }
+    }
+    vi.stubGlobal('Element', FakeElement);
+    vi.stubGlobal('HTMLElement', FakeElement);
+    vi.stubGlobal('HTMLFormElement', FakeForm);
+    vi.stubGlobal('document', {
+      addEventListener: (type: string, listener: (event: Event) => void) => listeners.set(type, listener),
+      querySelectorAll: () => [],
+    });
+    const tracker = new Tracker({ siteId: 'srl_forms', trackForms: true, trackDownloads: false, trackOutlinks: false });
+    const form = new FakeForm({ 'data-seeray-form': 'signup' });
+    const input = new FakeElement('INPUT', { type: 'email', value: 'private@example.test', name: 'email' }, form);
+    vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(1005);
+    listeners.get('focusin')?.({ target: input } as unknown as Event);
+    listeners.get('focusout')?.({ target: input } as unknown as Event);
+    listeners.get('submit')?.({ target: form } as unknown as Event);
+    tracker.trackFormResult('signup', true);
+    tracker.trackFormResult('signup / raw', false);
+    await tracker.flush();
+
+    const events = JSON.parse(fetch.mock.calls[0][1].body as string).events;
+    expect(events.map((event: { type: string }) => event.type)).toEqual([
+      'form_start', 'form_field', 'form_field_time', 'form_submit', 'form_success',
+    ]);
+    expect(events[1].properties).toEqual({ formId: 'signup', fieldType: 'text' });
+    expect(JSON.stringify(events)).not.toContain('private@example.test');
+    expect(JSON.stringify(events)).not.toContain('email');
+  });
+
   it('collects normalized technology context without transmitting the raw user agent', async () => {
     vi.stubGlobal('navigator', {
       doNotTrack: '0',

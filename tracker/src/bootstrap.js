@@ -18,6 +18,7 @@
     tagManagerPreview,
     experiments: script.getAttribute('data-experiments') === 'true',
     webVitals: script.hasAttribute('data-web-vitals'),
+    trackForms: script.hasAttribute('data-track-forms'),
     heatmap: {
       enabled: true,
       navigationMode: script.getAttribute('data-navigation-mode') === 'manual' ? 'manual' : 'auto',
