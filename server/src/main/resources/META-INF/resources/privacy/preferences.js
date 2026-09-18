@@ -67,7 +67,9 @@
     return;
   }
   window.addEventListener('message', (event) => {
-    if (event.origin !== window.location.origin || event.source !== window.parent) return;
+    // The parent is intentionally cross-origin. The site's tracker validates this page's
+    // origin, source window, site ID, and exact iframe URL before replying.
+    if (event.source !== window.parent) return;
     const message = event.data;
     if (!message || message.source !== 'seeray-tracker' || message.type !== 'privacy-state' || message.siteId !== siteId) return;
     render(message.state);
