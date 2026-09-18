@@ -148,6 +148,22 @@ class _SiteAuditLogPageState extends ConsumerState<SiteAuditLogPage> {
       'UPDATE' => context.tr('Updated', '更新了'),
       'DELETE' => context.tr('Deleted', '删除了'),
       'PUBLISH' => context.tr('Published', '发布了'),
+      'REQUEST_PRODUCTION' => context.tr(
+        'Requested a production release',
+        '申请了生产发布',
+      ),
+      'APPROVE_PRODUCTION' => context.tr(
+        'Approved and published a production release',
+        '批准并发布了生产版本',
+      ),
+      'REJECT_PRODUCTION' => context.tr(
+        'Rejected a production release',
+        '拒绝了生产发布',
+      ),
+      'CANCEL_PRODUCTION' => context.tr(
+        'Withdrew a production release request',
+        '撤回了生产发布申请',
+      ),
       'DUPLICATE' => context.tr('Duplicated', '复制了'),
       'SEND_NOW' => context.tr('Sent immediately', '立即发送了'),
       _ => entry.action,
@@ -196,6 +212,10 @@ class _SiteAuditLogPageState extends ConsumerState<SiteAuditLogPage> {
     'CREATE' => Icons.add_circle_outline,
     'DELETE' => Icons.delete_outline,
     'PUBLISH' => Icons.rocket_launch_outlined,
+    'REQUEST_PRODUCTION' => Icons.pending_actions_outlined,
+    'APPROVE_PRODUCTION' => Icons.verified_outlined,
+    'REJECT_PRODUCTION' => Icons.block_outlined,
+    'CANCEL_PRODUCTION' => Icons.cancel_outlined,
     'DUPLICATE' => Icons.copy_outlined,
     'SEND_NOW' => Icons.outgoing_mail,
     _ => Icons.edit_outlined,

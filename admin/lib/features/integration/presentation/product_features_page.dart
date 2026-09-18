@@ -39,6 +39,7 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
   final Map<String, int> _draftVersions = {};
   bool _loading = true;
   String? _error;
+  String? _notice;
 
   String get _path => switch (widget.mode) {
     ProductFeatureMode.funnels => '/api/v1/sites/${widget.siteId}/funnels',
@@ -380,12 +381,68 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
   }
 
   Future<void> _publishVersion(String id, int version) async {
+    await _requestProductionRelease(id, version);
+  }
+
+  Future<void> _requestProductionRelease(String id, int version) async {
+    final requestNote = await showDialog<String>(
+      context: context,
+      builder: (context) => const _ProductionRequestNoteDialog(),
+    );
+    if (requestNote == null || requestNote.trim().isEmpty) return;
     await _run(() async {
       await ref
           .read(apiProvider)
-          .request('POST', '$_path/$id/versions/$version/publish');
+          .request(
+            'POST',
+            '$_path/$id/production-requests',
+            body: {'version': version, 'requestNote': requestNote.trim()},
+          );
       _draftVersions.remove(id);
       await _load();
+      if (!mounted) return;
+      setState(
+        () => _notice = context.tr(
+          'Production review requested. A different workspace admin must approve it.',
+          '已提交生产发布审核，需要另一位工作区管理员批准。',
+        ),
+      );
+    });
+  }
+
+  Future<void> _productionApprovals(String id) async {
+    Future<List<Map<String, dynamic>>> loadRequests() async {
+      final data =
+          await ref
+                  .read(apiProvider)
+                  .request('GET', '$_path/$id/production-requests')
+              as List;
+      return data
+          .whereType<Map>()
+          .map((request) => Map<String, dynamic>.from(request))
+          .toList(growable: false);
+    }
+
+    await _run(() async {
+      final initial = await loadRequests();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _ProductionApprovalsDialog(
+          requests: initial,
+          onAction: (requestId, action, note) async {
+            await ref
+                .read(apiProvider)
+                .request(
+                  'POST',
+                  '$_path/$id/production-requests/$requestId/$action',
+                  body: action == 'cancel' ? null : {'reviewNote': note},
+                );
+            return loadRequests();
+          },
+        ),
+      );
+      if (mounted) await _load();
     });
   }
 
@@ -503,13 +560,24 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                         'environment': selectedEnvironment,
                         'version': selectedVersion,
                       }),
-                child: Text(context.tr('Deploy', '部署')),
+                child: Text(
+                  context.tr(
+                    selectedEnvironment == 'production'
+                        ? 'Request production review'
+                        : 'Deploy',
+                    selectedEnvironment == 'production' ? '申请生产审核' : '部署',
+                  ),
+                ),
               ),
             ],
           ),
         ),
       );
       if (selection == null) return;
+      if (selection['environment'] == 'production') {
+        await _requestProductionRelease(id, selection['version'] as int);
+        return;
+      }
       await ref
           .read(apiProvider)
           .request(
@@ -632,6 +700,24 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
             child: Text(_error!),
           ),
         ),
+      if (_notice != null)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle_outline),
+                const SizedBox(width: 8),
+                Expanded(child: Text(_notice!)),
+                IconButton(
+                  tooltip: context.tr('Dismiss', '关闭提示'),
+                  onPressed: () => setState(() => _notice = null),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+        ),
       if (widget.mode == ProductFeatureMode.tagManager)
         Card(
           child: Padding(
@@ -659,6 +745,13 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                   context.tr(
                     'The tracker supports event tags, page-view tags, and custom HTML/JavaScript snippets. Published snippets run in the visitor\'s page, so only publish code you trust.',
                     '追踪器支持事件标签、页面浏览标签，以及自定义 HTML/JavaScript 代码段。已发布代码会在访客页面执行，请只发布可信代码。',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.tr(
+                    'Production releases require a second workspace administrator to review the change summary. Development and staging remain available for testing.',
+                    '生产发布需要另一位工作区管理员审阅变更摘要；开发和预发布环境仍可直接用于测试。',
                   ),
                 ),
               ],
@@ -777,6 +870,11 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                 icon: const Icon(Icons.history),
               ),
               IconButton(
+                tooltip: context.tr('Production approvals', '生产发布审核'),
+                onPressed: () => _productionApprovals(id),
+                icon: const Icon(Icons.fact_check_outlined),
+              ),
+              IconButton(
                 tooltip: context.tr('Deploy version', '部署版本'),
                 onPressed: () => _deployEnvironment(id, item),
                 icon: const Icon(Icons.rocket_launch_outlined),
@@ -788,7 +886,10 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
               ),
               if (draft != null)
                 IconButton(
-                  tooltip: context.tr('Publish v$draft', '发布 v$draft'),
+                  tooltip: context.tr(
+                    'Request production review for v$draft',
+                    '申请审核并发布 v$draft',
+                  ),
                   onPressed: () => _publish(id),
                   icon: const Icon(Icons.publish_outlined),
                 ),
@@ -4874,6 +4975,390 @@ class _ConfidenceIntervalBar extends StatelessWidget {
   }
 }
 
+class _ProductionRequestNoteDialog extends StatefulWidget {
+  const _ProductionRequestNoteDialog();
+
+  @override
+  State<_ProductionRequestNoteDialog> createState() =>
+      _ProductionRequestNoteDialogState();
+}
+
+class _ProductionRequestNoteDialogState
+    extends State<_ProductionRequestNoteDialog> {
+  final _note = TextEditingController();
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(context.tr('Request production review', '申请生产发布审核')),
+    content: SizedBox(
+      width: 480,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            context.tr(
+              'Explain what is changing and why. A different workspace administrator will review the version summary before it can go live.',
+              '请说明变更内容和原因。另一位工作区管理员会先审阅版本摘要，批准后才会对访客生效。',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _note,
+            autofocus: true,
+            minLines: 3,
+            maxLines: 5,
+            maxLength: 1000,
+            decoration: InputDecoration(
+              labelText: context.tr('Release summary', '发布说明'),
+              hintText: context.tr(
+                'For example: Add the signup conversion tag after QA.',
+                '例如：QA 验收后新增注册转化标签。',
+              ),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(context.tr('Cancel', '取消')),
+      ),
+      FilledButton(
+        onPressed: _note.text.trim().isEmpty
+            ? null
+            : () => Navigator.pop(context, _note.text.trim()),
+        child: Text(context.tr('Submit for review', '提交审核')),
+      ),
+    ],
+  );
+}
+
+typedef _ProductionRequestAction =
+    Future<List<Map<String, dynamic>>> Function(
+      String requestId,
+      String action,
+      String? note,
+    );
+
+class _ProductionApprovalsDialog extends StatefulWidget {
+  const _ProductionApprovalsDialog({
+    required this.requests,
+    required this.onAction,
+  });
+
+  final List<Map<String, dynamic>> requests;
+  final _ProductionRequestAction onAction;
+
+  @override
+  State<_ProductionApprovalsDialog> createState() =>
+      _ProductionApprovalsDialogState();
+}
+
+class _ProductionApprovalsDialogState
+    extends State<_ProductionApprovalsDialog> {
+  late List<Map<String, dynamic>> _requests = widget.requests;
+  String? _busyId;
+  String? _error;
+
+  Future<void> _act(
+    Map<String, dynamic> request,
+    String action, {
+    String? note,
+  }) async {
+    final id = request['id'] as String?;
+    if (id == null) return;
+    setState(() {
+      _busyId = id;
+      _error = null;
+    });
+    try {
+      final refreshed = await widget.onAction(id, action, note);
+      if (!mounted) return;
+      setState(() {
+        _requests = refreshed;
+        _busyId = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busyId = null;
+        _error = error is ApiFailure ? error.message : '$error';
+      });
+    }
+  }
+
+  Future<void> _reject(Map<String, dynamic> request) async {
+    final note = TextEditingController();
+    var valid = false;
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(context.tr('Reject production release', '拒绝生产发布')),
+          content: TextField(
+            controller: note,
+            minLines: 2,
+            maxLines: 4,
+            maxLength: 1000,
+            decoration: InputDecoration(labelText: context.tr('Reason', '原因')),
+            onChanged: (value) =>
+                setDialogState(() => valid = value.trim().isNotEmpty),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(context.tr('Cancel', '取消')),
+            ),
+            FilledButton(
+              onPressed: valid
+                  ? () => Navigator.pop(context, note.text.trim())
+                  : null,
+              child: Text(context.tr('Reject', '拒绝')),
+            ),
+          ],
+        ),
+      ),
+    );
+    note.dispose();
+    if (reason == null) return;
+    await _act(request, 'reject', note: reason);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(context.tr('Production approvals', '生产发布审核')),
+    content: SizedBox(
+      width: 680,
+      height: 480,
+      child: _requests.isEmpty
+          ? Center(
+              child: Text(
+                context.tr('No production release requests yet.', '暂无生产发布申请。'),
+              ),
+            )
+          : ListView.separated(
+              itemCount: _requests.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (context, index) => _requestCard(_requests[index]),
+            ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(context.tr('Close', '关闭')),
+      ),
+    ],
+  );
+
+  Widget _requestCard(Map<String, dynamic> request) {
+    final pending = request['status'] == 'pending';
+    final id = request['id'] as String? ?? '';
+    final changes =
+        (request['changes'] as List?)
+            ?.whereType<Map>()
+            .map((change) => Map<String, dynamic>.from(change))
+            .toList(growable: false) ??
+        const <Map<String, dynamic>>[];
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.tr(
+                      'Production v${request['targetVersion']} · ${request['status']}',
+                      '生产 v${request['targetVersion']} · ${_statusLabel(request['status'] as String? ?? '')}',
+                    ),
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                Text(
+                  context.tr(
+                    'From ${request['baseVersion'] == null ? 'none' : 'v${request['baseVersion']}'}',
+                    '基于 ${request['baseVersion'] == null ? '首次发布' : 'v${request['baseVersion']}'}',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.tr(
+                'Requested by ${request['requestedByEmail'] ?? 'unknown'} · ${_timeLabel(request['requestedAt'])}',
+                '申请人 ${request['requestedByEmail'] ?? '未知'} · ${_timeLabel(request['requestedAt'])}',
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(request['requestNote'] as String? ?? ''),
+            if (changes.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  context.tr(
+                    'No tag differences from the reviewed base version.',
+                    '与基准版本相比没有标签差异。',
+                  ),
+                ),
+              )
+            else ...[
+              const SizedBox(height: 8),
+              Text(context.tr('Version changes', '版本变更')),
+              for (final change in changes) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '• ${_changeLabel(change['kind'] as String? ?? '')} ${change['name'] ?? 'Tag'} · ${_tagTypeLabel(change['type'] as String? ?? '')}${change['customCodeChanged'] == true ? ' · ${context.tr('custom script added/changed', '自定义脚本新增/修改')}' : ''}',
+                  ),
+                ),
+                if (change['emittedEvent'] is String)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, top: 2),
+                    child: Text(
+                      context.tr(
+                        'Emits ${change['emittedEvent']}',
+                        '发送事件 ${change['emittedEvent']}',
+                      ),
+                    ),
+                  ),
+                for (final trigger
+                    in (change['triggers'] as List? ?? const [])
+                        .whereType<Map>())
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, top: 2),
+                    child: Text(
+                      _releaseTriggerLabel(Map<String, dynamic>.from(trigger)),
+                    ),
+                  ),
+              ],
+            ],
+            if (request['reviewNote'] is String &&
+                (request['reviewNote'] as String).isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                context.tr(
+                  'Review by ${request['reviewedByEmail'] ?? 'unknown'}: ${request['reviewNote']}',
+                  '审核人 ${request['reviewedByEmail'] ?? '未知'}：${request['reviewNote']}',
+                ),
+              ),
+            ],
+            if (pending && request['canReview'] != true)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  context.tr(
+                    'The requester cannot approve their own release; another workspace administrator must review it.',
+                    '申请人不能批准自己的发布；需要另一位工作区管理员审核。',
+                  ),
+                ),
+              ),
+            if (pending &&
+                (request['canReview'] == true ||
+                    request['canCancel'] == true)) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  if (request['canReview'] == true) ...[
+                    FilledButton.tonal(
+                      onPressed: _busyId == id
+                          ? null
+                          : () => _act(request, 'approve'),
+                      child: Text(context.tr('Approve and publish', '批准并发布')),
+                    ),
+                    TextButton(
+                      onPressed: _busyId == id ? null : () => _reject(request),
+                      child: Text(context.tr('Reject', '拒绝')),
+                    ),
+                  ],
+                  if (request['canCancel'] == true)
+                    TextButton(
+                      onPressed: _busyId == id
+                          ? null
+                          : () => _act(request, 'cancel'),
+                      child: Text(context.tr('Cancel request', '撤回申请')),
+                    ),
+                  if (_busyId == id)
+                    const Padding(
+                      padding: EdgeInsets.all(10),
+                      child: SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _statusLabel(String status) => switch (status) {
+    'pending' => context.tr('pending', '待审核'),
+    'approved' => context.tr('approved', '已批准'),
+    'rejected' => context.tr('rejected', '已拒绝'),
+    'cancelled' => context.tr('cancelled', '已撤回'),
+    _ => status,
+  };
+
+  String _changeLabel(String kind) => switch (kind) {
+    'added' => context.tr('Added', '新增'),
+    'removed' => context.tr('Removed', '移除'),
+    _ => context.tr('Changed', '修改'),
+  };
+
+  String _tagTypeLabel(String type) => switch (type) {
+    'custom_html' => context.tr(
+      'Custom HTML/JavaScript',
+      '自定义 HTML/JavaScript',
+    ),
+    'page_view' => context.tr('Page view', '页面浏览'),
+    'event' => context.tr('Event', '事件'),
+    _ => type,
+  };
+
+  String _releaseTriggerLabel(Map<String, dynamic> trigger) {
+    final kind = trigger['kind'] as String? ?? 'event';
+    final value = trigger['value'] as String? ?? '';
+    final label = switch (kind) {
+      'predefined' => context.tr('Predefined event', '预设事件'),
+      'custom_js' => context.tr('Custom JS function', '自定义 JS 函数'),
+      _ => context.tr('Event', '事件'),
+    };
+    final filters = (trigger['filterCount'] as num?)?.toInt() ?? 0;
+    if (filters == 0) return '$label $value';
+    return '$label $value · ${context.tr('$filters property filter(s)', '$filters 个属性条件')}';
+  }
+
+  String _timeLabel(Object? value) {
+    if (value is! String) return '';
+    final date = DateTime.tryParse(value)?.toLocal();
+    if (date == null) return value;
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+}
+
 class _VersionsDialog extends StatelessWidget {
   const _VersionsDialog({required this.versions, required this.onPublish});
 
@@ -4899,7 +5384,7 @@ class _VersionsDialog extends StatelessWidget {
                         : TextButton(
                             onPressed: () =>
                                 onPublish((version['version'] as num).toInt()),
-                            child: Text(context.tr('Publish', '发布')),
+                            child: Text(context.tr('Request review', '申请审核')),
                           ),
                   ),
               ],

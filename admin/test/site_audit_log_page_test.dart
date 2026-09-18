@@ -6,6 +6,27 @@ import 'package:seeray_lens_admin/features/analytics/presentation/site_audit_log
 import 'package:seeray_lens_admin/features/auth/application/auth_controller.dart';
 
 void main() {
+  testWidgets('labels production approval audit actions clearly', (
+    tester,
+  ) async {
+    final api = _AuditLogApi(productionApproval: true);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: SiteAuditLogPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'release-admin@example.test Approved and published a production release tag manager item',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('shows actor and changes, then pages older audit entries', (
     tester,
   ) async {
@@ -36,7 +57,10 @@ void main() {
 }
 
 class _AuditLogApi extends SeeRayApi {
-  _AuditLogApi() : super(baseUrl: 'https://lens.example.test');
+  _AuditLogApi({this.productionApproval = false})
+    : super(baseUrl: 'https://lens.example.test');
+
+  final bool productionApproval;
 
   int requestCount = 0;
 
@@ -50,6 +74,21 @@ class _AuditLogApi extends SeeRayApi {
     expect(method, 'GET');
     expect(path, contains('/api/v1/sites/site-1/audit-log'));
     requestCount++;
+    if (productionApproval) {
+      return {
+        'entries': [
+          {
+            'id': '00000000-0000-0000-0000-000000000003',
+            'actorEmail': 'release-admin@example.test',
+            'action': 'APPROVE_PRODUCTION',
+            'resource': 'tag-manager',
+            'resourceId': '00000000-0000-0000-0000-000000000102',
+            'createdAt': '2026-09-18T01:02:03Z',
+          },
+        ],
+        'nextCursor': null,
+      };
+    }
     if (requestCount == 1) {
       return {
         'entries': [

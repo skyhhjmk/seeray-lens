@@ -1,6 +1,6 @@
 # Tag Manager API
 
-The control plane exposes a site-scoped container API. Container versions are immutable; each environment points to one version independently. The existing `publishedVersion` field and publish endpoint continue to represent production.
+The control plane exposes a site-scoped container API. Container versions are immutable; each environment points to one version independently. The existing `publishedVersion` field continues to represent production. Production publication and rollback require a second-person review; development and staging remain direct deployment targets.
 
 Authenticated management endpoints:
 
@@ -9,8 +9,12 @@ GET  /api/v1/sites/{siteId}/tag-manager/containers
 POST /api/v1/sites/{siteId}/tag-manager/containers
 GET  /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions
 POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions
-POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions/{version}/publish
 POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions/{version}/environments/{environment}/publish
+GET  /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/production-requests
+POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/production-requests
+POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/production-requests/{requestId}/approve
+POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/production-requests/{requestId}/reject
+POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/production-requests/{requestId}/cancel
 GET  /api/v1/sites/{siteId}/tag-manager/templates
 POST /api/v1/sites/{siteId}/tag-manager/templates
 PUT  /api/v1/sites/{siteId}/tag-manager/templates/{templateId}
@@ -27,7 +31,9 @@ GET /api/v1/tag-manager/{trackingId}/container
 Origin: https://your-site.example
 ```
 
-Use `?environment=development`, `?environment=staging`, or `?environment=production` to select a release. Invalid environment names are rejected. Existing production releases are migrated and remain the default. Deploy any immutable version to any environment; redeploying an older version is the rollback operation for that environment and does not change the others. Only production updates the legacy `publishedVersion` and per-version `published` status.
+Use `?environment=development`, `?environment=staging`, or `?environment=production` to select a release. Invalid environment names are rejected. Existing production releases are migrated and remain the default. Development and staging accept direct deployment of any immutable version; redeploying an older version rolls back only that environment. Production changes—including rollback—must use a release request, and the legacy `/versions/{version}/publish` route returns `409 PRODUCTION_APPROVAL_REQUIRED` instead of bypassing review.
+
+The graphical panel requires a release summary when a workspace owner/admin requests production. The request snapshots the current production version as its review base and permits only one pending request per container. A different workspace owner/admin must approve or reject it; the requester cannot approve their own change. Rejection requires an explanation, while approval may include an optional note. If the production base no longer matches at approval time, the request is blocked as stale and must be resubmitted. Requesters/admins can withdraw a pending request. The approvals panel shows author, purpose, base/target versions, added/changed/removed tag names, trigger summaries, and whether custom script changed—never a raw JSON diff or the script body. Successful request, approval, rejection, cancellation, and deployment mutations are recorded in the site audit log.
 
 The public request requires an `Origin` matching an enabled site allowed domain (or an enabled subdomain rule). Unknown tracking IDs and disallowed origins are rejected; no published container is returned without that check.
 
@@ -110,7 +116,7 @@ For event and page-view tags, string values in the graphical **Event properties*
 - Trigger event, event name, category, action, and a named event property (`{{Event Property: plan}}`)
 - Browser, operating system, device type, language, screen size, and viewport size
 
-For example, configure `landing_page` as `{{Page URL}}` and `source_plan` as `{{Event Property: plan}}`. Event properties supplied to `SeeRay.push()` remain available, while values configured on the tag override same-key event properties after variable resolution. Unknown variable names are preserved literally so a configuration mistake is visible in the resulting event. Variables are not interpolated into custom HTML or JavaScript; code snippets remain explicit code and should be reviewed before publishing. Approval workflows and finer-grained script governance remain follow-up work.
+For example, configure `landing_page` as `{{Page URL}}` and `source_plan` as `{{Event Property: plan}}`. Event properties supplied to `SeeRay.push()` remain available, while values configured on the tag override same-key event properties after variable resolution. Unknown variable names are preserved literally so a configuration mistake is visible in the resulting event. Variables are not interpolated into custom HTML or JavaScript; code snippets remain explicit code and are clearly marked in production review. Fine-grained script governance (per-tag capability policies, host allowlists, and risk-based review rules) remains follow-up work.
 
 ### Draft dry-run
 

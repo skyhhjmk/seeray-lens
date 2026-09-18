@@ -64,6 +64,69 @@ void main() {
     );
   });
 
+  testWidgets('production review presents tag changes and reviewer actions', (
+    tester,
+  ) async {
+    final api = _GraphicalFeatureApi(
+      productionRequests: [
+        {
+          'id': 'release-request-1',
+          'targetVersion': 2,
+          'baseVersion': 1,
+          'status': 'pending',
+          'requestNote': 'Launch the reviewed signup event',
+          'requestedByEmail': 'author@example.test',
+          'requestedAt': '2026-09-18T04:15:00Z',
+          'canReview': true,
+          'canCancel': true,
+          'changes': [
+            {
+              'kind': 'changed',
+              'name': 'Signup pixel',
+              'type': 'custom_html',
+              'emittedEvent': 'tag_signup',
+              'triggers': [
+                {'kind': 'event', 'value': 'signup', 'filterCount': 1},
+              ],
+              'customCodeChanged': true,
+            },
+          ],
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Production approvals'));
+    await tester.pumpAndSettle();
+    expect(find.text('Launch the reviewed signup event'), findsOneWidget);
+    expect(find.textContaining('Signup pixel'), findsOneWidget);
+    expect(find.text('Emits tag_signup'), findsOneWidget);
+    expect(
+      find.textContaining('Event signup · 1 property filter(s)'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('custom script added/changed'), findsOneWidget);
+    expect(find.textContaining('<script>'), findsNothing);
+    await tester.tap(find.text('Approve and publish'));
+    await tester.pumpAndSettle();
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/tag-manager/containers/container-1/production-requests/release-request-1/approve',
+    );
+  });
+
   testWidgets('inserts a shared template into a container as a new draft', (
     tester,
   ) async {
@@ -255,7 +318,37 @@ void main() {
         'properties': {'landing_page': '{{Page URL}}'},
       },
     ]);
-    expect(find.byTooltip('Publish v1'), findsOneWidget);
+    expect(find.byTooltip('Request production review for v1'), findsOneWidget);
+    await tester.tap(find.byTooltip('Request production review for v1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Request production review'), findsOneWidget);
+    final releaseNote = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Release summary',
+    );
+    await tester.enterText(releaseNote, 'QA approved the new signup tag');
+    expect(
+      tester.widget<TextField>(releaseNote).controller?.text,
+      'QA approved the new signup tag',
+    );
+    await tester.pumpAndSettle();
+    final submitForReview = find.ancestor(
+      of: find.text('Submit for review'),
+      matching: find.byType(FilledButton),
+    );
+    expect(tester.widget<FilledButton>(submitForReview).onPressed, isNotNull);
+    await tester.tap(find.text('Submit for review'));
+    await tester.pumpAndSettle();
+    expect(find.text('Request production review'), findsNothing);
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/tag-manager/containers/container-1/production-requests',
+    );
+    expect(api.lastBody, {
+      'version': 1,
+      'requestNote': 'QA approved the new signup tag',
+    });
   });
 
   testWidgets('previews draft matches and resolved event properties', (
@@ -1064,12 +1157,15 @@ class _GraphicalFeatureApi extends SeeRayApi {
     this.initialTags = const [],
     List<dynamic> templates = const [],
     this.previewEvents = const [],
+    List<Map<String, dynamic>> productionRequests = const [],
   }) : templates = List.of(templates),
+       productionRequests = List.of(productionRequests),
        super(baseUrl: 'https://lens.example.test');
 
   final List<dynamic> initialTags;
   final List<dynamic> templates;
   final List<dynamic> previewEvents;
+  final List<Map<String, dynamic>> productionRequests;
   Object? lastBody;
   String? lastMutationPath;
 
@@ -1096,6 +1192,37 @@ class _GraphicalFeatureApi extends SeeRayApi {
     if (method == 'DELETE' && path.endsWith('/preview-1')) return null;
     if (method == 'GET' && path.endsWith('/tag-manager/templates')) {
       return templates;
+    }
+    if (method == 'GET' && path.endsWith('/production-requests')) {
+      return productionRequests;
+    }
+    if (method == 'POST' && path.endsWith('/production-requests')) {
+      lastBody = body;
+      final requestBody = Map<String, dynamic>.from(body as Map);
+      final created = Map<String, dynamic>.from(requestBody)
+        ..['id'] = 'release-request-new'
+        ..['targetVersion'] = (requestBody['version'] as num).toInt()
+        ..['baseVersion'] = null
+        ..['status'] = 'pending';
+      productionRequests.insert(0, created);
+      return created;
+    }
+    if (method == 'POST' && path.contains('/production-requests/')) {
+      final status = path.endsWith('/approve')
+          ? 'approved'
+          : path.endsWith('/reject')
+          ? 'rejected'
+          : 'cancelled';
+      final requestId = path
+          .split('/production-requests/')
+          .last
+          .split('/')
+          .first;
+      final index = productionRequests.indexWhere(
+        (request) => request['id'] == requestId,
+      );
+      if (index >= 0) productionRequests[index]['status'] = status;
+      return const <String, dynamic>{};
     }
     if (method == 'POST' && path.endsWith('/tag-manager/templates')) {
       lastBody = body;
