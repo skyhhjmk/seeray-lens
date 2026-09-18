@@ -120,6 +120,25 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('9'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, 1200));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>).at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Goal value').last);
+    await tester.pumpAndSettle();
+    expect(api.lastCohortQuery?.queryParameters['metric'], 'goal_value');
+    expect(
+      api.lastCohortQuery?.queryParameters.containsKey('metricGoalId'),
+      isFalse,
+    );
+    await tester.scrollUntilVisible(
+      find.text('12.5'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('12.5'), findsOneWidget);
   });
 }
 

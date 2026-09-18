@@ -96,9 +96,9 @@ class _CohortsPageState extends ConsumerState<CohortsPage> {
                 englishTitle: 'Cohort analysis',
                 chineseTitle: '队列分析',
                 englishBody:
-                    'Choose daily, weekly or monthly cohorts, based on first meaningful visit or first conversion of a configured goal. Compare returning visitors, visits, or conversions of another configured goal; incomplete periods are left blank.',
+                    'Choose daily, weekly or monthly cohorts, based on first meaningful visit or first conversion of a configured goal. Compare returning visitors, visits, per-goal conversions, or aggregate goal value; incomplete periods are left blank.',
                 chineseBody:
-                    '可按日、周或月建立队列，并按首次有效访问或首次目标转化分组。可比较回访访客、访问量或另一目标的转化；尚未完整结束的周期留空。',
+                    '可按日、周或月建立队列，并按首次有效访问或首次目标转化分组。可比较回访访客、访问量、单目标转化或整体目标价值；尚未完整结束的周期留空。',
               ),
               rangeState: range,
               segmentFilter: SegmentFilterSelector(siteId: widget.siteId),
@@ -199,6 +199,17 @@ class _CohortReport extends StatelessWidget {
     for (final cell in cells) {
       grouped.putIfAbsent(cell.cohortPeriod, () => {})[cell.periodIndex] = cell;
     }
+    final metricMax = cells.where((cell) => cell.complete).fold<double>(0, (
+      maximum,
+      cell,
+    ) {
+      final value = switch (metric) {
+        'visits' => cell.visits.toDouble(),
+        'goal_value' => cell.goalValue,
+        _ => 0.0,
+      };
+      return value > maximum ? value : maximum;
+    });
     final periodName = switch (period) {
       'day' => context.tr('day', '日'),
       'month' => context.tr('month', '月'),
@@ -206,6 +217,8 @@ class _CohortReport extends StatelessWidget {
     };
     final periodTitle = metric == 'goal_conversions'
         ? context.tr('Goal conversion rate', '目标转化率')
+        : metric == 'goal_value'
+        ? context.tr('Goal value per cohort period', '队列周期目标价值')
         : metric == 'visits'
         ? context.tr('Visits per cohort period', '队列周期访问量')
         : switch (period) {
@@ -235,6 +248,8 @@ class _CohortReport extends StatelessWidget {
           context.tr(
             metric == 'goal_conversions'
                 ? 'Measure conversions of the selected goal by cohort period. Each cell shows the share of the original cohort that converted; the tooltip includes conversion count and goal value.'
+                : metric == 'goal_value'
+                ? 'Sum the configured fixed values of all enabled goals for each cohort period. This is goal value, not ecommerce revenue.'
                 : metric == 'visits'
                 ? 'Count meaningful visits made by each cohort during each calendar period, starting from the cohort entry date.'
                 : basis == 'first_visit'
@@ -242,6 +257,8 @@ class _CohortReport extends StatelessWidget {
                 : 'See whether visitors return after their first conversion of the selected goal. Return activity is still measured as a meaningful session.',
             metric == 'goal_conversions'
                 ? '按队列周期统计所选目标的转化。单元格显示原始队列中的转化访客占比；悬浮提示包含转化次数和目标值。'
+                : metric == 'goal_value'
+                ? '按队列周期合计所有已启用目标配置的固定值；这是目标价值，不是电商收入。'
                 : metric == 'visits'
                 ? '按自然周期统计各队列产生的有效访问次数，仅计算访客进入队列后的访问。'
                 : basis == 'first_visit'
@@ -477,6 +494,7 @@ class _CohortReport extends StatelessWidget {
                                 _CohortMetricCell(
                                   cell: grouped[cohortPeriod]?[index],
                                   metric: metric,
+                                  metricMax: metricMax,
                                 ),
                               ),
                           ],
@@ -594,6 +612,10 @@ class _CohortReport extends StatelessWidget {
                   child: Text(context.tr('Visits', '访问量')),
                 ),
                 DropdownMenuItem(
+                  value: 'goal_value',
+                  child: Text(context.tr('Goal value', '目标价值')),
+                ),
+                DropdownMenuItem(
                   value: 'goal_conversions',
                   child: Text(context.tr('Goal conversions', '目标转化')),
                 ),
@@ -602,6 +624,30 @@ class _CohortReport extends StatelessWidget {
                 if (value != null) onMetricChanged(value);
               },
             ),
+            if (metric == 'goal_value' &&
+                (goals.hasError ||
+                    (!goals.isLoading && enabledGoals.isEmpty))) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      goals.hasError
+                          ? context.tr('Could not load goals.', '无法加载目标。')
+                          : context.tr(
+                              'No enabled goals yet; goal-value cells will be zero.',
+                              '尚无已启用目标；队列目标价值将显示为零。',
+                            ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => context.go('/sites/$siteId/goals'),
+                    icon: const Icon(Icons.tune),
+                    label: Text(context.tr('Manage goals', '管理目标')),
+                  ),
+                ],
+              ),
+            ],
             if (metric == 'goal_conversions') ...[
               const SizedBox(height: 10),
               if (goals.isLoading)
@@ -692,10 +738,15 @@ class _CohortReport extends StatelessWidget {
 }
 
 class _CohortMetricCell extends StatelessWidget {
-  const _CohortMetricCell({required this.cell, required this.metric});
+  const _CohortMetricCell({
+    required this.cell,
+    required this.metric,
+    required this.metricMax,
+  });
 
   final AnalyticsCohortCell? cell;
   final String metric;
+  final double metricMax;
 
   @override
   Widget build(BuildContext context) {
@@ -720,10 +771,12 @@ class _CohortMetricCell extends StatelessWidget {
     }
     final converting = metric == 'goal_conversions';
     final countingVisits = metric == 'visits';
-    final rate = countingVisits
-        ? current.visits + current.cohortSize == 0
+    final countingGoalValue = metric == 'goal_value';
+    final rate = countingVisits || countingGoalValue
+        ? metricMax <= 0
               ? 0.0
-              : current.visits / (current.visits + current.cohortSize)
+              : (countingVisits ? current.visits : current.goalValue) /
+                    metricMax
         : converting
         ? current.cohortSize == 0
               ? 0.0
@@ -733,11 +786,15 @@ class _CohortMetricCell extends StatelessWidget {
       message: context.tr(
         countingVisits
             ? '${current.visits} meaningful visits from ${current.cohortSize} cohort visitors'
+            : countingGoalValue
+            ? 'Summed fixed value of all enabled goals: ${_formatGoalValue(current.goalValue)} (not ecommerce revenue)'
             : converting
             ? '${current.goalConvertedVisitors} visitors made ${current.goalConversions} conversions; goal value ${current.goalValue}'
             : '${current.retainedVisitors} of ${current.cohortSize} visitors returned',
         countingVisits
             ? '${current.cohortSize} 位队列访客产生了 ${current.visits} 次有效访问'
+            : countingGoalValue
+            ? '所有已启用目标固定值合计 ${_formatGoalValue(current.goalValue)}（非电商收入）'
             : converting
             ? '${current.cohortSize} 位访客中有 ${current.goalConvertedVisitors} 位转化，共 ${current.goalConversions} 次，目标值 ${current.goalValue}'
             : '${current.cohortSize} 位访客中有 ${current.retainedVisitors} 位回访',
@@ -756,11 +813,17 @@ class _CohortMetricCell extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              countingVisits ? '${current.visits}' : '${(rate * 100).round()}%',
+              countingVisits
+                  ? '${current.visits}'
+                  : countingGoalValue
+                  ? _formatGoalValue(current.goalValue)
+                  : '${(rate * 100).round()}%',
             ),
             Text(
               countingVisits
                   ? context.tr('visits', '次访问')
+                  : countingGoalValue
+                  ? context.tr('goal value', '目标值')
                   : converting
                   ? '${current.goalConversions} 次'
                   : '${current.retainedVisitors}/${current.cohortSize}',
@@ -772,3 +835,6 @@ class _CohortMetricCell extends StatelessWidget {
     );
   }
 }
+
+String _formatGoalValue(double value) =>
+    value.toStringAsFixed(4).replaceFirst(RegExp(r'\.?0+$'), '');
