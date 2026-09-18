@@ -370,3 +370,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0053-google-ads-export-audit-action.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0054-search-console-property
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0054-search-console-property.sql
+            relativeToChangelogFile: false

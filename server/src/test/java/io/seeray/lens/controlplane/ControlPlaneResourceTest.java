@@ -11,6 +11,7 @@ import io.seeray.lens.application.AnalyticsFactBuilder;
 import io.seeray.lens.application.GoogleAdsDataManagerGateway;
 import io.seeray.lens.application.HeatmapAggregationService;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
+import io.seeray.lens.application.SearchConsoleGateway;
 import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.auth.AuthSession;
 import io.seeray.lens.domain.auth.UserStatus;
@@ -5041,6 +5042,92 @@ class ControlPlaneResourceTest {
             p.setString(4, payload);
             p.executeUpdate();
         }
+    }
+
+    @Test
+    void configuresValidatesAndQueriesSearchConsoleProperties() {
+        AtomicReference<String> queriedProperty = new AtomicReference<>();
+        java.util.concurrent.CopyOnWriteArrayList<SearchConsoleGateway.QueryRequest> requests =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        QuarkusMock.installMockForType(
+                new SearchConsoleGateway() {
+                    @Override
+                    public List<PropertyAccess> accessibleProperties() {
+                        return List.of(new PropertyAccess("sc-domain:example.com", "siteOwner"));
+                    }
+
+                    @Override
+                    public SearchResult query(String propertyUrl, QueryRequest request) {
+                        queriedProperty.set(propertyUrl);
+                        requests.add(request);
+                        if (request.dimensions().isEmpty()) {
+                            return new SearchResult(
+                                    List.of(new SearchRow(List.of(), 81, 1_840, 0.044, 7.3)), "byProperty");
+                        }
+                        return new SearchResult(
+                                List.of(
+                                        new SearchRow(List.of("privacy analytics"), 42, 900, 0.046, 5.2),
+                                        new SearchRow(List.of("web analytics"), 39, 940, 0.041, 9.5)),
+                                "byProperty");
+                    }
+                },
+                SearchConsoleGateway.class);
+
+        Tokens owner = register("search-console" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Search console site");
+        String endpoint = "/api/v1/sites/" + siteId + "/search-console";
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/property")
+                .then()
+                .statusCode(200)
+                .body("configured", is(false));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"propertyUrl\":\"sc-domain:example.com\"}")
+                .put(endpoint + "/property")
+                .then()
+                .statusCode(200)
+                .body("configured", is(true))
+                .body("propertyUrl", is("sc-domain:example.com"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"propertyUrl\":\"https://example.com/?token=unsafe\"}")
+                .put(endpoint + "/property")
+                .then()
+                .statusCode(400);
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .post(endpoint + "/validate")
+                .then()
+                .statusCode(200)
+                .body("accessible", is(true))
+                .body("permissionLevel", is("siteOwner"));
+        String day = LocalDate.now(ZoneId.of("UTC")).minusDays(3).toString();
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(endpoint + "/report?from=" + day + "&to=" + day + "&dimension=query")
+                .then()
+                .statusCode(200)
+                .body("propertyUrl", is("sc-domain:example.com"))
+                .body("dimension", is("query"))
+                .body("clicks", is(81.0f))
+                .body("impressions", is(1840.0f))
+                .body("rows.size()", is(2))
+                .body("rows[0].key", is("privacy analytics"))
+                .body("dataLimitNote", containsString("does not guarantee every row"));
+        assertEquals("sc-domain:example.com", queriedProperty.get());
+        assertEquals(2, requests.size());
+        assertEquals(List.of(), requests.get(0).dimensions());
+        assertEquals(1, requests.get(0).rowLimit());
+        assertEquals(List.of("query"), requests.get(1).dimensions());
+        assertEquals(1_000, requests.get(1).rowLimit());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + siteId + "/audit-log?from=" + day + "&to=" + LocalDate.now(ZoneId.of("UTC")))
+                .then()
+                .statusCode(200)
+                .body("entries.find { it.resource == 'search-console' }.action", is("UPDATE"));
     }
 
     private static Tokens register(String email) {

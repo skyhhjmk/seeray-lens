@@ -116,4 +116,13 @@ class SiteAuditLogFilterTest {
         assertNull(SiteAuditLogFilter.classify(
                 "POST", "/api/v1/sites/" + siteId + "/analytics/offline-conversions/imports"));
     }
+
+    @Test
+    void auditsSearchConsolePropertyChangesButNotConnectionChecks() {
+        var update = SiteAuditLogFilter.classify("PUT", "/api/v1/sites/" + siteId + "/search-console/property");
+        assertNotNull(update);
+        assertEquals("UPDATE", update.action());
+        assertEquals("search-console", update.resource());
+        assertNull(SiteAuditLogFilter.classify("POST", "/api/v1/sites/" + siteId + "/search-console/validate"));
+    }
 }
