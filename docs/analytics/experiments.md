@@ -10,6 +10,16 @@ The origin-checked tracker request includes the installer's site-scoped anonymou
 
 Segments in use by an experiment cannot be disabled or deleted; remove them from the experiment first. Real-browser deployment acceptance remains open.
 
+## Lifecycle and traffic layers
+
+Create experiments as drafts. From each experiment card, use **Manage lifecycle** to start a draft, pause or complete a running experiment, resume or complete a paused experiment, or archive an experiment. Completed experiments stop receiving new exposures while keeping their report available. Archived experiments are read-only; deletion is offered only after archiving and removes the definition/report entry.
+
+An experiment's name, variants, audience targeting, and traffic-layer membership become immutable after its first recorded `experiment_exposure`. The editor shows this lock and hides editing controls; the server independently rejects configuration changes. Lifecycle transitions remain available so an exposed experiment can still be paused, completed, or archived. Create a new experiment to test a changed setup.
+
+Experiments are independent by default. Turn on **Share a traffic layer** to choose an existing site layer or create a reusable layer ID (letters/digits with optional `_` or `-`, up to 64 characters). Among the server-eligible running experiments in a layer, the definitions endpoint returns one stable candidate per visitor and layer. The tracker stores that experiment-level layer assignment in site-scoped local storage and applies page/device targeting before recording exposure. Independent experiments do not compete with experiments in a layer. If the chosen candidate does not match its page/device rules, that visitor is not exposed to another experiment in the same layer on that request.
+
+Layer selection is stable while the chosen experiment remains in the returned candidate set. If layer membership or server-side segment eligibility changes, the tracker may choose another currently eligible candidate. Keep experiments in one layer for experiences that must never be shown together, and use lifecycle controls to stop experiments before replacing layer membership. Visitor assignment is site-scoped; no visitor identifier is stored by the definitions endpoint.
+
 ## Sample planning and report uncertainty
 
 The visual experiment editor includes a sample-size estimate. Set the expected control conversion rate and the smallest relative lift worth detecting; choose a confidence level (90%, 95%, or 99%) and statistical power (80% or 90%). The estimate assumes equal allocation, independent two-arm comparisons, and a two-sided normal approximation. It shows the estimated exposure count per variant and the traffic total for the configured number of variants. For three or more variants, the total does not include a multiple-comparison correction. Treat this as a planning aid, not a stopping rule; actual traffic and conversion behavior may differ from the assumptions.

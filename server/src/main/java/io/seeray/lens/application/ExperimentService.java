@@ -10,9 +10,9 @@ import io.seeray.lens.domain.workspace.WorkspaceRole;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.time.*;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import javax.sql.DataSource;
 
@@ -74,14 +74,16 @@ public class ExperimentService {
             } else {
                 // Build eligible candidates first, then choose a stable single member of each layer.
                 // The visitor identifier is already site-scoped and is never persisted by this endpoint.
-                exclusiveGroups.computeIfAbsent(experiment.allocationGroup, ignored -> new ArrayList<>())
+                exclusiveGroups
+                        .computeIfAbsent(experiment.allocationGroup, ignored -> new ArrayList<>())
                         .add(view);
             }
         }
         for (Map.Entry<String, List<PublicView>> entry : exclusiveGroups.entrySet()) {
             List<PublicView> candidates = entry.getValue();
-            int bucket = stableBucket(trackingId + "\u0000" + Objects.toString(clientVisitorId, "")
-                    + "\u0000" + entry.getKey(), candidates.size());
+            int bucket = stableBucket(
+                    trackingId + "\u0000" + Objects.toString(clientVisitorId, "") + "\u0000" + entry.getKey(),
+                    candidates.size());
             result.add(candidates.get(bucket));
         }
         result.sort(Comparator.comparing(PublicView::name));
@@ -118,6 +120,10 @@ public class ExperimentService {
         writable(siteId);
         validate(u);
         ExperimentDefinition e = experiment(siteId, id);
+        if ("archived".equals(e.lifecycleStatus)) {
+            throw new ControlPlaneException(
+                    409, "EXPERIMENT_ARCHIVED", "Archived experiments are read-only; restore is not supported");
+        }
         Targeting targeting =
                 u.targeting() == null ? readTargeting(e.targetingJson) : normalizeTargeting(u.targeting());
         if (u.targeting() != null) validateSegmentTarget(siteId, targeting);
@@ -216,10 +222,9 @@ public class ExperimentService {
             Counts value = entry.getValue();
             double rate = value.exposures == 0 ? 0 : (double) value.conversions / value.exposures;
             Interval rateInterval = wilsonInterval(value);
-            Comparison comparison =
-                    index++ == 0
-                            ? new Comparison(null, null, false, null, null, null)
-                            : compare(controlRate, control, rate, value);
+            Comparison comparison = index++ == 0
+                    ? new Comparison(null, null, false, null, null, null)
+                    : compare(controlRate, control, rate, value);
             reports.add(new VariantReport(
                     entry.getKey(),
                     value.exposures,
@@ -322,7 +327,9 @@ public class ExperimentService {
                 : status.trim().toLowerCase(Locale.ROOT);
         if (!LIFECYCLE_STATUSES.contains(normalized)) {
             throw new ControlPlaneException(
-                    400, "INVALID_EXPERIMENT_STATUS", "Experiment status must be draft, running, paused, completed, or archived");
+                    400,
+                    "INVALID_EXPERIMENT_STATUS",
+                    "Experiment status must be draft, running, paused, completed, or archived");
         }
         return normalized;
     }
@@ -426,9 +433,7 @@ public class ExperimentService {
 
     private static Comparison compare(double controlRate, Counts control, double variantRate, Counts variant) {
         Interval difference = newcombeDifferenceInterval(control, variant);
-        Double rateDifference = variant.exposures == 0 || control.exposures == 0
-                ? null
-                : variantRate - controlRate;
+        Double rateDifference = variant.exposures == 0 || control.exposures == 0 ? null : variantRate - controlRate;
         if (control.exposures == 0 || variant.exposures == 0)
             return new Comparison(
                     controlRate == 0 ? null : (variantRate - controlRate) / controlRate,
@@ -483,9 +488,7 @@ public class ExperimentService {
         double zSquared = z * z;
         double denominator = 1 + zSquared / n;
         double center = (p + zSquared / (2 * n)) / denominator;
-        double halfWidth = z
-                * Math.sqrt(p * (1 - p) / n + zSquared / (4 * n * n))
-                / denominator;
+        double halfWidth = z * Math.sqrt(p * (1 - p) / n + zSquared / (4 * n * n)) / denominator;
         return new Interval(Math.max(0, center - halfWidth), Math.min(1, center + halfWidth));
     }
 

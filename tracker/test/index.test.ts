@@ -132,6 +132,54 @@ describe('tracker package', () => {
     );
   });
 
+  it('assigns a visitor to at most one experiment in a shared layer', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { name: 'checkout-copy', variants: ['control', 'new'], allocationGroup: 'checkout' },
+          { name: 'checkout-layout', variants: ['control', 'compact'], allocationGroup: 'checkout' },
+        ],
+      })
+      .mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const tracker = new Tracker({
+      siteId: 'srl_experiment_layers',
+      apiOrigin: 'https://lens.example.test/tracker.js',
+      experiments: true,
+      flushInterval: 100,
+    });
+    await tracker.ready();
+
+    const first = tracker.assignExperiment('checkout-copy');
+    const second = tracker.assignExperiment('checkout-layout');
+    const repeatedFirst = tracker.assignExperiment('checkout-copy');
+    const repeatedSecond = tracker.assignExperiment('checkout-layout');
+    expect([first, second].filter((value) => value !== undefined)).toHaveLength(1);
+    expect(first).toBe(repeatedFirst);
+    expect(second).toBe(repeatedSecond);
+    expect(storage.get('seeray:srl_experiment_layers:experiment-layer:checkout')).toBe(
+      first === undefined ? 'checkout-layout' : 'checkout-copy',
+    );
+
+    await tracker.flush();
+    const collectorCall = fetch.mock.calls.find((call) => call[1]?.method === 'POST');
+    const exposures = JSON.parse(collectorCall?.[1].body as string).events
+      .filter((event: { type: string }) => event.type === 'experiment_exposure');
+    expect(exposures).toHaveLength(2);
+    expect(exposures.map((event: { action: string }) => event.action)).toEqual(
+      [first === undefined ? 'checkout-layout' : 'checkout-copy',
+        first === undefined ? 'checkout-layout' : 'checkout-copy'],
+    );
+  });
+
   it('checks configured path and device targeting before assigning or exposing', async () => {
     const browser = { doNotTrack: '0', userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0 Safari/537.36' };
     const location = { href: 'https://shop.example.test/pricing-old' };

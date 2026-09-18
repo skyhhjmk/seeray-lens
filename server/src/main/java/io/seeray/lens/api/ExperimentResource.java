@@ -77,12 +77,7 @@ public class ExperimentResource {
 
         ExperimentService.Update update() {
             return new ExperimentService.Update(
-                    enabled,
-                    status,
-                    allocationGroup,
-                    name,
-                    variants,
-                    targeting == null ? null : targeting.update());
+                    enabled, status, allocationGroup, name, variants, targeting == null ? null : targeting.update());
         }
     }
 

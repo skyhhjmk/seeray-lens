@@ -1991,6 +1991,221 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void experimentLifecycleLocksSetupAfterExposureAndArchivesBeforeDeletion() throws Exception {
+        Tokens owner = register("experiment-lifecycle" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Lifecycle site\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String path = "/api/v1/sites/" + site + "/experiments";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"host\":\"lifecycle.example.test\",\"allowSubdomains\":false,\"enabled\":true}")
+                .post("/api/v1/sites/" + site + "/domains")
+                .then()
+                .statusCode(201);
+        String draft = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Checkout experiment\",\"status\":\"draft\","
+                        + "\"allocationGroup\":\"checkout\",\"variants\":[\"control\",\"variant\"]}")
+                .post(path)
+                .then()
+                .statusCode(200)
+                .body("status", is("draft"))
+                .body("enabled", is(false))
+                .body("allocationGroup", is("checkout"))
+                .body("configurationLocked", is(false))
+                .extract()
+                .path("id");
+
+        String deniedBody = "{\"name\":\"Checkout experiment\",\"status\":\"paused\","
+                + "\"enabled\":false,\"allocationGroup\":\"checkout\","
+                + "\"variants\":[\"control\",\"variant\"]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(deniedBody)
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(409)
+                .body("code", is("INVALID_EXPERIMENT_TRANSITION"));
+
+        String trackingId = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("trackingId");
+        String publicPath = "/api/v1/experiments/" + trackingId + "/definitions";
+        given().header("Origin", "https://lifecycle.example.test")
+                .get(publicPath)
+                .then()
+                .statusCode(200)
+                .body("size()", is(0));
+
+        String startBody = "{\"name\":\"Checkout experiment\",\"status\":\"running\","
+                + "\"enabled\":true,\"allocationGroup\":\"checkout\","
+                + "\"variants\":[\"control\",\"variant\"]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(startBody)
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(200)
+                .body("status", is("running"));
+        given().header("Origin", "https://lifecycle.example.test")
+                .get(publicPath)
+                .then()
+                .statusCode(200)
+                .body("[0].name", is("Checkout experiment"));
+
+        UUID siteId = UUID.fromString(site);
+        insertRaw(
+                siteId,
+                "lifecycle-visitor",
+                "lifecycle-session",
+                "experiment_exposure",
+                Instant.parse("2026-09-18T12:00:00Z"),
+                "/checkout",
+                "{\"action\":\"Checkout experiment\",\"name\":\"control\"}");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path)
+                .then()
+                .statusCode(200)
+                .body("find { it.id == '" + draft + "' }.configurationLocked", is(true));
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Checkout experiment\",\"status\":\"running\","
+                        + "\"enabled\":true,\"allocationGroup\":\"checkout\","
+                        + "\"variants\":[\"control\",\"new_variant\"]}")
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(409)
+                .body("code", is("EXPERIMENT_CONFIGURATION_LOCKED"));
+
+        String pausedBody = "{\"name\":\"Checkout experiment\",\"status\":\"paused\","
+                + "\"enabled\":false,\"allocationGroup\":\"checkout\","
+                + "\"variants\":[\"control\",\"variant\"]}";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(pausedBody)
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(200)
+                .body("status", is("paused"))
+                .body("configurationLocked", is(true));
+        given().header("Origin", "https://lifecycle.example.test")
+                .get(publicPath)
+                .then()
+                .statusCode(200)
+                .body("size()", is(0));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Checkout experiment\",\"status\":\"completed\","
+                        + "\"enabled\":false,\"allocationGroup\":\"checkout\","
+                        + "\"variants\":[\"control\",\"variant\"]}")
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(200)
+                .body("status", is("completed"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(startBody)
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(409)
+                .body("code", is("INVALID_EXPERIMENT_TRANSITION"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(path + "/" + draft)
+                .then()
+                .statusCode(409)
+                .body("code", is("ARCHIVE_EXPERIMENT_BEFORE_DELETE"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Checkout experiment\",\"status\":\"archived\","
+                        + "\"enabled\":false,\"allocationGroup\":\"checkout\","
+                        + "\"variants\":[\"control\",\"variant\"]}")
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(200)
+                .body("status", is("archived"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(startBody)
+                .put(path + "/" + draft)
+                .then()
+                .statusCode(409)
+                .body("code", is("EXPERIMENT_ARCHIVED"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(path + "/" + draft)
+                .then()
+                .statusCode(204);
+    }
+
+    @Test
+    void publicExperimentDefinitionsReturnOneStableCandidatePerAllocationLayer() {
+        Tokens owner = register("experiment-layers" + System.nanoTime() + "@example.test");
+        String workspace = workspace(owner.access()).extract().path("[0].id");
+        String site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Layer site\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspace + "/sites")
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("id");
+        String path = "/api/v1/sites/" + site + "/experiments";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"host\":\"layers.example.test\",\"allowSubdomains\":false,\"enabled\":true}")
+                .post("/api/v1/sites/" + site + "/domains")
+                .then()
+                .statusCode(201);
+        for (String definition : List.of(
+                "{\"name\":\"Checkout copy\",\"allocationGroup\":\"checkout\",\"variants\":[\"control\",\"copy\"]}",
+                "{\"name\":\"Checkout layout\",\"allocationGroup\":\"checkout\",\"variants\":[\"control\",\"layout\"]}",
+                "{\"name\":\"Independent banner\",\"variants\":[\"control\",\"banner\"]}")) {
+            given().header("Authorization", "Bearer " + owner.access())
+                    .contentType("application/json")
+                    .body(definition)
+                    .post(path)
+                    .then()
+                    .statusCode(200);
+        }
+        String trackingId = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("trackingId");
+        String publicPath = "/api/v1/experiments/" + trackingId + "/definitions?visitorId=" + UUID.randomUUID();
+        List<String> first = given().header("Origin", "https://layers.example.test")
+                .get(publicPath)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList("name");
+        List<String> repeated = given().header("Origin", "https://layers.example.test")
+                .get(publicPath)
+                .then()
+                .statusCode(200)
+                .extract()
+                .jsonPath()
+                .getList("name");
+        assertEquals(2, first.size());
+        assertEquals(first, repeated);
+        assertTrue(first.contains("Independent banner"));
+        assertEquals(
+                1L, first.stream().filter(name -> name.startsWith("Checkout ")).count());
+    }
+
+    @Test
     void savedSegmentTargetsOnlyMatchingVisitorsWithinItsLookback() throws Exception {
         Tokens owner = register("experiment-segment" + System.nanoTime() + "@example.test");
         String workspace = workspace(owner.access()).extract().path("[0].id");

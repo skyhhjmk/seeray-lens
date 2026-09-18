@@ -99,7 +99,11 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
       context: context,
       builder: (context) => widget.mode == ProductFeatureMode.tagManager
           ? const _ContainerEditorDialog()
-          : _FeatureEditorDialog(mode: widget.mode, siteId: widget.siteId),
+          : _FeatureEditorDialog(
+              mode: widget.mode,
+              siteId: widget.siteId,
+              availableAllocationGroups: _availableAllocationGroups,
+            ),
     );
     if (result == null) return;
     await _run(() async {
@@ -132,11 +136,130 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
         mode: widget.mode,
         siteId: widget.siteId,
         initial: item,
+        availableAllocationGroups: _availableAllocationGroups,
       ),
     );
     if (result == null) return;
     await _run(() async {
       await ref.read(apiProvider).request('PUT', '$_path/$id', body: result);
+      await _load();
+    });
+  }
+
+  List<String> get _availableAllocationGroups =>
+      _items
+          .map((item) => item['allocationGroup'] as String?)
+          .whereType<String>()
+          .where((group) => group.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+
+  String _experimentStatusLabel(String status) => switch (status) {
+    'draft' => context.tr('Draft', '草稿'),
+    'running' => context.tr('Running', '运行中'),
+    'paused' => context.tr('Paused', '已暂停'),
+    'completed' => context.tr('Completed', '已完成'),
+    'archived' => context.tr('Archived', '已归档'),
+    _ => status,
+  };
+
+  List<String> _experimentNextStatuses(String status) => switch (status) {
+    'draft' => const ['running', 'archived'],
+    'running' => const ['paused', 'completed'],
+    'paused' => const ['running', 'completed', 'archived'],
+    'completed' => const ['archived'],
+    _ => const [],
+  };
+
+  String _experimentStatusAction(String nextStatus) => switch (nextStatus) {
+    'running' => context.tr('Start', '开始'),
+    'paused' => context.tr('Pause', '暂停'),
+    'completed' => context.tr('Complete', '完成'),
+    'archived' => context.tr('Archive', '归档'),
+    _ => nextStatus,
+  };
+
+  String _experimentStatusActionZh(String nextStatus) => switch (nextStatus) {
+    'running' => '开始',
+    'paused' => '暂停',
+    'completed' => '完成',
+    'archived' => '归档',
+    _ => nextStatus,
+  };
+
+  String _experimentStatusConfirmation(
+    String nextStatus,
+  ) => switch (nextStatus) {
+    'running' =>
+      'New eligible visitors will be assigned and exposed to this experiment.',
+    'paused' =>
+      'No new visitors will be assigned; existing reports remain available.',
+    'completed' =>
+      'New exposure stops and the experiment remains available for reporting.',
+    'archived' =>
+      'The experiment becomes read-only. You can delete it after archiving.',
+    _ => '',
+  };
+
+  String _experimentStatusConfirmationZh(String nextStatus) =>
+      switch (nextStatus) {
+        'running' => '符合条件的新访客将开始进入该实验并记录曝光。',
+        'paused' => '不再分配新访客；已有报告仍可查看。',
+        'completed' => '停止新增曝光，实验仍保留供报告查看。',
+        'archived' => '实验将转为只读；归档后才可删除。',
+        _ => '',
+      };
+
+  Future<void> _changeExperimentStatus(
+    Map<String, dynamic> item,
+    String nextStatus,
+  ) async {
+    final id = item['id'] as String?;
+    if (id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          context.tr(
+            '${_experimentStatusAction(nextStatus)} “${item['name'] ?? ''}”?',
+            '要${_experimentStatusActionZh(nextStatus)}“${item['name'] ?? ''}”吗？',
+          ),
+        ),
+        content: Text(
+          context.tr(
+            _experimentStatusConfirmation(nextStatus),
+            _experimentStatusConfirmationZh(nextStatus),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(context.tr('Cancel', '取消')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(_experimentStatusAction(nextStatus)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run(() async {
+      await ref
+          .read(apiProvider)
+          .request(
+            'PUT',
+            '$_path/$id',
+            body: {
+              'name': item['name'],
+              'variants': item['variants'],
+              'targeting': item['targeting'],
+              'allocationGroup': item['allocationGroup'],
+              'status': nextStatus,
+              'enabled': nextStatus == 'running',
+            },
+          );
       await _load();
     });
   }
@@ -557,6 +680,10 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
     final id = item['id'] as String? ?? '';
     final name = item['name'] as String? ?? id;
     final enabled = item['enabled'] as bool? ?? true;
+    final experimentStatus =
+        item['status'] as String? ?? (enabled ? 'running' : 'paused');
+    final configurationLocked = item['configurationLocked'] as bool? ?? false;
+    final allocationGroup = item['allocationGroup'] as String?;
     final variants = (item['variants'] as List?)?.join(', ');
     final steps = (item['steps'] as List?)?.length;
     final published = item['publishedVersion'];
@@ -572,17 +699,24 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
           ProductFeatureMode.tagManager => Icons.sell_outlined,
         }),
         title: Text(name),
-        subtitle: Text(switch (widget.mode) {
-          ProductFeatureMode.funnels => context.tr(
-            '$steps ordered steps',
-            '$steps 个顺序步骤',
-          ),
-          ProductFeatureMode.experiments => variants ?? '',
-          ProductFeatureMode.tagManager => context.tr(
-            'Published version: ${published ?? "none"}\nDevelopment ${releases['development'] == null ? "—" : "v${releases['development']}"} · Staging ${releases['staging'] == null ? "—" : "v${releases['staging']}"} · Production ${releases['production'] == null ? "—" : "v${releases['production']}"}',
-            '已发布版本：${published ?? "无"}\n开发 ${releases['development'] == null ? "—" : "v${releases['development']}"} · 预发布 ${releases['staging'] == null ? "—" : "v${releases['staging']}"} · 生产 ${releases['production'] == null ? "—" : "v${releases['production']}"}',
-          ),
-        }),
+        subtitle: widget.mode == ProductFeatureMode.experiments
+            ? _experimentCardSubtitle(
+                variants ?? '',
+                experimentStatus,
+                allocationGroup,
+                configurationLocked,
+              )
+            : Text(switch (widget.mode) {
+                ProductFeatureMode.funnels => context.tr(
+                  '$steps ordered steps',
+                  '$steps 个顺序步骤',
+                ),
+                ProductFeatureMode.experiments => '',
+                ProductFeatureMode.tagManager => context.tr(
+                  'Published version: ${published ?? "none"}\nDevelopment ${releases['development'] == null ? "—" : "v${releases['development']}"} · Staging ${releases['staging'] == null ? "—" : "v${releases['staging']}"} · Production ${releases['production'] == null ? "—" : "v${releases['production']}"}',
+                  '已发布版本：${published ?? "无"}\n开发 ${releases['development'] == null ? "—" : "v${releases['development']}"} · 预发布 ${releases['staging'] == null ? "—" : "v${releases['staging']}"} · 生产 ${releases['production'] == null ? "—" : "v${releases['production']}"}',
+                ),
+              }),
         trailing: Wrap(
           spacing: 4,
           children: [
@@ -592,22 +726,44 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                 onPressed: () => _report(id),
                 icon: const Icon(Icons.bar_chart_outlined),
               ),
-            IconButton(
-              tooltip: context.tr('Edit', '编辑'),
-              onPressed: () => _edit(item),
-              icon: const Icon(Icons.edit_outlined),
-            ),
-            if (widget.mode == ProductFeatureMode.experiments)
+            if (widget.mode != ProductFeatureMode.experiments ||
+                (!configurationLocked && experimentStatus != 'archived'))
+              IconButton(
+                tooltip: context.tr('Edit', '编辑'),
+                onPressed: () => _edit(item),
+                icon: const Icon(Icons.edit_outlined),
+              ),
+            if (widget.mode == ProductFeatureMode.experiments &&
+                _experimentNextStatuses(experimentStatus).isNotEmpty)
+              PopupMenuButton<String>(
+                key: ValueKey('experiment-lifecycle-menu-$id'),
+                tooltip: context.tr('Manage lifecycle', '管理实验状态'),
+                icon: const Icon(Icons.tune),
+                onSelected: (status) => _changeExperimentStatus(item, status),
+                itemBuilder: (context) => [
+                  for (final status in _experimentNextStatuses(
+                    experimentStatus,
+                  ))
+                    PopupMenuItem(
+                      value: status,
+                      child: Text(_experimentStatusAction(status)),
+                    ),
+                ],
+              ),
+            if (widget.mode == ProductFeatureMode.experiments &&
+                experimentStatus == 'running')
               IconButton(
                 tooltip: context.tr('Install snippet', '安装代码'),
                 onPressed: () => _showExperimentSnippet(item),
                 icon: const Icon(Icons.integration_instructions_outlined),
               ),
-            IconButton(
-              tooltip: context.tr('Delete', '删除'),
-              onPressed: () => _delete(item),
-              icon: const Icon(Icons.delete_outline),
-            ),
+            if (widget.mode != ProductFeatureMode.experiments ||
+                experimentStatus == 'archived')
+              IconButton(
+                tooltip: context.tr('Delete', '删除'),
+                onPressed: () => _delete(item),
+                icon: const Icon(Icons.delete_outline),
+              ),
             if (widget.mode == ProductFeatureMode.tagManager) ...[
               IconButton(
                 tooltip: context.tr('Versions', '版本'),
@@ -631,12 +787,67 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                   icon: const Icon(Icons.publish_outlined),
                 ),
             ],
-            if (!enabled) const Icon(Icons.pause_circle_outline),
+            if (widget.mode != ProductFeatureMode.experiments && !enabled)
+              const Icon(Icons.pause_circle_outline),
           ],
         ),
       ),
     );
   }
+
+  Widget _experimentCardSubtitle(
+    String variants,
+    String status,
+    String? allocationGroup,
+    bool configurationLocked,
+  ) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(context.tr('Variants: $variants', '变体：$variants')),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          Chip(
+            visualDensity: VisualDensity.compact,
+            avatar: Icon(
+              status == 'running'
+                  ? Icons.play_circle_outline
+                  : Icons.science_outlined,
+              size: 16,
+            ),
+            label: Text(_experimentStatusLabel(status)),
+          ),
+          if (allocationGroup != null && allocationGroup.isNotEmpty)
+            Chip(
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.layers_outlined, size: 16),
+              label: Text(
+                context.tr('Layer: $allocationGroup', '分层：$allocationGroup'),
+              ),
+            ),
+          if (configurationLocked)
+            Chip(
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.lock_outline, size: 16),
+              label: Text(context.tr('Setup locked', '配置已锁定')),
+            ),
+        ],
+      ),
+      if (configurationLocked) ...[
+        const SizedBox(height: 4),
+        Text(
+          context.tr(
+            'Variants, audience, name, and allocation are locked after the first exposure. Create a new experiment to test a changed setup.',
+            '首次曝光后，变体、受众、名称和分层配置均已锁定。如需测试新配置，请新建实验。',
+          ),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    ],
+  );
 
   Future<void> _showExperimentSnippet(Map<String, dynamic> item) async {
     final name = item['name'] as String? ?? '';
@@ -695,11 +906,13 @@ class _FeatureEditorDialog extends ConsumerStatefulWidget {
     required this.mode,
     required this.siteId,
     this.initial,
+    this.availableAllocationGroups = const [],
   });
 
   final ProductFeatureMode mode;
   final String siteId;
   final Map<String, dynamic>? initial;
+  final List<String> availableAllocationGroups;
 
   @override
   ConsumerState<_FeatureEditorDialog> createState() =>
@@ -708,7 +921,10 @@ class _FeatureEditorDialog extends ConsumerStatefulWidget {
 
 class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
   late final TextEditingController _name;
+  late final TextEditingController _allocationGroup;
   late bool _enabled;
+  late String _status;
+  bool _useAllocationGroup = false;
   final _steps = <_FunnelStepForm>[];
   final _variants = <TextEditingController>[];
   final _targetPathPrefixes = <TextEditingController>[];
@@ -723,12 +939,27 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
 
   bool get _editing => widget.initial != null;
 
+  String _editorStatusLabel(String status) => switch (status) {
+    'draft' => context.tr('Draft', '草稿'),
+    'running' => context.tr('Running', '运行中'),
+    'paused' => context.tr('Paused', '已暂停'),
+    'completed' => context.tr('Completed', '已完成'),
+    'archived' => context.tr('Archived', '已归档'),
+    _ => status,
+  };
+
   @override
   void initState() {
     super.initState();
     final initial = widget.initial;
     _name = TextEditingController(text: initial?['name'] as String? ?? '');
     _enabled = initial?['enabled'] as bool? ?? true;
+    _status =
+        initial?['status'] as String? ??
+        (initial == null ? 'draft' : (_enabled ? 'running' : 'paused'));
+    final allocationGroup = initial?['allocationGroup'] as String?;
+    _allocationGroup = TextEditingController(text: allocationGroup ?? '');
+    _useAllocationGroup = allocationGroup?.isNotEmpty ?? false;
     if (widget.mode == ProductFeatureMode.funnels) {
       final rawSteps = initial?['steps'];
       if (rawSteps is List) {
@@ -770,6 +1001,7 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
   @override
   void dispose() {
     _name.dispose();
+    _allocationGroup.dispose();
     for (final step in _steps) {
       step.dispose();
     }
@@ -805,18 +1037,21 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
                   labelText: context.tr('Name', '名称'),
                 ),
               ),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: Text(context.tr('Enabled', '启用')),
-                subtitle: Text(
-                  context.tr(
-                    'Disabled definitions remain available for reporting but are not used for new tracking.',
-                    '停用后仍保留历史报告，但不会用于新的追踪。',
+              if (widget.mode == ProductFeatureMode.funnels)
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(context.tr('Enabled', '启用')),
+                  subtitle: Text(
+                    context.tr(
+                      'Disabled definitions remain available for reporting but are not used for new tracking.',
+                      '停用后仍保留历史报告，但不会用于新的追踪。',
+                    ),
                   ),
-                ),
-                value: _enabled,
-                onChanged: (value) => setState(() => _enabled = value),
-              ),
+                  value: _enabled,
+                  onChanged: (value) => setState(() => _enabled = value),
+                )
+              else
+                _buildExperimentLifecycle(context),
               const Divider(),
               if (widget.mode == ProductFeatureMode.funnels)
                 _buildFunnelEditor(context)
@@ -897,9 +1132,123 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
     ],
   );
 
+  Widget _buildExperimentLifecycle(BuildContext context) => Card(
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.route_outlined,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                context.tr('Experiment lifecycle', '实验生命周期'),
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const Spacer(),
+              Chip(label: Text(_editorStatusLabel(_status))),
+            ],
+          ),
+          Text(
+            context.tr(
+              'New experiments start as drafts. Use the lifecycle menu on the experiment card to start, pause, complete, or archive it. Completed and archived reports remain available.',
+              '新实验以草稿创建。请在实验卡片的状态菜单中开始、暂停、完成或归档。完成和归档后仍可查看报告。',
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildTrafficAllocation(BuildContext context) => Card(
+    key: const ValueKey('experiment-traffic-allocation'),
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            context.tr('Traffic allocation', '流量分配'),
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            context.tr(
+              'Keep this experiment independent, or place it in a shared layer so each visitor can enter at most one running experiment in that layer.',
+              '可独立运行，也可加入共享分层；同一访客在一个分层中最多进入一个运行中的实验。',
+            ),
+          ),
+          SwitchListTile.adaptive(
+            key: const ValueKey('experiment-use-allocation-group'),
+            contentPadding: EdgeInsets.zero,
+            title: Text(context.tr('Share a traffic layer', '加入共享流量分层')),
+            value: _useAllocationGroup,
+            onChanged: (value) => setState(() {
+              _useAllocationGroup = value;
+              _error = null;
+            }),
+          ),
+          if (_useAllocationGroup) ...[
+            TextField(
+              key: const ValueKey('experiment-allocation-group'),
+              controller: _allocationGroup,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9_-]')),
+              ],
+              decoration: InputDecoration(
+                labelText: context.tr('Layer name', '分层名称'),
+                hintText: 'checkout',
+                helperText: context.tr(
+                  'Use a short reusable ID; letters, numbers, _ and - only.',
+                  '使用简短且可复用的标识；仅支持字母、数字、_ 和 -。',
+                ),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(() => _error = null),
+            ),
+            if (widget.availableAllocationGroups
+                .where((group) => group != _allocationGroup.text.trim())
+                .isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                context.tr('Existing layers on this site', '本站已有分层'),
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (final group in widget.availableAllocationGroups.where(
+                    (group) => group != _allocationGroup.text.trim(),
+                  ))
+                    ActionChip(
+                      label: Text(group),
+                      onPressed: () => setState(() {
+                        _allocationGroup.text = group;
+                        _error = null;
+                      }),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ],
+      ),
+    ),
+  );
+
   Widget _buildExperimentEditor(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      _buildTrafficAllocation(context),
+      const SizedBox(height: 12),
       Text(
         context.tr('Variants', '变体'),
         style: Theme.of(context).textTheme.titleMedium,
@@ -1380,6 +1729,25 @@ class _FeatureEditorDialogState extends ConsumerState<_FeatureEditorDialog> {
       }
       body['steps'] = steps;
     } else {
+      final allocationGroup = _useAllocationGroup
+          ? _allocationGroup.text.trim().toLowerCase()
+          : null;
+      if (_useAllocationGroup &&
+          (allocationGroup == null ||
+              !RegExp(
+                r'^[a-z0-9][a-z0-9_-]{0,63}$',
+              ).hasMatch(allocationGroup))) {
+        setState(
+          () => _error = context.tr(
+            'Use a layer ID beginning with a letter or number and up to 64 characters.',
+            '分层标识须以字母或数字开头，且不超过 64 个字符。',
+          ),
+        );
+        return;
+      }
+      body['status'] = _status;
+      body['enabled'] = _status == 'running';
+      body['allocationGroup'] = allocationGroup;
       final availableSegments = ref
           .read(analyticsSegmentOptionsProvider(widget.siteId))
           .value;

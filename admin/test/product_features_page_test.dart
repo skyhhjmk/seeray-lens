@@ -688,6 +688,152 @@ void main() {
       'segmentId': null,
       'segmentLookbackDays': 30,
     });
+    expect((api.lastMutationBody as Map)['status'], 'draft');
+    expect((api.lastMutationBody as Map)['enabled'], isFalse);
+    expect((api.lastMutationBody as Map)['allocationGroup'], isNull);
+  });
+
+  testWidgets('places experiments in a reusable shared traffic layer', (
+    tester,
+  ) async {
+    final api = _EditorFeatureApi.experiment();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.experiments,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Checkout copy');
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('experiment-use-allocation-group')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('experiment-use-allocation-group')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('experiment-allocation-group')),
+      'Checkout',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final body = api.lastMutationBody as Map;
+    expect(body['allocationGroup'], 'checkout');
+    expect(body['status'], 'draft');
+  });
+
+  testWidgets('starts a draft through the lifecycle menu with confirmation', (
+    tester,
+  ) async {
+    final api = _EditorFeatureApi.experiment(
+      items: [
+        {
+          'id': 'experiment-1',
+          'name': 'Checkout hero',
+          'status': 'draft',
+          'enabled': false,
+          'configurationLocked': false,
+          'allocationGroup': 'checkout',
+          'variants': ['control', 'variant'],
+          'targeting': {
+            'pathPrefixes': <String>[],
+            'deviceTypes': <String>[],
+            'segmentId': null,
+            'segmentLookbackDays': 30,
+          },
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.experiments,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Draft'), findsOneWidget);
+    expect(find.text('Layer: checkout'), findsOneWidget);
+    expect(find.byTooltip('Install snippet'), findsNothing);
+    expect(find.byTooltip('Delete'), findsNothing);
+
+    await tester.tap(
+      find.byKey(const ValueKey('experiment-lifecycle-menu-experiment-1')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Start'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'New eligible visitors will be assigned and exposed to this experiment.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Start'));
+    await tester.pumpAndSettle();
+
+    final body = api.lastMutationBody as Map;
+    expect(api.lastMutationMethod, 'PUT');
+    expect(body['status'], 'running');
+    expect(body['enabled'], isTrue);
+    expect(body['allocationGroup'], 'checkout');
+  });
+
+  testWidgets('keeps exposed experiment configuration locked in the list', (
+    tester,
+  ) async {
+    final api = _EditorFeatureApi.experiment(
+      items: [
+        {
+          'id': 'experiment-locked',
+          'name': 'Pricing test',
+          'status': 'running',
+          'enabled': true,
+          'configurationLocked': true,
+          'variants': ['control', 'variant'],
+          'targeting': {'pathPrefixes': <String>[], 'deviceTypes': <String>[]},
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.experiments,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Setup locked'), findsOneWidget);
+    expect(
+      find.textContaining('locked after the first exposure'),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('Edit'), findsNothing);
+    expect(find.byTooltip('Delete'), findsNothing);
   });
 
   testWidgets('targets an experiment with a saved audience and lookback', (
