@@ -31,6 +31,9 @@ public class Site extends PanacheEntityBase {
     @Column(name = "tracking_enabled", nullable = false)
     public boolean trackingEnabled;
 
+    @Column(name = "require_consent", nullable = false)
+    public boolean requireConsent;
+
     @Column(name = "raw_retention_days", nullable = false)
     public int rawRetentionDays;
 

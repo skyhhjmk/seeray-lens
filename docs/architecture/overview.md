@@ -14,7 +14,7 @@ Redis is never the only durable source of analytics facts. Elasticsearch is an o
 
 ## Privacy and identity
 
-The tracker is cookie-free, not storage-free. On first run it creates a random UUID visitor identifier in `localStorage`, keyed with the public Tracking ID. This identifier is site-isolated; it is never derived from IP, UA, or browser fingerprinting and must not be correlated across sites. A random session UUID is held in `sessionStorage`. The server treats it as an input to validate and derive the final business session boundary.
+The tracker is cookie-free, not storage-free. When consent is not required—or after required consent is granted—and Do Not Track is off, it creates a random UUID visitor identifier in `localStorage`, keyed with the public Tracking ID. Before that point it keeps only in-memory ephemeral IDs and does not install data-reading listeners or load optional analytics configuration. This identifier is site-isolated; it is never derived from IP, UA, or browser fingerprinting and must not be correlated across sites. A random session UUID is held in `sessionStorage`. Opt-out removes the site's tracker-owned storage keys and preserves a denial choice where storage is available. The server treats the session ID as an input to validate and derive the final business session boundary.
 
 When Do Not Track is enabled, the tracker sends nothing. Full IP addresses are neither persisted nor used to build stable identity. A future strict no-persistent-identifier mode is possible but is not the 1.0 default.
 

@@ -33,6 +33,9 @@ class IntegrationPage extends ConsumerWidget {
     }
     final base = ref.read(apiProvider).baseUrl;
     final script = '$base/tracker.js';
+    final consentAttribute = site.requireConsent
+        ? ' data-require-consent="true"'
+        : '';
     final gif = '$base/api/v1/pixel/${site.trackingId}.gif';
     final svg = '$base/api/v1/pixel/${site.trackingId}.svg';
     final initialTab =
@@ -41,7 +44,7 @@ class IntegrationPage extends ConsumerWidget {
         ? 6
         : 0;
     return DefaultTabController(
-      length: 11,
+      length: 12,
       initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
@@ -75,6 +78,7 @@ class IntegrationPage extends ConsumerWidget {
                   Tab(text: context.tr('Funnels', '漏斗')),
                   Tab(text: context.tr('A/B tests', 'A/B 测试')),
                   Tab(text: context.tr('Tag Manager', 'Tag Manager')),
+                  Tab(text: context.tr('Consent & privacy', '同意与隐私')),
                 ],
               ),
             ),
@@ -87,7 +91,7 @@ class IntegrationPage extends ConsumerWidget {
                       '推荐的 JavaScript 代码',
                     ),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}"></script>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute></script>',
                     note: context.tr(
                       'The tracker URL and collector path stay fixed. Do not add generated query parameters; site identity is the stable data-site-id value.',
                       '追踪器 URL 和 Collector 路径保持固定。不要添加自动生成的查询参数；站点身份使用稳定的 data-site-id。',
@@ -98,11 +102,16 @@ class IntegrationPage extends ConsumerWidget {
                       'No-JavaScript GIF fallback',
                       '无 JavaScript 的 GIF 回退',
                     ),
-                    body:
-                        '<noscript>\n  <img src="$gif" width="1" height="1" alt="" referrerpolicy="strict-origin-when-cross-origin">\n</noscript>',
+                    body: site.requireConsent
+                        ? '<!-- Pixel fallback is disabled: required consent needs the JavaScript choice UI. -->'
+                        : '<noscript>\n  <img src="$gif" width="1" height="1" alt="" referrerpolicy="strict-origin-when-cross-origin">\n</noscript>',
                     note: context.tr(
-                      'Use exactly one fallback format and keep it inside noscript. The pixel URL is stable and derives the page from Referer.',
-                      '仅使用一种回退格式，并保持在 noscript 内。像素 URL 固定，页面地址从 Referer 获取。',
+                      site.requireConsent
+                          ? 'A no-JavaScript pixel cannot collect an informed visitor choice, so it is disabled for this site.'
+                          : 'Use exactly one fallback format and keep it inside noscript. The pixel URL is stable and derives the page from Referer.',
+                      site.requireConsent
+                          ? '无 JavaScript 图片无法呈现并取得访客选择，因此此站点禁用该回退。'
+                          : '仅使用一种回退格式，并保持在 noscript 内。像素 URL 固定，页面地址从 Referer 获取。',
                     ),
                   ),
                   _Snippet(
@@ -110,11 +119,16 @@ class IntegrationPage extends ConsumerWidget {
                       'No-JavaScript SVG fallback',
                       '无 JavaScript 的 SVG 回退',
                     ),
-                    body:
-                        '<noscript>\n  <img src="$svg" width="1" height="1" alt="" referrerpolicy="strict-origin-when-cross-origin">\n</noscript>',
+                    body: site.requireConsent
+                        ? '<!-- Pixel fallback is disabled: required consent needs the JavaScript choice UI. -->'
+                        : '<noscript>\n  <img src="$svg" width="1" height="1" alt="" referrerpolicy="strict-origin-when-cross-origin">\n</noscript>',
                     note: context.tr(
-                      'SVG has the same collection behavior as GIF. Do not include both formats on one page.',
-                      'SVG 与 GIF 的采集行为相同。请勿在同一页面同时包含两种格式。',
+                      site.requireConsent
+                          ? 'A no-JavaScript pixel cannot collect an informed visitor choice, so it is disabled for this site.'
+                          : 'SVG has the same collection behavior as GIF. Do not include both formats on one page.',
+                      site.requireConsent
+                          ? '无 JavaScript 图片无法呈现并取得访客选择，因此此站点禁用该回退。'
+                          : 'SVG 与 GIF 的采集行为相同。请勿在同一页面同时包含两种格式。',
                     ),
                   ),
                   _Snippet(
@@ -156,7 +170,7 @@ class IntegrationPage extends ConsumerWidget {
                       '测量 Core Web Vitals',
                     ),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}" data-web-vitals></script>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-web-vitals></script>',
                     note: context.tr(
                       'This opt-in collects only LCP, INP and CLS values for the current page; it does not read page text, DOM elements or form input. Final values are sent when available, including when the page is hidden. Measurements follow the tracker’s DNT and consent settings. Browsers without a supported measurement API may not report every metric.',
                       '此功能需显式启用，只采集当前页面的 LCP、INP 和 CLS 数值，不读取页面文本、DOM 元素或表单输入。数值在可用时发送，包括页面隐藏时；并遵循追踪器的 DNT 与同意设置。不支持相关测量 API 的浏览器可能无法报告所有指标。',
@@ -165,7 +179,7 @@ class IntegrationPage extends ConsumerWidget {
                   _Snippet(
                     title: context.tr('Enable behaviour heatmaps', '启用页面行为热图'),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}" data-heatmap></script>\n<script>\n  // Before replacing PJAX content:\n  SeeRay.beginNavigation();\n  // After content and scroll restoration complete:\n  SeeRay.pageReady({ layoutVersion: \'homepage-v2\' });\n</script>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-heatmap></script>\n<script>\n  // Before replacing PJAX content:\n  SeeRay.beginNavigation();\n  // After content and scroll restoration complete:\n  SeeRay.pageReady({ layoutVersion: \'homepage-v2\' });\n</script>',
                     note: context.tr(
                       'First enable Heatmaps in the site settings, then add data-heatmap. Heatmaps are sampled per page instance and remain off if the public configuration cannot be read. Use a new layoutVersion whenever same-sized content moves; register independent scroll containers with a stable ID.',
                       '请先在站点设置中开启热图，再添加 data-heatmap。热图按页面实例采样；公开配置读取失败时保持关闭。相同尺寸的内容位置变化时请更新 layoutVersion；独立滚动容器需使用稳定 ID 注册。',
@@ -175,19 +189,28 @@ class IntegrationPage extends ConsumerWidget {
                     siteId: siteId,
                     trackingId: site.trackingId,
                     trackerUrl: script,
+                    requireConsent: site.requireConsent,
                     mode: ProductFeatureMode.funnels,
                   ),
                   ProductFeaturesPage(
                     siteId: siteId,
                     trackingId: site.trackingId,
                     trackerUrl: script,
+                    requireConsent: site.requireConsent,
                     mode: ProductFeatureMode.experiments,
                   ),
                   ProductFeaturesPage(
                     siteId: siteId,
                     trackingId: site.trackingId,
                     trackerUrl: script,
+                    requireConsent: site.requireConsent,
                     mode: ProductFeatureMode.tagManager,
+                  ),
+                  _ConsentSetup(
+                    siteId: site.id,
+                    trackingId: site.trackingId,
+                    trackerUrl: script,
+                    requiredBySite: site.requireConsent,
                   ),
                 ],
               ),
@@ -197,6 +220,118 @@ class IntegrationPage extends ConsumerWidget {
       ),
     );
   }
+}
+
+class _ConsentSetup extends StatelessWidget {
+  const _ConsentSetup({
+    required this.siteId,
+    required this.trackingId,
+    required this.trackerUrl,
+    required this.requiredBySite,
+  });
+
+  final String siteId;
+  final String trackingId;
+  final String trackerUrl;
+  final bool requiredBySite;
+
+  String get _snippet =>
+      '''<script src="$trackerUrl" data-site-id="$trackingId" data-require-consent="true"></script>
+<aside id="seeray-consent-banner-$trackingId" role="dialog" aria-label="Privacy choices" hidden>
+  <p>Allow anonymous analytics and the site's enabled behaviour tools?</p>
+  <button type="button" data-seeray-consent-accept>Accept</button>
+  <button type="button" data-seeray-consent-reject>Reject</button>
+</aside>
+<button id="seeray-consent-manage-$trackingId" type="button">Privacy settings</button>
+<script>
+(() => {
+  const banner = document.getElementById('seeray-consent-banner-$trackingId');
+  const manage = document.getElementById('seeray-consent-manage-$trackingId');
+  if (!banner || !manage || !window.SeeRay) return;
+  if (SeeRay.getConsentState('$trackingId') === 'unknown') banner.hidden = false;
+  manage.addEventListener('click', () => { banner.hidden = false; });
+  banner.querySelector('[data-seeray-consent-accept]')?.addEventListener('click', () => {
+    SeeRay.setConsent(true, '$trackingId');
+    banner.hidden = true;
+  });
+  banner.querySelector('[data-seeray-consent-reject]')?.addEventListener('click', () => {
+    SeeRay.optOut('$trackingId');
+    banner.hidden = true;
+  });
+})();
+</script>''';
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(20),
+    children: [
+      Text(
+        context.tr('Visitor consent setup', '访客同意设置'),
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+      const SizedBox(height: 8),
+      Card(
+        child: ListTile(
+          leading: Icon(
+            requiredBySite ? Icons.verified_user_outlined : Icons.info_outline,
+          ),
+          title: Text(
+            requiredBySite
+                ? context.tr('Consent required for this site', '此站点需要访客同意')
+                : context.tr('Consent is currently optional', '当前未强制要求访客同意'),
+          ),
+          subtitle: Text(
+            requiredBySite
+                ? context.tr(
+                    'Newly generated tracker snippets wait for a visitor choice; replace snippets already installed on the site. Reject and later withdrawal stop collection and clear this site’s stored tracker identifiers.',
+                    '新生成的追踪代码会等待访客选择；请替换网站上已安装的旧代码。拒绝或之后撤回会停止采集并清除此站点保存的追踪标识。',
+                  )
+                : context.tr(
+                    'This starter snippet enables consent for its installation. Turn on the site policy to include the requirement in every generated feature snippet.',
+                    '此示例代码会为该安装启用同意控制。开启站点策略后，所有生成的功能代码都会带上同意要求。',
+                  ),
+          ),
+          trailing: IconButton(
+            tooltip: context.tr('Open site settings', '打开站点设置'),
+            onPressed: () => context.go('/sites/$siteId'),
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        context.tr(
+          'Copy this complete starter snippet into your page. It includes an accessible accept/reject prompt and a persistent privacy-settings control. Adapt its copy and styling to your privacy notice and legal requirements.',
+          '将这段完整示例放入页面即可获得可访问的接受/拒绝提示和常驻隐私设置入口。请根据自己的隐私声明及法律要求调整文案与样式。',
+        ),
+      ),
+      const SizedBox(height: 14),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SelectableText(
+            _snippet,
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+        ),
+      ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.icon(
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: _snippet));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(context.tr('Code copied', '代码已复制'))),
+              );
+            }
+          },
+          icon: const Icon(Icons.copy),
+          label: Text(context.tr('Copy consent setup', '复制同意设置代码')),
+        ),
+      ),
+    ],
+  );
 }
 
 class _Snippet extends StatelessWidget {

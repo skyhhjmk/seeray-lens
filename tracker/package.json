@@ -14,6 +14,7 @@
     "build:tracker": "tsup src/index.ts --format esm,iife --global-name SeeRayLens --dts --minify --sourcemap",
     "build:recorder": "tsup src/recorder.ts --format esm --minify --sourcemap --out-dir dist",
     "build:replayer": "tsup src/replayer.ts --format esm --minify --sourcemap --out-dir dist",
+    "publish:tracker-asset": "node scripts/publish-server-assets.mjs --tracker-only",
     "publish:server-assets": "node scripts/publish-server-assets.mjs",
     "lint": "eslint src test",
     "test": "vitest run",

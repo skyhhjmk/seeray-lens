@@ -24,6 +24,7 @@ void main() {
     expect(find.text('Measure Core Web Vitals'), findsOneWidget);
     final snippet = tester.widget<SelectableText>(find.byType(SelectableText));
     expect(snippet.data, contains('data-web-vitals'));
+    expect(snippet.data, contains('data-require-consent="true"'));
     expect(find.textContaining('does not read page text'), findsOneWidget);
   });
 
@@ -61,6 +62,41 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Copy code'), findsOneWidget);
   });
+
+  testWidgets('provides an accessible consent and withdrawal setup', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [sitesProvider.overrideWith(_SitesController.new)],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Consent & privacy'));
+    await tester.tap(find.text('Consent & privacy'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Visitor consent setup'), findsOneWidget);
+    expect(find.text('Consent required for this site'), findsOneWidget);
+    final snippet = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(snippet.data, contains('data-require-consent="true"'));
+    expect(snippet.data, contains('data-seeray-consent-accept'));
+    expect(snippet.data, contains('SeeRay.optOut'));
+    expect(snippet.data, contains('seeray-consent-manage-srl_demo'));
+
+    await tester.ensureVisible(find.text('Image fallback'));
+    await tester.tap(find.text('Image fallback'));
+    await tester.pumpAndSettle();
+    final pixelSnippet = tester.widget<SelectableText>(
+      find.byType(SelectableText),
+    );
+    expect(pixelSnippet.data, contains('Pixel fallback is disabled'));
+    expect(pixelSnippet.data, isNot(contains('<img src=')));
+  });
 }
 
 class _SitesController extends SitesController {
@@ -74,6 +110,7 @@ class _SitesController extends SitesController {
       timezone: 'UTC',
       defaultLanguage: 'en',
       trackingEnabled: true,
+      requireConsent: true,
       rawRetentionDays: 30,
       aggregateRetentionDays: 730,
     ),

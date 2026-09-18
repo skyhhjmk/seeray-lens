@@ -13,6 +13,7 @@ class Site {
     required this.timezone,
     required this.defaultLanguage,
     required this.trackingEnabled,
+    this.requireConsent = false,
     required this.rawRetentionDays,
     required this.aggregateRetentionDays,
   });
@@ -24,6 +25,7 @@ class Site {
   final String timezone;
   final String? defaultLanguage;
   final bool trackingEnabled;
+  final bool requireConsent;
   final int rawRetentionDays;
   final int aggregateRetentionDays;
 
@@ -35,6 +37,7 @@ class Site {
     timezone: json['timezone'] as String,
     defaultLanguage: json['defaultLanguage'] as String?,
     trackingEnabled: json['trackingEnabled'] as bool,
+    requireConsent: json['requireConsent'] as bool? ?? false,
     rawRetentionDays: json['rawRetentionDays'] as int,
     aggregateRetentionDays: json['aggregateRetentionDays'] as int,
   );

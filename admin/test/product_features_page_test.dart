@@ -16,6 +16,7 @@ void main() {
             trackingId: 'srl_site_1',
             trackerUrl: 'https://lens.example.test/tracker.js',
             mode: ProductFeatureMode.tagManager,
+            requireConsent: true,
           ),
         ),
       ),
@@ -27,6 +28,10 @@ void main() {
     expect(
       find.textContaining('data-tag-manager-environment="staging"'),
       findsOneWidget,
+    );
+    expect(
+      find.textContaining('data-require-consent="true"'),
+      findsNWidgets(2),
     );
   });
 

@@ -1,0 +1,2 @@
+ALTER TABLE site
+    ADD COLUMN require_consent BOOLEAN NOT NULL DEFAULT FALSE;

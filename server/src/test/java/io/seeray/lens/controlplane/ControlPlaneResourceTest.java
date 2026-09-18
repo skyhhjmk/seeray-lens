@@ -192,6 +192,46 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void siteConsentPolicyIsPersistedAndReturnedToManagementUi() {
+        Tokens owner = register("site-consent" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        var site = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Consent site\",\"timezone\":\"UTC\",\"requireConsent\":true}")
+                .post("/api/v1/workspaces/" + workspaceId + "/sites")
+                .then()
+                .statusCode(201)
+                .body("requireConsent", is(true))
+                .extract();
+        String siteId = site.path("id");
+        String path = "/api/v1/sites/" + siteId;
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path)
+                .then()
+                .statusCode(200)
+                .body("requireConsent", is(true));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Consent site renamed\",\"timezone\":\"UTC\","
+                        + "\"defaultLanguage\":\"en\",\"trackingEnabled\":true,"
+                        + "\"rawRetentionDays\":30,\"aggregateRetentionDays\":730}")
+                .patch(path)
+                .then()
+                .statusCode(200)
+                .body("requireConsent", is(true));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Consent site renamed\",\"timezone\":\"UTC\","
+                        + "\"defaultLanguage\":\"en\",\"trackingEnabled\":true,\"requireConsent\":false,"
+                        + "\"rawRetentionDays\":30,\"aggregateRetentionDays\":730}")
+                .patch(path)
+                .then()
+                .statusCode(200)
+                .body("requireConsent", is(false));
+    }
+
+    @Test
     void collectPublishesAndPersistsSanitizedEventIdempotently() throws Exception {
         Tokens tokens = register("collect" + System.nanoTime() + "@example.test");
         var workspace = workspace(tokens.access()).extract().path("[0].id");

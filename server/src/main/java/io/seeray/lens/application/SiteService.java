@@ -22,17 +22,31 @@ public class SiteService {
     }
 
     @Transactional
-    public Site create(UUID workspace, String name, String timezone, String language, Integer raw, Integer aggregate) {
+    public Site create(
+            UUID workspace,
+            String name,
+            String timezone,
+            String language,
+            Integer raw,
+            Integer aggregate,
+            Boolean requireConsent) {
         OrganizationMember m = access.require(workspace, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
-        return save(null, m.organization, name, timezone, language, true, raw, aggregate);
+        return save(null, m.organization, name, timezone, language, true, requireConsent, raw, aggregate);
     }
 
     @Transactional
     public Site update(
-            UUID id, String name, String timezone, String language, Boolean enabled, Integer raw, Integer aggregate) {
+            UUID id,
+            String name,
+            String timezone,
+            String language,
+            Boolean enabled,
+            Boolean requireConsent,
+            Integer raw,
+            Integer aggregate) {
         Site s = site(id);
         access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
-        return save(s, s.organization, name, timezone, language, enabled, raw, aggregate);
+        return save(s, s.organization, name, timezone, language, enabled, requireConsent, raw, aggregate);
     }
 
     public Site site(UUID id) {
@@ -110,6 +124,7 @@ public class SiteService {
             String timezone,
             String language,
             Boolean enabled,
+            Boolean requireConsent,
             Integer raw,
             Integer aggregate) {
         if (name == null || name.isBlank()) throw new ControlPlaneException(400, "INVALID_SITE", "Name is required");
@@ -136,6 +151,7 @@ public class SiteService {
         s.timezone = timezone;
         s.defaultLanguage = language == null || language.isBlank() ? "en" : language;
         s.trackingEnabled = enabled == null ? (s == null || s.trackingEnabled) : enabled;
+        s.requireConsent = requireConsent == null ? (newSite ? false : s.requireConsent) : requireConsent;
         s.rawRetentionDays = r;
         s.aggregateRetentionDays = a;
         s.updatedAt = now;

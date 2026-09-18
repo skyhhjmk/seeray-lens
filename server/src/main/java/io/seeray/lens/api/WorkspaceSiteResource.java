@@ -31,7 +31,8 @@ public class WorkspaceSiteResource {
                 request.timezone(),
                 request.defaultLanguage(),
                 request.rawRetentionDays(),
-                request.aggregateRetentionDays());
+                request.aggregateRetentionDays(),
+                request.requireConsent());
         return Response.status(Response.Status.CREATED)
                 .entity(SiteResource.dto(site))
                 .build();

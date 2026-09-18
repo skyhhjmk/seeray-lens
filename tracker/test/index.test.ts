@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SeeRay, TRACKER_VERSION, Tracker } from '../src/index.js';
 
+const storageStub = (values: Map<string, string>) => ({
+  get length(): number { return values.size; },
+  key(index: number): string | null { return [...values.keys()][index] ?? null; },
+  getItem(key: string): string | null { return values.get(key) ?? null; },
+  setItem(key: string, value: string): void { values.set(key, value); },
+  removeItem(key: string): void { values.delete(key); },
+});
+
 describe('tracker package', () => {
   it('exposes the tracker version', () => {
     expect(TRACKER_VERSION).toBe('0.8.0');
@@ -21,18 +29,28 @@ describe('tracker package', () => {
   it('requires explicit consent when configured and stops after opt-out', async () => {
     vi.stubGlobal('navigator', { doNotTrack: '0' });
     const storage = new Map<string, string>();
-    vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
+    const session = new Map<string, string>();
+    vi.stubGlobal('localStorage', storageStub(storage));
+    vi.stubGlobal('sessionStorage', storageStub(session));
     const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
     vi.stubGlobal('fetch', fetch);
     const tracker = new Tracker({ siteId: 'srl_consent', requireConsent: true });
+    expect(tracker.getConsentState()).toBe('unknown');
+    expect(storage.has('seeray:srl_consent:visitor_id')).toBe(false);
+    expect(session.has('seeray:srl_consent:session_id')).toBe(false);
     tracker.track('before-consent');
     await tracker.flush();
     expect(fetch).not.toHaveBeenCalled();
     tracker.setConsent(true);
+    expect(storage.has('seeray:srl_consent:visitor_id')).toBe(true);
+    expect(session.has('seeray:srl_consent:session_id')).toBe(true);
     tracker.track('after-consent');
     await tracker.flush();
     expect(fetch).toHaveBeenCalledTimes(1);
     tracker.optOut();
+    expect(tracker.getConsentState()).toBe('denied');
+    expect(storage.has('seeray:srl_consent:visitor_id')).toBe(false);
+    expect(session.has('seeray:srl_consent:session_id')).toBe(false);
     tracker.track('after-opt-out');
     await tracker.flush();
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -40,6 +58,41 @@ describe('tracker package', () => {
     internal.heatmapQueue.push({ type: 'start' });
     await internal.flushHeatmap();
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('honors opt-out even when consent is not required by site policy', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const local = new Map<string, string>();
+    vi.stubGlobal('localStorage', storageStub(local));
+    vi.stubGlobal('sessionStorage', storageStub(new Map<string, string>()));
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+
+    const tracker = new Tracker({ siteId: 'srl_optional_consent' });
+    expect(tracker.getConsentState()).toBe('granted');
+    tracker.track('before-opt-out');
+    await tracker.flush();
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    tracker.optOut();
+    tracker.track('after-opt-out');
+    await tracker.flush();
+    expect(tracker.getConsentState()).toBe('denied');
+    expect(local.has('seeray:srl_optional_consent:visitor_id')).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes per-site consent state and updates one tracker through the facade', () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    vi.stubGlobal('localStorage', storageStub(new Map<string, string>()));
+    vi.stubGlobal('sessionStorage', storageStub(new Map<string, string>()));
+    SeeRay.init({ siteId: 'srl_consent_facade_a', requireConsent: true });
+    SeeRay.init({ siteId: 'srl_consent_facade_b', requireConsent: true });
+
+    expect(SeeRay.getConsentState('srl_consent_facade_a')).toBe('unknown');
+    SeeRay.setConsent(true, 'srl_consent_facade_a');
+    expect(SeeRay.getConsentState('srl_consent_facade_a')).toBe('granted');
+    expect(SeeRay.getConsentState('srl_consent_facade_b')).toBe('unknown');
   });
 
   it('collects only opted-in Core Web Vital measurements behind consent and DNT', async () => {

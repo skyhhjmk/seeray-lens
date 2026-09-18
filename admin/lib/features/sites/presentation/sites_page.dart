@@ -128,6 +128,7 @@ class _SiteFormDialogState extends State<_SiteFormDialog> {
   final _language = TextEditingController();
   final _raw = TextEditingController(text: '30');
   final _aggregate = TextEditingController(text: '730');
+  bool _requireConsent = false;
 
   @override
   void dispose() {
@@ -158,6 +159,15 @@ class _SiteFormDialogState extends State<_SiteFormDialog> {
               controller: _language,
               decoration: const InputDecoration(
                 labelText: 'Default language (optional)',
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _requireConsent,
+              onChanged: (value) => setState(() => _requireConsent = value),
+              title: const Text('Require visitor consent'),
+              subtitle: const Text(
+                'Tracker snippets wait until each visitor accepts.',
               ),
             ),
             TextFormField(
@@ -194,6 +204,7 @@ class _SiteFormDialogState extends State<_SiteFormDialog> {
             'defaultLanguage': _language.text.trim().isEmpty
                 ? null
                 : _language.text.trim(),
+            'requireConsent': _requireConsent,
             'rawRetentionDays': int.parse(_raw.text),
             'aggregateRetentionDays': int.parse(_aggregate.text),
           });

@@ -36,6 +36,7 @@ public class SiteResource {
                 r.timezone,
                 r.defaultLanguage,
                 r.trackingEnabled,
+                r.requireConsent,
                 r.rawRetentionDays,
                 r.aggregateRetentionDays));
     }
@@ -56,6 +57,7 @@ public class SiteResource {
                 s.timezone,
                 s.defaultLanguage,
                 s.trackingEnabled,
+                s.requireConsent,
                 s.rawRetentionDays,
                 s.aggregateRetentionDays);
     }
@@ -68,6 +70,7 @@ public class SiteResource {
             @NotBlank @Size(max = 120) String name,
             @NotBlank String timezone,
             String defaultLanguage,
+            Boolean requireConsent,
             Integer rawRetentionDays,
             Integer aggregateRetentionDays) {}
 
@@ -76,6 +79,7 @@ public class SiteResource {
             String timezone,
             String defaultLanguage,
             Boolean trackingEnabled,
+            Boolean requireConsent,
             Integer rawRetentionDays,
             Integer aggregateRetentionDays) {}
 
@@ -87,6 +91,7 @@ public class SiteResource {
             String timezone,
             String defaultLanguage,
             boolean trackingEnabled,
+            boolean requireConsent,
             int rawRetentionDays,
             int aggregateRetentionDays) {}
 

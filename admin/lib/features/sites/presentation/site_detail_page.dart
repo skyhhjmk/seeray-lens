@@ -31,6 +31,7 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
   final _raw = TextEditingController();
   final _aggregate = TextEditingController();
   bool _enabled = true;
+  bool _requireConsent = false;
   String? _loadedId;
   bool _saving = false;
 
@@ -53,6 +54,7 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
     _raw.text = '${site.rawRetentionDays}';
     _aggregate.text = '${site.aggregateRetentionDays}';
     _enabled = site.trackingEnabled;
+    _requireConsent = site.requireConsent;
   }
 
   Future<void> _save() async {
@@ -66,6 +68,7 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
             ? null
             : _language.text.trim(),
         'trackingEnabled': _enabled,
+        'requireConsent': _requireConsent,
         'rawRetentionDays': int.parse(_raw.text),
         'aggregateRetentionDays': int.parse(_aggregate.text),
       });
@@ -185,6 +188,20 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
                       value: _enabled,
                       onChanged: (value) => setState(() => _enabled = value),
                       title: Text(context.tr('Tracking enabled', '启用追踪')),
+                    ),
+                    SwitchListTile(
+                      value: _requireConsent,
+                      onChanged: (value) =>
+                          setState(() => _requireConsent = value),
+                      title: Text(
+                        context.tr('Require visitor consent', '需要访客同意'),
+                      ),
+                      subtitle: Text(
+                        context.tr(
+                          'New tracker snippets wait for an explicit choice. After changing this policy, replace previously copied snippets. Visitors can reject or withdraw later.',
+                          '新生成的追踪代码会等待访客明确选择。修改策略后请替换之前复制的代码；访客可以拒绝或之后撤回同意。',
+                        ),
+                      ),
                     ),
                     TextFormField(
                       controller: _raw,

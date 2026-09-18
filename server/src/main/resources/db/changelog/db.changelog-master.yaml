@@ -244,3 +244,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0035-experiment-lifecycle-allocation-groups.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0036-site-consent-policy
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0036-site-consent-policy.sql
+            relativeToChangelogFile: false

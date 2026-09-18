@@ -19,6 +19,7 @@ class ProductFeaturesPage extends ConsumerStatefulWidget {
     required this.trackingId,
     required this.trackerUrl,
     required this.mode,
+    this.requireConsent = false,
     super.key,
   });
 
@@ -26,6 +27,7 @@ class ProductFeaturesPage extends ConsumerStatefulWidget {
   final String trackingId;
   final String trackerUrl;
   final ProductFeatureMode mode;
+  final bool requireConsent;
 
   @override
   ConsumerState<ProductFeaturesPage> createState() =>
@@ -51,6 +53,9 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
     ProductFeatureMode.experiments => context.tr('A/B tests', 'A/B 测试'),
     ProductFeatureMode.tagManager => context.tr('Tag Manager', 'Tag Manager'),
   };
+
+  String get _consentAttribute =>
+      widget.requireConsent ? ' data-require-consent="true"' : '';
 
   @override
   void initState() {
@@ -347,6 +352,7 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
               containerId: id,
               trackingId: widget.trackingId,
               trackerUrl: widget.trackerUrl,
+              requireConsent: widget.requireConsent,
               sessionId: sessionId,
               token: token,
               expiresAt: expiresAt,
@@ -639,13 +645,13 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                 ),
                 const SizedBox(height: 8),
                 SelectableText(
-                  '<script src="${widget.trackerUrl}" data-site-id="${widget.trackingId}" data-tag-manager="true"></script>',
+                  '<script src="${widget.trackerUrl}" data-site-id="${widget.trackingId}"$_consentAttribute data-tag-manager="true"></script>',
                   style: const TextStyle(fontFamily: 'monospace'),
                 ),
                 const SizedBox(height: 8),
                 Text(context.tr('Staging install snippet', '预发布环境安装代码')),
                 SelectableText(
-                  '<script src="${widget.trackerUrl}" data-site-id="${widget.trackingId}" data-tag-manager="true" data-tag-manager-environment="staging"></script>',
+                  '<script src="${widget.trackerUrl}" data-site-id="${widget.trackingId}"$_consentAttribute data-tag-manager="true" data-tag-manager-environment="staging"></script>',
                   style: const TextStyle(fontFamily: 'monospace'),
                 ),
                 const SizedBox(height: 8),
@@ -852,7 +858,7 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
   Future<void> _showExperimentSnippet(Map<String, dynamic> item) async {
     final name = item['name'] as String? ?? '';
     final snippet =
-        '<script src="${widget.trackerUrl}" data-site-id="${widget.trackingId}" data-experiments="true"></script>\n'
+        '<script src="${widget.trackerUrl}" data-site-id="${widget.trackingId}"$_consentAttribute data-experiments="true"></script>\n'
         '<script>\n'
         '  SeeRay.ready().then(() => {\n'
         "    const variant = SeeRay.assignExperiment('$name');\n"
@@ -5004,6 +5010,7 @@ class _TagManagerLivePreviewDialog extends ConsumerStatefulWidget {
     required this.containerId,
     required this.trackingId,
     required this.trackerUrl,
+    required this.requireConsent,
     required this.sessionId,
     required this.token,
     required this.expiresAt,
@@ -5013,6 +5020,7 @@ class _TagManagerLivePreviewDialog extends ConsumerStatefulWidget {
   final String containerId;
   final String trackingId;
   final String trackerUrl;
+  final bool requireConsent;
   final String sessionId;
   final String token;
   final String expiresAt;
@@ -5037,6 +5045,7 @@ class _TagManagerLivePreviewDialogState
   String get _snippet =>
       '<script src="${_attribute(widget.trackerUrl)}" '
       'data-site-id="${_attribute(widget.trackingId)}" '
+      '${widget.requireConsent ? 'data-require-consent="true" ' : ''}'
       'data-tag-manager="true" '
       'data-tag-manager-preview-session="${_attribute(widget.sessionId)}" '
       'data-tag-manager-preview-token="${_attribute(widget.token)}"></script>';
