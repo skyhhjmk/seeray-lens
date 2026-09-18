@@ -4,15 +4,16 @@ This ledger is the completion contract for the Matomo-compatible product. A sour
 
 | Domain | Current implementation | Still required for parity |
 | --- | --- | --- |
-| Collection | Page views, events, goals, DNT, consent gating, downloads/outlinks, data layer | Web vitals, site search, content tracking, mobile SDKs |
+| Collection | Page views, events, goals, DNT, consent gating, downloads/outlinks, data layer, explicit site-search tracking and opt-in search-form capture, labelled content impressions and interactions, opt-in Core Web Vitals (LCP, INP, CLS) | Mobile SDKs |
 | Privacy | Site-scoped IDs, URL minimisation, opt-out API and embeddable banner | Admin consent policy, hosted opt-out page, browser acceptance |
-| Reporting | Overview, pages, traffic, events, configured goals and visitor log | Segments, real-time, custom dashboards, exports, scheduled reports, alerts |
-| Behaviour | Heatmaps and recordings | Entry/exit, transitions, user flow, page overlay, performance reports |
-| Attribution | UTM/source/medium/campaign aggregates | Search/social/ad click IDs, attribution models and ad cost import |
-| Conversion | Goal rules, value, conversion session count/rate, ordered funnel definitions/reports and admin panel | Comparison and attribution reports |
-| Tag manager | Site-scoped containers, JSON drafts, versioning, publish/rollback, origin-checked delivery, admin panel, and consent-aware event/page-view execution | Rich typed tags/triggers/variables, preview, arbitrary script governance and browser acceptance |
-| Experimentation | Site-scoped definitions, stable client assignment, exposure events, unique-session conversion reports, control-relative lift/p-value/significance, and admin panel | Targeting/segmentation and browser acceptance |
-| Visitor intelligence | Anonymous visitor/session facts and log API | Visitor profile UI, cohorts, segments and retention reports |
+| Reporting | Overview, pages/titles, traffic, events, configured goals, segmented core reports, technology, visitor-location breakdowns, live visits, personal saved dashboards, a bounded visual custom-report builder with session/event/custom-dimension two-way breakdowns and named formulas over allowlisted measures, per-widget CSV/JSON/PDF exports, scheduled weekly/monthly email reports with CSV attachments, and configurable daily comparative alerts with email/Slack/Teams delivery | Nested arbitrary event-property paths, three-or-more-dimension pivots, and browser acceptance |
+| Behaviour | Heatmaps, recordings, page titles, entry/exit pages, tracked events, segment-aware five-step page-flow explorer, site-search terms/results, content impression/interaction reports, and segment-aware page-level Web Vitals reports | Page overlay and richer transition drill-downs |
+| Attribution | Session-level UTM source/medium/campaign/term/content aggregates, deterministic direct/referral/search/social/AI-assistant classification, and segment-aware first-touch/last-touch/linear/position-based/time-decay goal attribution with graphical goal/window/model controls | Ad click IDs, ad cost import and external ad-platform export |
+| Conversion | Goal rules and value, conversion session count/rate, ordered funnel definitions/reports, and multi-touch conversion attribution | Goal comparisons across periods/segments and browser acceptance |
+| Tag manager | Site-scoped containers, graphical event/custom-code tags and event-property filters, workspace-shared visual tag-template library, immutable versions, independent development/staging/production releases and rollback, origin-checked delivery, runtime variables, a no-code draft dry-run, short-lived live-site preview/debug sessions with analytics suppression and bounded query-stripped logs, and consent-aware execution | Approval workflows, fine-grained script governance, and real-browser acceptance on an allowed domain |
+| Experimentation | Site-scoped definitions, stable client assignment, URL path-prefix and device targeting, exposure events, unique-session conversion reports, control-relative lift/p-value/significance, and visual admin editor | Saved-segment targeting and browser acceptance |
+| Visitor intelligence | Anonymous visitor/session facts and log UI, saved segments, technology and trusted-proxy location dimensions, weekly first-visit cohorts with retention matrix and first-session segment filtering | Full visitor profiles and richer cohort definitions |
+| Operations | Site-scoped audit log of successful settings and analytics-configuration mutations | Workspace membership/login/token history, read-access history and configurable retention |
 
 ## Evidence gates
 

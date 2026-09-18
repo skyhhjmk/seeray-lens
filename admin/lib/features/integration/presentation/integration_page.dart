@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/i18n/app_i18n.dart';
 import '../../../shared/presentation/app_back_button.dart';
@@ -34,8 +35,14 @@ class IntegrationPage extends ConsumerWidget {
     final script = '$base/tracker.js';
     final gif = '$base/api/v1/pixel/${site.trackingId}.gif';
     final svg = '$base/api/v1/pixel/${site.trackingId}.svg';
+    final initialTab =
+        GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
+            'web-vitals'
+        ? 6
+        : 0;
     return DefaultTabController(
-      length: 8,
+      length: 11,
+      initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
             ? null
@@ -61,6 +68,9 @@ class IntegrationPage extends ConsumerWidget {
                   Tab(text: context.tr('Image fallback', '图片回退')),
                   Tab(text: context.tr('SVG fallback', 'SVG 回退')),
                   Tab(text: context.tr('Goals', '目标事件')),
+                  Tab(text: context.tr('Site search', '站内搜索')),
+                  Tab(text: context.tr('Content analytics', '内容分析')),
+                  Tab(text: context.tr('Web Vitals', 'Web Vitals')),
                   Tab(text: context.tr('Heatmaps', '行为热图')),
                   Tab(text: context.tr('Funnels', '漏斗')),
                   Tab(text: context.tr('A/B tests', 'A/B 测试')),
@@ -114,6 +124,42 @@ class IntegrationPage extends ConsumerWidget {
                     note: context.tr(
                       'Call this only after the conversion succeeds. Goal name, category and action are event fields, not URL parameters, so changing your site configuration never creates mixed tracking URLs.',
                       '仅在转化成功后调用。目标名称、分类和动作属于事件字段，而非 URL 参数，因此修改站点配置不会产生混用的追踪 URL。',
+                    ),
+                  ),
+                  _Snippet(
+                    title: context.tr(
+                      'Record a completed site search',
+                      '记录完成的站内搜索',
+                    ),
+                    body:
+                        "SeeRay.trackSiteSearch(searchInput.value, {\n  category: 'catalog',\n  resultsCount: results.total\n});",
+                    note: context.tr(
+                      'Call after the search result count is known. For a standard HTML form, the simpler alternative is to add data-seeray-search and optionally data-seeray-search-category="catalog" to the form; the tracker captures only its submitted search field. Do not use both methods for the same search. Search terms are explicit data and can contain personal information, so exclude sensitive fields and values.',
+                      '在搜索结果数已知后调用。普通 HTML 表单也可使用更简单的方式：在表单上添加 data-seeray-search，并可选添加 data-seeray-search-category="catalog"；追踪器只会在表单提交时读取其中的搜索字段。同一次搜索不要同时使用两种方式。搜索词是显式采集的数据，可能包含个人信息，请避免追踪敏感字段和值。',
+                    ),
+                  ),
+                  _Snippet(
+                    title: context.tr(
+                      'Measure content impressions and interactions',
+                      '追踪内容曝光与互动',
+                    ),
+                    body:
+                        '<section data-seeray-content-name="home hero" data-seeray-content-piece="summer-campaign" data-seeray-content-target="/summer">\n  <a href="/summer" data-seeray-content-action="primary_cta">Shop the summer collection</a>\n</section>\n\n<!-- For dynamically inserted content, call after rendering: -->\nSeeRay.refreshContentTracking();',
+                    note: context.tr(
+                      'Mark only the content you want measured. A visible impression is recorded once when at least 10% of the marked element enters the viewport. Clicks are recorded only on controls marked data-seeray-content-action. The tracker reads these labels, never visible text or HTML; target query strings and fragments are stripped. Use trackContentImpression/trackContentInteraction when your app owns the rendering, but do not combine API calls with markup for the same event.',
+                      '只标记希望统计的内容项。标记元素至少 10% 进入可视区域时记录一次曝光；只有带 data-seeray-content-action 的控件会记录点击。追踪器仅读取这些标签，不读取可见文本或 HTML；目标地址的查询参数和片段会被剥离。应用自行管理渲染时可调用 trackContentImpression/trackContentInteraction，但同一事件不要同时用 API 和 HTML 标记重复采集。',
+                    ),
+                  ),
+                  _Snippet(
+                    title: context.tr(
+                      'Measure Core Web Vitals',
+                      '测量 Core Web Vitals',
+                    ),
+                    body:
+                        '<script src="$script" data-site-id="${site.trackingId}" data-web-vitals></script>',
+                    note: context.tr(
+                      'This opt-in collects only LCP, INP and CLS values for the current page; it does not read page text, DOM elements or form input. Final values are sent when available, including when the page is hidden. Measurements follow the tracker’s DNT and consent settings. Browsers without a supported measurement API may not report every metric.',
+                      '此功能需显式启用，只采集当前页面的 LCP、INP 和 CLS 数值，不读取页面文本、DOM 元素或表单输入。数值在可用时发送，包括页面隐藏时；并遵循追踪器的 DNT 与同意设置。不支持相关测量 API 的浏览器可能无法报告所有指标。',
                     ),
                   ),
                   _Snippet(

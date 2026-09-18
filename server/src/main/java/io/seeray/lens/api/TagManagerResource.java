@@ -50,6 +50,79 @@ public class TagManagerResource {
 
     @GET
     @Authenticated
+    @Path("/templates")
+    public List<TagManagerService.TemplateView> templates(@PathParam("siteId") UUID siteId) {
+        return tags.templates(siteId);
+    }
+
+    @POST
+    @Authenticated
+    @Path("/templates")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.TemplateView createTemplate(@PathParam("siteId") UUID siteId, TemplateRequest request) {
+        return tags.createTemplate(
+                siteId,
+                request == null ? null : request.name,
+                request == null ? null : request.description,
+                request == null ? null : request.tags);
+    }
+
+    @PUT
+    @Authenticated
+    @Path("/templates/{templateId}")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.TemplateView updateTemplate(
+            @PathParam("siteId") UUID siteId, @PathParam("templateId") UUID templateId, TemplateRequest request) {
+        return tags.updateTemplate(
+                siteId,
+                templateId,
+                request == null ? null : request.name,
+                request == null ? null : request.description,
+                request == null ? null : request.tags);
+    }
+
+    @DELETE
+    @Authenticated
+    @Path("/templates/{templateId}")
+    public void deleteTemplate(@PathParam("siteId") UUID siteId, @PathParam("templateId") UUID templateId) {
+        tags.deleteTemplate(siteId, templateId);
+    }
+
+    @POST
+    @Authenticated
+    @Path("/containers/{containerId}/preview-sessions")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.PreviewCreated createPreviewSession(
+            @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID containerId, PreviewRequest request) {
+        return tags.createPreviewSession(
+                siteId,
+                containerId,
+                request == null ? null : request.tags,
+                request != null && request.executeCustomCode);
+    }
+
+    @GET
+    @Authenticated
+    @Path("/containers/{containerId}/preview-sessions/{sessionId}/events")
+    public List<TagManagerService.PreviewEventView> previewEvents(
+            @PathParam("siteId") UUID siteId,
+            @PathParam("containerId") UUID containerId,
+            @PathParam("sessionId") UUID sessionId) {
+        return tags.previewEvents(siteId, containerId, sessionId);
+    }
+
+    @DELETE
+    @Authenticated
+    @Path("/containers/{containerId}/preview-sessions/{sessionId}")
+    public void stopPreviewSession(
+            @PathParam("siteId") UUID siteId,
+            @PathParam("containerId") UUID containerId,
+            @PathParam("sessionId") UUID sessionId) {
+        tags.stopPreviewSession(siteId, containerId, sessionId);
+    }
+
+    @GET
+    @Authenticated
     @Path("/containers/{containerId}/versions")
     public List<TagManagerService.VersionView> versions(
             @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID id) {
@@ -73,6 +146,17 @@ public class TagManagerResource {
         return tags.publish(siteId, id, version);
     }
 
+    @POST
+    @Authenticated
+    @Path("/containers/{containerId}/versions/{version}/environments/{environment}/publish")
+    public TagManagerService.VersionView publishToEnvironment(
+            @PathParam("siteId") UUID siteId,
+            @PathParam("containerId") UUID id,
+            @PathParam("version") int version,
+            @PathParam("environment") String environment) {
+        return tags.publishToEnvironment(siteId, id, version, environment);
+    }
+
     public static class CreateRequest {
         public String name;
     }
@@ -80,5 +164,16 @@ public class TagManagerResource {
     public static class UpdateRequest {
         public String name;
         public boolean enabled = true;
+    }
+
+    public static class TemplateRequest {
+        public String name;
+        public String description;
+        public JsonNode tags;
+    }
+
+    public static class PreviewRequest {
+        public JsonNode tags;
+        public boolean executeCustomCode;
     }
 }

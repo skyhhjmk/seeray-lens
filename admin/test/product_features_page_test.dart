@@ -23,7 +23,148 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Nothing configured yet.'), findsOneWidget);
     expect(find.text('Install the published container'), findsOneWidget);
-    expect(find.byType(SelectableText), findsOneWidget);
+    expect(find.byType(SelectableText), findsNWidgets(2));
+    expect(
+      find.textContaining('data-tag-manager-environment="staging"'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('deploys a selected immutable version to staging', (
+    tester,
+  ) async {
+    final api = _GraphicalFeatureApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Deploy version'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deploy a version'), findsOneWidget);
+    await tester.tap(find.text('Deploy'));
+    await tester.pumpAndSettle();
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/tag-manager/containers/container-1/versions/1/environments/staging/publish',
+    );
+  });
+
+  testWidgets('inserts a shared template into a container as a new draft', (
+    tester,
+  ) async {
+    final api = _GraphicalFeatureApi(
+      templates: [
+        {
+          'id': 'template-1',
+          'name': 'CTA click',
+          'description': 'Record primary CTA clicks',
+          'tags': [
+            {
+              'type': 'event',
+              'trigger': 'cta_click',
+              'eventType': 'tag_cta_click',
+              'name': 'cta_click',
+            },
+          ],
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Templates'));
+    await tester.pumpAndSettle();
+    expect(find.text('CTA click'), findsOneWidget);
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add template to container'), findsOneWidget);
+    await tester.tap(find.text('Add as draft'));
+    await tester.pumpAndSettle();
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/tag-manager/containers/container-1/versions',
+    );
+    expect(api.lastBody, [
+      {
+        'type': 'event',
+        'trigger': 'cta_click',
+        'eventType': 'tag_cta_click',
+        'name': 'cta_click',
+      },
+    ]);
+  });
+
+  testWidgets('creates a reusable template through the visual tag editor', (
+    tester,
+  ) async {
+    final api = _GraphicalFeatureApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Templates'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create template'));
+    await tester.pumpAndSettle();
+    expect(find.text('Configure reusable template tags'), findsOneWidget);
+    await tester.enterText(
+      find.bySemanticsLabel('Sent event type'),
+      'tag_signup',
+    );
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.text('Add custom event'),
+            matching: find.byType(TextButton),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.bySemanticsLabel('Event name'), 'signup');
+    await tester.tap(find.text('Save template tags'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.bySemanticsLabel('Name'), 'Signup tracking');
+    await tester.enterText(
+      find.bySemanticsLabel('When to use it (optional)'),
+      'Use on the registration form',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Signup tracking'), findsOneWidget);
+    expect(api.lastMutationPath, '/api/v1/sites/site-1/tag-manager/templates');
+    expect(api.lastBody, isA<Map>());
+    expect((api.lastBody as Map)['tags'], hasLength(1));
   });
 
   testWidgets('edits tag drafts with graphical fields', (tester) async {
@@ -65,6 +206,30 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.enterText(find.bySemanticsLabel('Event name'), 'signup');
+    await tester.ensureVisible(find.text('Add filter'));
+    await tester.tap(find.text('Add filter'));
+    await tester.pumpAndSettle();
+    final conditionProperty = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Event property key',
+    );
+    await tester.enterText(conditionProperty, 'plan');
+    final conditionValue = find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.hintText == 'pro',
+    );
+    await tester.enterText(conditionValue, 'pro');
+    await tester.ensureVisible(find.text('Add property'));
+    await tester.tap(find.text('Add property'));
+    await tester.pumpAndSettle();
+    final propertyKey = find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.labelText == 'Key',
+    );
+    await tester.enterText(propertyKey, 'landing_page');
+    await tester.tap(find.byTooltip('Insert variable'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Page URL'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Save draft'));
     await tester.pumpAndSettle();
 
@@ -74,11 +239,180 @@ void main() {
         'eventType': 'tag_signup',
         'name': 'signup_tag',
         'triggers': [
-          {'type': 'event', 'event': 'signup'},
+          {
+            'type': 'event',
+            'event': 'signup',
+            'conditions': [
+              {'property': 'plan', 'operator': 'equals', 'value': 'pro'},
+            ],
+          },
         ],
+        'properties': {'landing_page': '{{Page URL}}'},
       },
     ]);
     expect(find.byTooltip('Publish v1'), findsOneWidget);
+  });
+
+  testWidgets('previews draft matches and resolved event properties', (
+    tester,
+  ) async {
+    final api = _GraphicalFeatureApi(
+      initialTags: [
+        {
+          'type': 'event',
+          'triggers': [
+            {
+              'type': 'event',
+              'event': 'signup',
+              'conditions': [
+                {'property': 'plan', 'operator': 'equals', 'value': 'pro'},
+              ],
+            },
+          ],
+          'eventType': 'tag_signup',
+          'name': 'Signup tag',
+          'properties': {'landing_page': '{{Page URL}}'},
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit tags'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview draft'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'No tracking request is sent and no custom code runs here. Custom JavaScript triggers need a live browser check.',
+      ),
+      findsOneWidget,
+    );
+    final signupChip = find.byWidgetPredicate(
+      (widget) =>
+          widget is ChoiceChip &&
+          widget.label is Text &&
+          (widget.label as Text).data == 'signup',
+    );
+    await tester.tap(signupChip);
+    await tester.pumpAndSettle();
+    expect(find.text('Not matched'), findsOneWidget);
+    await tester.ensureVisible(find.text('Event details and properties'));
+    await tester.tap(find.text('Event details and properties'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add event property'));
+    await tester.tap(find.text('Add event property'));
+    await tester.pumpAndSettle();
+    final previewPropertyKey = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Property key',
+    );
+    final previewPropertyValue = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Property value',
+    );
+    await tester.enterText(previewPropertyKey, 'plan');
+    await tester.enterText(previewPropertyValue, 'pro');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Would emit event: tag_signup'), findsOneWidget);
+    expect(find.text('https://example.test/'), findsNWidgets(2));
+    expect(api.lastBody, isNull);
+  });
+
+  testWidgets('creates, monitors and stops a live preview session', (
+    tester,
+  ) async {
+    final initialTags = [
+      {
+        'type': 'event',
+        'eventType': 'tag_signup',
+        'name': 'Signup tag',
+        'triggers': [
+          {'type': 'event', 'event': 'signup'},
+        ],
+      },
+    ];
+    final api = _GraphicalFeatureApi(
+      initialTags: initialTags,
+      previewEvents: [
+        {
+          'id': 'event-1',
+          'tagIndex': 0,
+          'tagName': 'Signup tag',
+          'triggerEvent': 'signup',
+          'outcome': 'fired',
+          'pagePath': '/signup',
+          'occurredAt': '2026-09-18T04:00:00Z',
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit tags'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test on live site'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start a live-site test?'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Custom HTML and JavaScript can make external requests',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Create test session'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Live site preview'), findsOneWidget);
+    expect(find.text('Signup tag').last, findsOneWidget);
+    expect(find.text('Fired'), findsOneWidget);
+    expect(find.textContaining('/signup'), findsOneWidget);
+    expect(
+      find.textContaining('data-tag-manager-preview-session="preview-1"'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('data-tag-manager-preview-token="one-time-secret"'),
+      findsOneWidget,
+    );
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/tag-manager/containers/container-1/preview-sessions',
+    );
+    expect(api.lastBody, {'tags': initialTags, 'executeCustomCode': false});
+
+    await tester.tap(find.text('Stop preview and close'));
+    await tester.pumpAndSettle();
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/tag-manager/containers/container-1/preview-sessions/preview-1',
+    );
   });
 
   testWidgets('edits custom code snippets with a graphical code field', (
@@ -203,6 +537,8 @@ void main() {
 
     expect(find.text('First tag'), findsNWidgets(2));
     expect(find.text('Second tag'), findsOneWidget);
+    await tester.ensureVisible(find.text('Second tag'));
+    await tester.pumpAndSettle();
     await tester.tap(
       find
           .ancestor(of: find.text('Second tag'), matching: find.byType(InkWell))
@@ -222,6 +558,8 @@ void main() {
     await tester.enterText(displayName, 'Second changed');
     await tester.pump();
     expect(find.text('Discard', skipOffstage: false), findsOneWidget);
+    await tester.ensureVisible(find.text('Discard', skipOffstage: false));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Discard', skipOffstage: false));
     await tester.pumpAndSettle();
     expect(
@@ -236,6 +574,8 @@ void main() {
     expect(find.text('Discard', skipOffstage: false), findsNothing);
     expect(find.text('Second saved'), findsNWidgets(2));
 
+    await tester.ensureVisible(find.text('Add tag'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Add tag'));
     await tester.pumpAndSettle();
     expect(find.text('Tag 3'), findsOneWidget);
@@ -325,13 +665,87 @@ void main() {
     expect(find.text('Create A/B test'), findsOneWidget);
     expect(find.text('Variants (comma separated)'), findsNothing);
     expect(find.text('Add variant'), findsOneWidget);
+    expect(find.text('Audience targeting'), findsOneWidget);
+    expect(find.text('Devices'), findsOneWidget);
     await tester.enterText(find.byType(TextField).at(0), 'Homepage hero');
+    await tester.ensureVisible(find.text('Add page path'));
+    await tester.tap(find.text('Add page path'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '/pricing');
+    await tester.ensureVisible(find.widgetWithText(FilterChip, 'Desktop'));
+    await tester.tap(find.widgetWithText(FilterChip, 'Desktop'));
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
     expect(api.lastMutationMethod, 'POST');
     expect(api.lastMutationPath, '/api/v1/sites/site-1/experiments');
     expect((api.lastMutationBody as Map)['variants'], ['control', 'new_copy']);
+    expect((api.lastMutationBody as Map)['targeting'], {
+      'pathPrefixes': ['/pricing'],
+      'deviceTypes': ['desktop'],
+    });
+  });
+
+  testWidgets('edits saved experiment targeting with visual controls', (
+    tester,
+  ) async {
+    final api = _EditorFeatureApi.experiment(
+      items: [
+        {
+          'id': 'experiment-1',
+          'name': 'Checkout hero',
+          'enabled': true,
+          'variants': ['control', 'variant'],
+          'targeting': {
+            'pathPrefixes': ['/pricing'],
+            'deviceTypes': ['mobile'],
+          },
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.experiments,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit A/B test'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).controller?.text,
+      '/pricing',
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'Mobile'))
+          .selected,
+      isTrue,
+    );
+    await tester.enterText(find.byType(TextField).last, '/checkout');
+    await tester.ensureVisible(find.widgetWithText(FilterChip, 'Desktop'));
+    await tester.tap(find.widgetWithText(FilterChip, 'Desktop'));
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(api.lastMutationMethod, 'PUT');
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/experiments/experiment-1',
+    );
+    expect((api.lastMutationBody as Map)['targeting'], {
+      'pathPrefixes': ['/checkout'],
+      'deviceTypes': ['desktop', 'mobile'],
+    });
   });
 }
 
@@ -348,11 +762,18 @@ class _EmptyFeatureApi extends SeeRayApi {
 }
 
 class _GraphicalFeatureApi extends SeeRayApi {
-  _GraphicalFeatureApi({this.initialTags = const []})
-    : super(baseUrl: 'https://lens.example.test');
+  _GraphicalFeatureApi({
+    this.initialTags = const [],
+    List<dynamic> templates = const [],
+    this.previewEvents = const [],
+  }) : templates = List.of(templates),
+       super(baseUrl: 'https://lens.example.test');
 
   final List<dynamic> initialTags;
+  final List<dynamic> templates;
+  final List<dynamic> previewEvents;
   Object? lastBody;
+  String? lastMutationPath;
 
   @override
   Future<dynamic> request(
@@ -361,6 +782,30 @@ class _GraphicalFeatureApi extends SeeRayApi {
     Object? body,
     bool retried = false,
   }) async {
+    if (method != 'GET') lastMutationPath = path;
+    if (method == 'POST' && path.endsWith('/preview-sessions')) {
+      lastBody = body;
+      return {
+        'sessionId': 'preview-1',
+        'token': 'one-time-secret',
+        'expiresAt': '2026-09-18T04:15:00Z',
+        'executeCustomCode': (body as Map)['executeCustomCode'],
+      };
+    }
+    if (method == 'GET' && path.endsWith('/preview-1/events')) {
+      return previewEvents;
+    }
+    if (method == 'DELETE' && path.endsWith('/preview-1')) return null;
+    if (method == 'GET' && path.endsWith('/tag-manager/templates')) {
+      return templates;
+    }
+    if (method == 'POST' && path.endsWith('/tag-manager/templates')) {
+      lastBody = body;
+      final created = Map<String, dynamic>.from(body as Map)
+        ..['id'] = 'template-new';
+      templates.add(created);
+      return created;
+    }
     if (method == 'GET' && path.endsWith('/tag-manager/containers')) {
       return [
         {
@@ -368,6 +813,7 @@ class _GraphicalFeatureApi extends SeeRayApi {
           'name': 'Production',
           'enabled': true,
           'publishedVersion': null,
+          'environmentVersions': {'production': 2, 'staging': 1},
         },
       ];
     }
@@ -393,13 +839,16 @@ class _GraphicalFeatureApi extends SeeRayApi {
 }
 
 class _EditorFeatureApi extends SeeRayApi {
-  _EditorFeatureApi._(this.mode) : super(baseUrl: 'https://lens.example.test');
+  _EditorFeatureApi._(this.mode, [this.items = const []])
+    : super(baseUrl: 'https://lens.example.test');
 
   factory _EditorFeatureApi.funnel() => _EditorFeatureApi._('funnel');
 
-  factory _EditorFeatureApi.experiment() => _EditorFeatureApi._('experiment');
+  factory _EditorFeatureApi.experiment({List<dynamic> items = const []}) =>
+      _EditorFeatureApi._('experiment', items);
 
   final String mode;
+  final List<dynamic> items;
   String? lastMutationMethod;
   String? lastMutationPath;
   Object? lastMutationBody;
@@ -434,7 +883,7 @@ class _EditorFeatureApi extends SeeRayApi {
         },
       ];
     }
-    if (method == 'GET' && mode == 'experiment') return const <dynamic>[];
+    if (method == 'GET' && mode == 'experiment') return items;
     return {'id': 'saved', 'name': 'saved', 'enabled': true};
   }
 }
