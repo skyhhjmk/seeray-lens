@@ -8,6 +8,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import io.seeray.lens.application.AnalyticsAggregationService;
 import io.seeray.lens.application.AnalyticsFactBuilder;
 import io.seeray.lens.application.HeatmapAggregationService;
+import io.seeray.lens.application.RawAnalyticsRetentionService;
 import io.seeray.lens.domain.auth.AppUser;
 import io.seeray.lens.domain.auth.AuthSession;
 import io.seeray.lens.domain.auth.UserStatus;
@@ -38,6 +39,9 @@ class ControlPlaneResourceTest {
 
     @Inject
     AnalyticsAggregationService aggregation;
+
+    @Inject
+    RawAnalyticsRetentionService rawRetention;
 
     @Inject
     HeatmapAggregationService heatmapAggregation;
@@ -3584,6 +3588,104 @@ class ControlPlaneResourceTest {
                 .get("/api/v1/sites/" + site + "/audit-log")
                 .then()
                 .statusCode(404);
+    }
+
+    @Test
+    void rawRetentionPurgesEventsButKeepsRetainedSessionAndDailyFacts() throws Exception {
+        Tokens owner = register("raw-retention" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String site = createSite(owner.access(), workspaceId, "Retention site");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"name\":\"Retention site\",\"timezone\":\"UTC\",\"rawRetentionDays\":1,\"aggregateRetentionDays\":730}")
+                .patch("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200)
+                .body("rawRetentionDays", is(1))
+                .body("aggregateRetentionDays", is(730));
+
+        UUID siteId = UUID.fromString(site);
+        String visitor = UUID.randomUUID().toString();
+        Instant oldVisit = Instant.now().minusSeconds(45L * 24 * 3600);
+        Instant recentVisit = Instant.now().minusSeconds(2 * 3600L);
+        insertRaw(siteId, visitor, "retained-old-session", "page_view", oldVisit, "/old");
+        insertRaw(siteId, visitor, "retained-recent-session", "page_view", recentVisit, "/recent");
+        LocalDate oldDay = oldVisit.atZone(ZoneId.of("UTC")).toLocalDate();
+        LocalDate today = LocalDate.now(ZoneId.of("UTC"));
+        aggregation.rebuild(siteId, oldDay, today);
+
+        RawAnalyticsRetentionService.CleanupSummary summary = rawRetention.clean();
+        assertTrue(summary.rawEventsDeleted() >= 1);
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select (select count(*) from raw_event where site_id=?), (select count(*) from analytics_session where site_id=?), (select session_count from analytics_visitor where site_id=? and client_visitor_id=?), (select page_view_count from analytics_page_daily where site_id=? and business_date=? and path='/old')")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, siteId);
+            statement.setObject(3, siteId);
+            statement.setString(4, visitor);
+            statement.setObject(5, siteId);
+            statement.setObject(6, oldDay);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals(1, result.getLong(1));
+                assertEquals(2, result.getLong(2));
+                assertEquals(2, result.getInt(3));
+                assertEquals(1, result.getLong(4));
+            }
+        }
+
+        factBuilder.rebuild(siteId, recentVisit.minusSeconds(60), Instant.now().plusSeconds(60));
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement("select count(*) from analytics_session where site_id=?")) {
+            statement.setObject(1, siteId);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals(2, result.getLong(1), "recent reconciliation must not erase older retained facts");
+            }
+        }
+    }
+
+    @Test
+    void aggregateRetentionRemovesExpiredSessionsAndDailyRows() throws Exception {
+        Tokens owner = register("aggregate-retention" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String site = createSite(owner.access(), workspaceId, "Aggregate retention site");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"name\":\"Aggregate retention site\",\"timezone\":\"UTC\",\"rawRetentionDays\":1,\"aggregateRetentionDays\":10}")
+                .patch("/api/v1/sites/" + site)
+                .then()
+                .statusCode(200);
+
+        UUID siteId = UUID.fromString(site);
+        String visitor = UUID.randomUUID().toString();
+        Instant oldVisit = Instant.now().minusSeconds(45L * 24 * 3600);
+        Instant recentVisit = Instant.now().minusSeconds(2 * 3600L);
+        insertRaw(siteId, visitor, "expired-session", "page_view", oldVisit, "/expired");
+        insertRaw(siteId, visitor, "current-session", "page_view", recentVisit, "/current");
+        LocalDate oldDay = oldVisit.atZone(ZoneId.of("UTC")).toLocalDate();
+        LocalDate today = LocalDate.now(ZoneId.of("UTC"));
+        aggregation.rebuild(siteId, oldDay, today);
+
+        RawAnalyticsRetentionService.CleanupSummary summary = rawRetention.clean();
+        assertTrue(summary.sessionsDeleted() >= 1);
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select (select count(*) from analytics_session where site_id=?), (select count(*) from analytics_page_daily where site_id=? and business_date=? and path='/expired'), (select session_count from analytics_visitor where site_id=? and client_visitor_id=?)")) {
+            statement.setObject(1, siteId);
+            statement.setObject(2, siteId);
+            statement.setObject(3, oldDay);
+            statement.setObject(4, siteId);
+            statement.setString(5, visitor);
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals(1, result.getLong(1));
+                assertEquals(0, result.getLong(2));
+                assertEquals(1, result.getInt(3));
+            }
+        }
     }
 
     private void insertAnalyticsRaw(

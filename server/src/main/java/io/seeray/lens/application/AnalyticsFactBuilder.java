@@ -26,12 +26,16 @@ public class AnalyticsFactBuilder {
         this.mapper = mapper;
     }
 
-    /** Rebuilds all facts for a site; the range is a reconciliation hint and raw facts are never replaced by cache state. */
+    /** Reconciles facts in a range while retaining the site's already-materialized history. */
     @Transactional
     public void rebuild(UUID siteId, Instant from, Instant to) {
+        if (from == null || to == null || !from.isBefore(to))
+            throw new IllegalArgumentException("from must be before to");
         try (Connection c = dataSource.getConnection()) {
             ZoneId zone = ZoneId.of(siteTimezone(c, siteId));
-            List<Event> events = load(c, siteId, from, to);
+            // Pull a full maximum-lifetime before the reconciliation window so a session crossing its
+            // lower boundary can be rebuilt completely. Only sessions overlapping [from, to) are replaced.
+            List<Event> events = load(c, siteId, from.minus(MAX_SESSION_LIFETIME), to);
             Map<String, VisitorAcc> visitors = new LinkedHashMap<>();
             for (Event event : events) {
                 if (event.visitorId == null || event.sessionId == null) continue;
@@ -50,9 +54,17 @@ public class AnalyticsFactBuilder {
                 }
                 current.accept(event, time, mapper);
             }
-            deleteFacts(c, siteId);
-            Map<String, UUID> visitorIds = insertVisitors(c, siteId, visitors.values());
-            insertSessions(c, siteId, visitors.values(), visitorIds);
+            List<VisitorAcc> affected = visitors.values().stream()
+                    .filter(visitor -> visitor.sessions.stream()
+                            .anyMatch(
+                                    session -> session.startedAt.isBefore(to) && !session.lastActivity.isBefore(from)))
+                    .toList();
+            if (affected.isEmpty()) return;
+
+            deleteOverlappingSessions(c, siteId, from, to);
+            Map<String, UUID> visitorIds = ensureVisitors(c, siteId, affected);
+            insertSessions(c, siteId, affected, visitorIds, from, to);
+            refreshVisitorStats(c, siteId, visitorIds.values());
             insertVisitorDays(c, siteId, visitors.values(), visitorIds);
         } catch (SQLException e) {
             throw new IllegalStateException("Could not rebuild analytics facts", e);
@@ -81,10 +93,12 @@ public class AnalyticsFactBuilder {
 
     private static List<Event> load(Connection c, UUID site, Instant from, Instant to) throws SQLException {
         String sql =
-                "select client_visitor_id,client_session_id,event_type,occurred_at,received_at,page_path,page_host,referrer_host,utm_source,utm_medium,utm_campaign,duration_ms,event_data,page_title,utm_term,utm_content from raw_event where site_id=? order by occurred_at,received_at,ingest_id";
+                "select client_visitor_id,client_session_id,event_type,occurred_at,received_at,page_path,page_host,referrer_host,utm_source,utm_medium,utm_campaign,duration_ms,event_data,page_title,utm_term,utm_content from raw_event where site_id=? and (case when occurred_at < received_at - interval '24 hours' or occurred_at > received_at + interval '24 hours' then received_at else occurred_at end) >= ? and (case when occurred_at < received_at - interval '24 hours' or occurred_at > received_at + interval '24 hours' then received_at else occurred_at end) < ? order by (case when occurred_at < received_at - interval '24 hours' or occurred_at > received_at + interval '24 hours' then received_at else occurred_at end),received_at,ingest_id";
         List<Event> out = new ArrayList<>();
         try (PreparedStatement p = c.prepareStatement(sql)) {
             p.setObject(1, site);
+            p.setTimestamp(2, Timestamp.from(from));
+            p.setTimestamp(3, Timestamp.from(to));
             try (ResultSet r = p.executeQuery()) {
                 while (r.next())
                     out.add(new Event(
@@ -109,53 +123,62 @@ public class AnalyticsFactBuilder {
         return out;
     }
 
-    private static void deleteFacts(Connection c, UUID site) throws SQLException {
-        try (PreparedStatement p = c.prepareStatement("delete from visitor_day_fact where site_id=?")) {
+    private static void deleteOverlappingSessions(Connection c, UUID site, Instant from, Instant to)
+            throws SQLException {
+        try (PreparedStatement p = c.prepareStatement(
+                "delete from analytics_session where site_id=? and started_at < ? and last_activity_at >= ?")) {
             p.setObject(1, site);
-            p.executeUpdate();
-        }
-        try (PreparedStatement p = c.prepareStatement("delete from analytics_session where site_id=?")) {
-            p.setObject(1, site);
-            p.executeUpdate();
-        }
-        try (PreparedStatement p = c.prepareStatement("delete from analytics_visitor where site_id=?")) {
-            p.setObject(1, site);
+            p.setTimestamp(2, Timestamp.from(to));
+            p.setTimestamp(3, Timestamp.from(from));
             p.executeUpdate();
         }
     }
 
-    private static Map<String, UUID> insertVisitors(Connection c, UUID site, Collection<VisitorAcc> values)
+    private static Map<String, UUID> ensureVisitors(Connection c, UUID site, Collection<VisitorAcc> values)
             throws SQLException {
         Map<String, UUID> ids = new HashMap<>();
         try (PreparedStatement p = c.prepareStatement(
-                "insert into analytics_visitor(id,site_id,client_visitor_id,first_seen_at,last_seen_at,first_session_at,last_session_at,session_count) values(?,?,?,?,?,?,?,?)")) {
+                "insert into analytics_visitor(id,site_id,client_visitor_id,first_seen_at,last_seen_at,session_count) values(?,?,?,?,?,0) on conflict(site_id,client_visitor_id) do update set first_seen_at=least(analytics_visitor.first_seen_at,excluded.first_seen_at),last_seen_at=greatest(analytics_visitor.last_seen_at,excluded.last_seen_at)")) {
             for (VisitorAcc v : values) {
-                v.id = UuidV7.next();
-                ids.put(v.clientId, v.id);
-                p.setObject(1, v.id);
+                p.setObject(1, UuidV7.next());
                 p.setObject(2, site);
                 p.setString(3, v.clientId);
                 p.setTimestamp(4, Timestamp.from(v.firstSeen));
                 p.setTimestamp(5, Timestamp.from(v.lastSeen));
-                p.setTimestamp(6, Timestamp.from(v.sessions.get(0).startedAt));
-                p.setTimestamp(7, Timestamp.from(v.sessions.get(v.sessions.size() - 1).startedAt));
-                p.setInt(8, v.sessions.size());
                 p.addBatch();
             }
             p.executeBatch();
         }
+        try (PreparedStatement p = c.prepareStatement(
+                "select id,client_visitor_id from analytics_visitor where site_id=? and client_visitor_id=?")) {
+            for (VisitorAcc v : values) {
+                p.setObject(1, site);
+                p.setString(2, v.clientId);
+                try (ResultSet r = p.executeQuery()) {
+                    if (!r.next()) throw new SQLException("Could not resolve analytics visitor after upsert");
+                    v.id = r.getObject(1, UUID.class);
+                    ids.put(v.clientId, v.id);
+                }
+            }
+        }
         return ids;
     }
 
-    private static void insertSessions(Connection c, UUID site, Collection<VisitorAcc> values, Map<String, UUID> ids)
+    private static void insertSessions(
+            Connection c, UUID site, Collection<VisitorAcc> values, Map<String, UUID> ids, Instant from, Instant to)
             throws SQLException {
+        Set<UUID> visitorsWithInsertedSessions = new HashSet<>();
         try (PreparedStatement p = c.prepareStatement(
                 "insert into analytics_session(id,site_id,visitor_id,client_session_id,started_at,last_activity_at,ended_at,entry_page,exit_page,page_view_count,event_count,duration_ms,is_bounce,visitor_type,initial_referrer_host,initial_page_host,initial_utm_source,initial_utm_medium,initial_utm_campaign,browser,browser_version,operating_system,operating_system_version,device_type,language,screen_width,screen_height,viewport_width,viewport_height,pixel_ratio,entry_page_title,exit_page_title,country_code,continent_code,region_code,region_name,city,geo_timezone,initial_utm_term,initial_utm_content) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             for (VisitorAcc v : values)
                 for (SessionAcc s : v.sessions) {
+                    if (!s.startedAt.isBefore(to) || s.lastActivity.isBefore(from)) continue;
+                    UUID visitorId = ids.get(v.clientId);
+                    s.newVisitor = !visitorsWithInsertedSessions.contains(visitorId)
+                            && !hasEarlierSession(c, site, visitorId, s.startedAt);
                     p.setObject(1, s.id = UuidV7.next());
                     p.setObject(2, site);
-                    p.setObject(3, ids.get(v.clientId));
+                    p.setObject(3, visitorId);
                     p.setString(4, s.clientSessionId);
                     p.setTimestamp(5, Timestamp.from(s.startedAt));
                     p.setTimestamp(6, Timestamp.from(s.lastActivity));
@@ -194,8 +217,32 @@ public class AnalyticsFactBuilder {
                     p.setString(39, s.utmTerm);
                     p.setString(40, s.utmContent);
                     p.addBatch();
+                    visitorsWithInsertedSessions.add(visitorId);
                 }
             p.executeBatch();
+        }
+    }
+
+    private static boolean hasEarlierSession(Connection c, UUID site, UUID visitorId, Instant startedAt)
+            throws SQLException {
+        try (PreparedStatement p = c.prepareStatement(
+                "select exists(select 1 from analytics_session where site_id=? and visitor_id=? and started_at < ?)")) {
+            p.setObject(1, site);
+            p.setObject(2, visitorId);
+            p.setTimestamp(3, Timestamp.from(startedAt));
+            try (ResultSet r = p.executeQuery()) {
+                r.next();
+                return r.getBoolean(1);
+            }
+        }
+    }
+
+    private static void refreshVisitorStats(Connection c, UUID site, Collection<UUID> ids) throws SQLException {
+        try (PreparedStatement p = c.prepareStatement(
+                "update analytics_visitor v set first_session_at=s.first_started,last_session_at=s.last_started,session_count=s.sessions from (select visitor_id,min(started_at) first_started,max(started_at) last_started,count(*)::integer sessions from analytics_session where site_id=? and visitor_id = any (?) group by visitor_id) s where v.id=s.visitor_id")) {
+            p.setObject(1, site);
+            p.setArray(2, c.createArrayOf("uuid", ids.toArray()));
+            p.executeUpdate();
         }
     }
 
@@ -204,10 +251,12 @@ public class AnalyticsFactBuilder {
         try (PreparedStatement p = c.prepareStatement(
                 "insert into visitor_day_fact(site_id,business_date,visitor_id) values(?,?,?) on conflict do nothing")) {
             for (VisitorAcc v : values) {
+                UUID visitorId = ids.get(v.clientId);
+                if (visitorId == null) continue;
                 for (LocalDate d : v.days) {
                     p.setObject(1, site);
                     p.setObject(2, d);
-                    p.setObject(3, ids.get(v.clientId));
+                    p.setObject(3, visitorId);
                     p.addBatch();
                 }
             }

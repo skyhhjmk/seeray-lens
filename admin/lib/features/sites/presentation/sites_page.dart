@@ -191,6 +191,10 @@ class _SiteFormDialogState extends State<_SiteFormDialog> {
               ),
               validator: _positive,
             ),
+            const SizedBox(height: 6),
+            const Text(
+              'Raw events are automatically deleted after this period. Aggregated reports and session facts follow the aggregate period; event-level drilldowns and custom dimensions may be incomplete outside the raw window.',
+            ),
           ],
         ),
       ),

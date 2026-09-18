@@ -52,6 +52,10 @@ void main() {
     expect(find.text('Aggregate retention days'), findsOneWidget);
     expect(find.text('30'), findsOneWidget);
     expect(find.text('730'), findsOneWidget);
+    expect(
+      find.textContaining('Raw events are automatically deleted'),
+      findsOneWidget,
+    );
   });
 }
 

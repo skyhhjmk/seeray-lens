@@ -222,6 +222,14 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
                       ),
                       validator: _positive,
                     ),
+                    const SizedBox(height: 6),
+                    Text(
+                      context.tr(
+                        'Raw events are automatically deleted after this period. Aggregated reports and session facts follow the aggregate period; event-level drilldowns and custom dimensions may be incomplete outside the raw window.',
+                        '原始事件会在此期限后自动删除。汇总报表和访问事实按聚合期限保留；超出原始数据窗口后，事件明细和自定义维度报表可能不完整。',
+                      ),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                     const SizedBox(height: 12),
                     Text(context.tr('Tracking ID', '追踪 ID')),
                     SelectableText(site.trackingId),
