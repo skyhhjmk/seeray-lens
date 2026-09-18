@@ -41,6 +41,40 @@ void main() {
     expect(find.text('Admin · configure sites'), findsOneWidget);
   });
 
+  testWidgets('owner can review invitations and open the invite form', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          workspaceMemberDirectoryProvider('w1').overrideWith(
+            (ref) async =>
+                _directory(role: 'owner', canManageInvitations: true),
+          ),
+        ],
+        child: const MaterialApp(home: WorkspaceMembersPage(workspaceId: 'w1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Invitations'));
+    expect(find.text('invitee@example.test'), findsOneWidget);
+    expect(find.textContaining('Pending'), findsOneWidget);
+    await tester.tap(find.text('Invite').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Invite workspace member'), findsOneWidget);
+    expect(
+      find.text(
+        'We will email a one-time link. The person can sign in or create an account to join this workspace.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('viewer gets a clear access explanation and no member actions', (
     tester,
   ) async {
@@ -64,9 +98,24 @@ void main() {
 WorkspaceMemberDirectory _directory({
   required String role,
   List<WorkspaceMember>? members,
+  bool canManageInvitations = false,
 }) => WorkspaceMemberDirectory(
   workspaceName: 'Northwind Analytics',
   currentRole: role,
+  canManageInvitations: canManageInvitations,
+  invitations: canManageInvitations
+      ? [
+          WorkspaceInvitation(
+            id: 'invite-1',
+            email: 'invitee@example.test',
+            role: 'viewer',
+            status: 'pending',
+            createdAt: DateTime.utc(2026, 1, 3),
+            expiresAt: DateTime.utc(2026, 1, 10),
+            canRevoke: true,
+          ),
+        ]
+      : const [],
   members:
       members ??
       [

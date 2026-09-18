@@ -67,6 +67,36 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
+  Future<void> registerForInvitation({
+    required String email,
+    required String password,
+    required String displayName,
+    required String invitationToken,
+  }) async {
+    final generation = ++_sessionGeneration;
+    _api.accessToken = null;
+    state = const AuthState(AuthPhase.authenticating);
+    try {
+      final data = await _api.request(
+        'POST',
+        '/api/v1/auth/register-invitation',
+        body: {
+          'email': email,
+          'password': password,
+          'displayName': displayName,
+          'invitationToken': invitationToken,
+        },
+        retried: true,
+      );
+      if (generation != _sessionGeneration) return;
+      await _set(data);
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      _api.accessToken = null;
+      state = AuthState(AuthPhase.error, message: _loginError(error));
+    }
+  }
+
   Future<String?> refresh() {
     final generation = _sessionGeneration;
     final token = state.refreshToken;

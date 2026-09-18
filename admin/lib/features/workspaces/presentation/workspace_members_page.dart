@@ -24,11 +24,17 @@ class WorkspaceMembersPage extends ConsumerWidget {
             englishTitle: 'Workspace membership',
             chineseTitle: '工作区成员与角色',
             englishBody:
-                'Owners can add existing active accounts, assign admin or viewer access, remove non-owners, and transfer ownership. Admins can view the directory but cannot manage membership.',
+                'Owners can add existing accounts or email time-limited invitations, assign admin or viewer access, remove non-owners, and transfer ownership. Admins can view members and invitation status.',
             chineseBody:
-                '所有者可添加已有的有效账号、分配管理员或只读角色、移除非所有者成员并移交所有权。管理员可查看成员列表，但不能管理成员。',
+                '所有者可直接添加已有账号或发送限时邮件邀请，分配管理员或只读角色、移除非所有者成员并移交所有权。管理员可查看成员和邀请状态。',
           ),
           const LanguageMenu(),
+          if (data?.canManageInvitations == true)
+            IconButton(
+              tooltip: context.tr('Invite member', '邀请成员'),
+              onPressed: () => _inviteMember(context, ref),
+              icon: const Icon(Icons.mail_outline),
+            ),
           IconButton(
             tooltip: context.tr('Refresh', '刷新'),
             onPressed: () =>
@@ -76,6 +82,27 @@ class WorkspaceMembersPage extends ConsumerWidget {
       );
       if (context.mounted) {
         _message(context, context.tr('Member added.', '成员已添加。'));
+      }
+    } on Exception catch (error) {
+      if (context.mounted) _message(context, '$error');
+    }
+  }
+
+  Future<void> _inviteMember(BuildContext context, WidgetRef ref) async {
+    final input = await showDialog<_MemberInput>(
+      context: context,
+      builder: (_) => const _AddMemberDialog(invite: true),
+    );
+    if (input == null) return;
+    try {
+      await WorkspaceMemberActions.invite(
+        ref,
+        workspaceId,
+        input.email,
+        input.role,
+      );
+      if (context.mounted) {
+        _message(context, context.tr('Invitation email sent.', '邀请邮件已发送。'));
       }
     } on Exception catch (error) {
       if (context.mounted) _message(context, '$error');
@@ -157,7 +184,129 @@ class _MemberDirectory extends ConsumerWidget {
                   ),
           ),
         ),
+      const SizedBox(height: 16),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      context.tr('Invitations', '邀请记录'),
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  if (directory.canManageInvitations)
+                    TextButton.icon(
+                      onPressed: () =>
+                          _inviteMemberFromDirectory(context, ref, workspaceId),
+                      icon: const Icon(Icons.person_add_alt_1),
+                      label: Text(context.tr('Invite', '邀请')),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                context.tr(
+                  'Email links expire after ${directory.invitationLifetimeDays} days and can be used once.',
+                  '邮件邀请链接 ${directory.invitationLifetimeDays} 天后过期，且只能接受一次。',
+                ),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if (directory.invitations.isEmpty) ...[
+                const SizedBox(height: 14),
+                Text(context.tr('No invitations yet.', '暂无邀请记录。')),
+              ] else ...[
+                const SizedBox(height: 8),
+                for (final invitation in directory.invitations)
+                  _InvitationTile(
+                    invitation: invitation,
+                    workspaceId: workspaceId,
+                    canManage: directory.canManageInvitations,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
     ],
+  );
+}
+
+Future<void> _inviteMemberFromDirectory(
+  BuildContext context,
+  WidgetRef ref,
+  String workspaceId,
+) async {
+  final input = await showDialog<_MemberInput>(
+    context: context,
+    builder: (_) => const _AddMemberDialog(invite: true),
+  );
+  if (input == null) return;
+  try {
+    await WorkspaceMemberActions.invite(
+      ref,
+      workspaceId,
+      input.email,
+      input.role,
+    );
+    if (context.mounted) {
+      _message(context, context.tr('Invitation email sent.', '邀请邮件已发送。'));
+    }
+  } on Exception catch (error) {
+    if (context.mounted) _message(context, '$error');
+  }
+}
+
+class _InvitationTile extends ConsumerWidget {
+  const _InvitationTile({
+    required this.invitation,
+    required this.workspaceId,
+    required this.canManage,
+  });
+
+  final WorkspaceInvitation invitation;
+  final String workspaceId;
+  final bool canManage;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.mail_outline),
+    title: Text(invitation.email),
+    subtitle: Text(
+      '${_roleName(context, invitation.role)} · ${_invitationStatus(context, invitation.status)}'
+      '${invitation.status == 'pending' ? ' · ${context.tr('Expires', '过期时间')} ${_date(invitation.expiresAt)}' : ''}',
+    ),
+    trailing: canManage && invitation.canRevoke
+        ? IconButton(
+            tooltip: context.tr('Revoke invitation', '撤销邀请'),
+            onPressed: () async {
+              final confirmed = await _confirm(
+                context,
+                context.tr('Revoke invitation?', '撤销这条邀请？'),
+                context.tr(
+                  'The invitation link will stop working immediately.',
+                  '该邀请链接将立即失效。',
+                ),
+              );
+              if (!confirmed) return;
+              try {
+                await WorkspaceMemberActions.revokeInvitation(
+                  ref,
+                  workspaceId,
+                  invitation.id,
+                );
+              } on Exception catch (error) {
+                if (context.mounted) _message(context, '$error');
+              }
+            },
+            icon: const Icon(Icons.delete_outline),
+          )
+        : Chip(label: Text(_invitationStatus(context, invitation.status))),
   );
 }
 
@@ -291,7 +440,9 @@ class _MemberInput {
 }
 
 class _AddMemberDialog extends StatefulWidget {
-  const _AddMemberDialog();
+  const _AddMemberDialog({this.invite = false});
+
+  final bool invite;
 
   @override
   State<_AddMemberDialog> createState() => _AddMemberDialogState();
@@ -310,7 +461,12 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(context.tr('Add workspace member', '添加工作区成员')),
+    title: Text(
+      context.tr(
+        widget.invite ? 'Invite workspace member' : 'Add workspace member',
+        widget.invite ? '邀请工作区成员' : '添加工作区成员',
+      ),
+    ),
     content: SizedBox(
       width: 420,
       child: Form(
@@ -323,7 +479,10 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
               autofocus: true,
               keyboardType: TextInputType.emailAddress,
               decoration: InputDecoration(
-                labelText: context.tr('Account email', '账号邮箱'),
+                labelText: context.tr(
+                  widget.invite ? 'Email address' : 'Account email',
+                  widget.invite ? '邮箱地址' : '账号邮箱',
+                ),
               ),
               validator: (value) {
                 final email = value?.trim() ?? '';
@@ -361,8 +520,12 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
               alignment: Alignment.centerLeft,
               child: Text(
                 context.tr(
-                  'The account must already exist. Ownership can only be assigned through an explicit transfer.',
-                  '该邮箱必须已注册账号。所有权只能通过单独的移交操作授予。',
+                  widget.invite
+                      ? 'We will email a one-time link. The person can sign in or create an account to join this workspace.'
+                      : 'The account must already exist. Ownership can only be assigned through an explicit transfer.',
+                  widget.invite
+                      ? '我们会发送一次性链接。对方登录或创建账号后即可加入此工作区。'
+                      : '该邮箱必须已注册账号。所有权只能通过单独的移交操作授予。',
                 ),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -381,7 +544,12 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
           if (!_form.currentState!.validate()) return;
           Navigator.pop(context, _MemberInput(_email.text.trim(), _role));
         },
-        child: Text(context.tr('Add member', '添加成员')),
+        child: Text(
+          context.tr(
+            widget.invite ? 'Send invitation' : 'Add member',
+            widget.invite ? '发送邀请' : '添加成员',
+          ),
+        ),
       ),
     ],
   );
@@ -455,6 +623,14 @@ String _roleName(BuildContext context, String role) => switch (role) {
   'admin' => context.tr('Admin', '管理员'),
   _ => context.tr('Viewer', '只读成员'),
 };
+
+String _invitationStatus(BuildContext context, String status) =>
+    switch (status) {
+      'accepted' => context.tr('Accepted', '已接受'),
+      'revoked' => context.tr('Revoked', '已撤销'),
+      'expired' => context.tr('Expired', '已过期'),
+      _ => context.tr('Pending', '待接受'),
+    };
 
 String _date(DateTime value) =>
     '${value.toLocal().year.toString().padLeft(4, '0')}-'
