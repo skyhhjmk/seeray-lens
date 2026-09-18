@@ -4,6 +4,7 @@ import io.quarkus.security.Authenticated;
 import io.seeray.lens.application.AnalyticsQueryService;
 import io.seeray.lens.application.AttributionQueryService;
 import io.seeray.lens.application.CohortQueryService;
+import io.seeray.lens.application.CrashAnalyticsService;
 import io.seeray.lens.application.CustomReportService;
 import io.seeray.lens.application.FormAnalyticsService;
 import io.seeray.lens.application.GeoLocationResolver;
@@ -26,6 +27,7 @@ public class AnalyticsResource {
     private final AttributionQueryService attribution;
     private final FormAnalyticsService forms;
     private final MediaAnalyticsService media;
+    private final CrashAnalyticsService crashes;
 
     public AnalyticsResource(
             AnalyticsQueryService analytics,
@@ -35,7 +37,8 @@ public class AnalyticsResource {
             CohortQueryService cohorts,
             AttributionQueryService attribution,
             FormAnalyticsService forms,
-            MediaAnalyticsService media) {
+            MediaAnalyticsService media,
+            CrashAnalyticsService crashes) {
         this.analytics = analytics;
         this.segmented = segmented;
         this.geoLocationResolver = geoLocationResolver;
@@ -44,6 +47,7 @@ public class AnalyticsResource {
         this.attribution = attribution;
         this.forms = forms;
         this.media = media;
+        this.crashes = crashes;
     }
 
     @GET
@@ -300,6 +304,13 @@ public class AnalyticsResource {
     public MediaAnalyticsService.Report media(
             @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
         return media.report(site, analytics.range(site, from, to));
+    }
+
+    @GET
+    @Path("/crashes")
+    public CrashAnalyticsService.Report crashes(
+            @PathParam("siteId") UUID site, @QueryParam("from") String from, @QueryParam("to") String to) {
+        return crashes.report(site, analytics.range(site, from, to));
     }
 
     @GET

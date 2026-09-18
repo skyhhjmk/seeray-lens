@@ -667,6 +667,107 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void clientCrashCollectorRedactsSensitiveDataAndReportClustersAnonymousErrors() throws Exception {
+        Tokens owner = register("crash-analytics" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        var createdSite = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Crash site\",\"timezone\":\"UTC\"}")
+                .post("/api/v1/workspaces/" + workspaceId + "/sites")
+                .then()
+                .statusCode(201)
+                .extract();
+        String site = createdSite.path("id");
+        String trackingId = createdSite.path("trackingId");
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"host\":\"example.com\",\"enabled\":true}")
+                .post("/api/v1/sites/" + site + "/domains")
+                .then()
+                .statusCode(201);
+        LocalDate today = LocalDate.now(ZoneId.of("UTC"));
+        Instant occurred = Instant.now();
+        String visitor = UUID.randomUUID().toString();
+        String session = UUID.randomUUID().toString();
+        String eventData = "\"category\":\"error\",\"action\":\"javascript\",\"name\":\"TypeError\","
+                + "\"visitorId\":\"" + visitor + "\",\"sessionId\":\"" + session + "\","
+                + "\"occurredAt\":\"" + occurred + "\",\"title\":\"Private customer title\","
+                + "\"referrer\":\"https://example.com/private?token=referrer-secret\","
+                + "\"context\":{\"browser\":\"Chrome\",\"operatingSystem\":\"Linux\",\"deviceType\":\"desktop\"},"
+                + "\"properties\":{\"errorName\":\"TypeError\","
+                + "\"message\":\"Request https://api.example.test/users?token=url-secret failed for alice@example.test; Bearer bearer-secret; id 550e8400-e29b-41d4-a716-446655440000; account 123456789\","
+                + "\"sourcePath\":\"/assets/123456789/app.js?api_key=source-secret\",\"line\":28,\"column\":9,"
+                + "\"stack\":\"private stack with stack-secret\"}}";
+        String firstEvent = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"client_error\","
+                + "\"occurredAt\":\"" + occurred + "\",\"url\":\"https://example.com/accounts/12345678?token=page-secret\","
+                + eventData;
+        String secondEvent = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"client_error\","
+                + "\"occurredAt\":\"" + occurred.plusSeconds(1) + "\",\"url\":\"https://example.com/checkout\","
+                + eventData.replace("\"visitorId\":\"" + visitor + "\",\"sessionId\":\"" + session + "\"", "\"visitorId\":\"" + UUID.randomUUID() + "\",\"sessionId\":\"" + UUID.randomUUID() + "\"");
+        given().contentType("application/json")
+                .body("{\"schemaVersion\":1,\"siteId\":\"" + trackingId + "\",\"events\":[" + firstEvent + "," + secondEvent + "]}")
+                .post("/api/v1/collect")
+                .then()
+                .statusCode(202);
+
+        long deadline = System.currentTimeMillis() + 8_000;
+        long count = 0;
+        do {
+            Thread.sleep(250);
+            try (var connection = dataSource.getConnection();
+                    var statement = connection.prepareStatement("select count(*) from raw_event where site_id=? and event_type='client_error'")) {
+                statement.setObject(1, UUID.fromString(site));
+                try (var result = statement.executeQuery()) {
+                    result.next();
+                    count = result.getLong(1);
+                }
+            }
+        } while (count < 2 && System.currentTimeMillis() < deadline);
+        assertEquals(2, count);
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select page_path,page_title,referrer_path,client_visitor_id,client_session_id,event_data::text from raw_event where site_id=? and event_type='client_error' order by page_path")) {
+            statement.setObject(1, UUID.fromString(site));
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals("/accounts/<id>", result.getString(1));
+                assertNull(result.getString(2));
+                assertNull(result.getString(3));
+                assertNull(result.getString(4));
+                assertNull(result.getString(5));
+                String stored = result.getString(6);
+                for (String privateValue : List.of("url-secret", "source-secret", "referrer-secret", "alice@example.test", "bearer-secret", "stack-secret", "Private customer title", visitor, session))
+                    assertFalse(stored.contains(privateValue), "sensitive crash field was stored: " + privateValue);
+                assertTrue(stored.contains("<email>"));
+                assertTrue(stored.contains("<url>"));
+                assertTrue(result.next());
+                assertEquals("/checkout", result.getString(1));
+                assertNull(result.getString(4));
+                assertNull(result.getString(5));
+                assertFalse(result.next());
+            }
+        }
+
+        var report = given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/sites/" + site + "/analytics/crashes?from=" + today + "&to=" + today)
+                .then()
+                .statusCode(200)
+                .extract()
+                .response();
+        assertEquals(2L, ((Number) report.path("occurrences")).longValue());
+        assertEquals(1, ((Number) report.path("issueCount")).intValue());
+        assertEquals("TypeError", report.path("rows[0].errorName"));
+        assertEquals("/assets/<id>/app.js", report.path("rows[0].sourcePath"));
+        assertEquals(28, ((Number) report.path("rows[0].line")).intValue());
+        assertEquals(2, ((Number) report.path("rows[0].affectedPages")).intValue());
+        assertEquals("Chrome", report.path("rows[0].browsers"));
+        assertFalse(report.asString().contains(visitor));
+        assertFalse(report.asString().contains(session));
+        assertFalse(report.asString().contains("stack-secret"));
+        assertFalse(report.asString().contains("page-secret"));
+    }
+
+    @Test
     void siteSearchReportCountsTermsZeroResultsAndSavedSegment() throws Exception {
         Tokens owner = register("site-search" + System.nanoTime() + "@example.test");
         String workspaceId = workspace(owner.access()).extract().path("[0].id");

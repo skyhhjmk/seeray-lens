@@ -272,3 +272,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0039-media-analytics-index.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0040-crash-analytics-index
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0040-crash-analytics-index.sql
+            relativeToChangelogFile: false

@@ -51,6 +51,43 @@ public final class TrackingSanitizer {
         }
     }
 
+    /** Crash reports intentionally discard query parameters, titles, and UTM values. */
+    public static CleanUrl crashUrl(String value, ObjectMapper mapper) {
+        CleanUrl clean = url(value, mapper);
+        return new CleanUrl(
+                clean.scheme(),
+                clean.host(),
+                safeCrashPath(clean.path()),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+    }
+
+    /** Removes common identifiers from route and script paths before storing crash diagnostics. */
+    public static String safeCrashPath(String value) {
+        if (value == null || value.isBlank()) return "/";
+        String path = value.replaceAll("[\\p{Cc}]", "").replace('\\', '/').split("[?#]", 2)[0];
+        if (path.matches("(?i)^[a-z][a-z0-9+.-]*://.*")) {
+            try {
+                path = URI.create(path).getPath();
+            } catch (Exception ignored) {
+                return "/";
+            }
+        }
+        if (path == null || path.isBlank()) return "/";
+        if (!path.startsWith("/")) path = "/" + path;
+        path = path.replaceAll("(?i)[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}", "<email>");
+        path = path.replaceAll("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b", "<id>");
+        path = path.replaceAll("(^|/)\\d{4,}(?=/|$)", "$1<id>");
+        path = path.replaceAll("(^|/)[A-Za-z0-9_-]{32,}(?=/|$)", "$1<id>");
+        return path.length() > 1024 ? path.substring(0, 1024) : path;
+    }
+
     private static String cleanTitle(String value) {
         if (value == null || value.isBlank()) return null;
         String cleaned = value.strip().replaceAll("[\\p{Cc}]", "");

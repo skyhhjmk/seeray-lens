@@ -58,8 +58,11 @@ public class TrackingResource {
         List<SiteAllowedDomain> allowed = sites.trackingDomains(site.id);
         GeoLocationResolver.Location location = geoLocationResolver.resolve(httpRequest);
         for (TrackingPayload.TrackingEvent event : request.events()) {
-            TrackingSanitizer.CleanUrl page = TrackingSanitizer.url(event.url(), mapper, event.title());
-            TrackingSanitizer.CleanUrl ref = TrackingSanitizer.url(event.referrer(), mapper);
+            boolean clientError = "client_error".equals(event.type());
+            TrackingSanitizer.CleanUrl page = clientError
+                    ? TrackingSanitizer.crashUrl(event.url(), mapper)
+                    : TrackingSanitizer.url(event.url(), mapper, event.title());
+            TrackingSanitizer.CleanUrl ref = clientError ? null : TrackingSanitizer.url(event.referrer(), mapper);
             String requestOrigin = origin != null && !origin.isBlank() ? origin : referer;
             if (!matchesAllowed(page == null ? null : page.host(), allowed)
                     || requestOrigin != null
@@ -83,10 +86,10 @@ public class TrackingResource {
                     event.type(),
                     page,
                     ref,
-                    TrackingSanitizer.json(eventData(event, location), mapper),
+                    TrackingSanitizer.json(eventData(event, location, mapper), mapper),
                     event.durationMs(),
-                    event.visitorId(),
-                    event.sessionId());
+                    clientError ? null : event.visitorId(),
+                    clientError ? null : event.sessionId());
             try {
                 publisher
                         .sendMessage(Message.of(mapper.writeValueAsString(message)))
@@ -120,13 +123,19 @@ public class TrackingResource {
     }
 
     private static Map<String, Object> eventData(
-            TrackingPayload.TrackingEvent event, GeoLocationResolver.Location location) {
+            TrackingPayload.TrackingEvent event, GeoLocationResolver.Location location, ObjectMapper mapper) {
         Map<String, Object> value = new LinkedHashMap<>();
-        value.put("visitorId", event.visitorId() == null ? "" : event.visitorId());
-        value.put("sessionId", event.sessionId() == null ? "" : event.sessionId());
-        value.put("category", event.category() == null ? "" : event.category());
-        value.put("action", event.action() == null ? "" : event.action());
-        value.put("name", event.name() == null ? "" : event.name());
+        boolean clientError = "client_error".equals(event.type());
+        Map<String, Object> crashData = clientError ? crashData(event, mapper) : null;
+        value.put("visitorId", clientError || event.visitorId() == null ? "" : event.visitorId());
+        value.put("sessionId", clientError || event.sessionId() == null ? "" : event.sessionId());
+        value.put("category", clientError ? "error" : event.category() == null ? "" : event.category());
+        value.put(
+                "action",
+                clientError
+                        ? Set.of("javascript", "unhandled_rejection").contains(event.action()) ? event.action() : "javascript"
+                        : event.action() == null ? "" : event.action());
+        value.put("name", clientError ? crashData.get("errorName") : event.name() == null ? "" : event.name());
         Map<String, Object> context = event.context() == null ? new LinkedHashMap<>() : context(event.context());
         // Server-resolved location is authoritative and is only attached to page views.
         // Client context cannot forge these values because the server overwrites them.
@@ -139,12 +148,21 @@ public class TrackingResource {
             put(context, "geoTimezone", location.timezone());
         }
         value.put("context", context);
-        value.put(
-                "data",
-                event.data() == null && event.properties() == null
-                        ? Map.of()
-                        : event.data() == null ? event.properties() : event.data());
+        if (clientError) value.put("data", crashData);
+        else value.put(
+                    "data",
+                    event.data() == null && event.properties() == null
+                            ? Map.of()
+                            : event.data() == null ? event.properties() : event.data());
         return value;
+    }
+
+    private static Map<String, Object> crashData(TrackingPayload.TrackingEvent event, ObjectMapper mapper) {
+        Map<String, ?> supplied = event.data();
+        if (supplied == null && event.properties() != null && event.properties().isObject()) {
+            supplied = mapper.convertValue(event.properties(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+        }
+        return CrashDataSanitizer.sanitize(supplied);
     }
 
     private static Map<String, Object> context(TrackingPayload.ClientContext context) {
