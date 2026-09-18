@@ -7,6 +7,7 @@ import '../../../shared/presentation/site_top_bar.dart';
 import '../application/analytics_controller.dart';
 import '../application/analytics_range.dart';
 import '../application/analytics_segment.dart';
+import 'world_map_chart.dart';
 
 class LocationsPage extends ConsumerWidget {
   const LocationsPage({required this.siteId, this.embedded = false, super.key});
@@ -63,10 +64,33 @@ class _LocationReport extends StatefulWidget {
 class _LocationReportState extends State<_LocationReport> {
   static const _levels = ['country', 'continent', 'region', 'city'];
   String _level = 'country';
+  String? _selectedCountryCode;
+
+  @override
+  void didUpdateWidget(covariant _LocationReport oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_selectedCountryCode != null &&
+        !widget.data.rows.any(
+          (row) =>
+              row.level == 'country' && row.countryCode == _selectedCountryCode,
+        )) {
+      _selectedCountryCode = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final rows = widget.data.rows.where((row) => row.level == _level).toList();
+    final countries = widget.data.rows
+        .where((row) => row.level == 'country' && row.countryCode != null)
+        .toList(growable: false);
+    AnalyticsLocation? selectedCountry;
+    for (final country in countries) {
+      if (country.countryCode == _selectedCountryCode) {
+        selectedCountry = country;
+        break;
+      }
+    }
     final total = rows.fold<int>(0, (sum, row) => sum + row.sessions);
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -148,6 +172,93 @@ class _LocationReportState extends State<_LocationReport> {
               ),
           ],
         ),
+        if (_level == 'country' && countries.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    context.tr('Visits by country', '国家访问分布'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    context.tr(
+                      'Darker shading means more visits. Select a country on the map or in the list for details.',
+                      '颜色越深表示访问越多。点击地图或列表中的国家查看详情。',
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  if (selectedCountry != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xffedf4fb),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.location_on_outlined, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${selectedCountry.label} · ${selectedCountry.countryCode}',
+                            ),
+                          ),
+                          Text(
+                            '${selectedCountry.sessions} ${context.tr('visits', '次访问')} · ${selectedCountry.visitors} ${context.tr('visitors', '位访客')}',
+                            textAlign: TextAlign.end,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: WorldMapChart(
+                      sessionsByCountry: {
+                        for (final country in countries)
+                          country.countryCode!: country.sessions,
+                      },
+                      selectedCountryCode: _selectedCountryCode,
+                      onCountrySelected: (code) =>
+                          setState(() => _selectedCountryCode = code),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Text(context.tr('Fewer visits', '较少访问')),
+                      const SizedBox(width: 10),
+                      Container(
+                        width: 116,
+                        height: 9,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xffcfe0f1), Color(0xff245f98)],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(context.tr('More visits', '较多访问')),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         if (rows.isEmpty)
           Card(
@@ -183,7 +294,14 @@ class _LocationReportState extends State<_LocationReport> {
                 ),
                 const Divider(height: 1),
                 for (final row in rows.take(100))
-                  _LocationRow(row: row, totalSessions: total),
+                  InkWell(
+                    onTap: row.level == 'country' && row.countryCode != null
+                        ? () => setState(
+                            () => _selectedCountryCode = row.countryCode,
+                          )
+                        : null,
+                    child: _LocationRow(row: row, totalSessions: total),
+                  ),
               ],
             ),
           ),

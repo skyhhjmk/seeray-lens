@@ -70,6 +70,7 @@ flutter:
 
   assets:
     - assets/replayer.js
+    - assets/maps/world-countries.json
     - assets/fonts/seeray-reports-cjk.ttf
     - assets/fonts/seeray-reports-cjk-codepoints.txt
     - assets/fonts/NOTO-CJK-OFL.txt
