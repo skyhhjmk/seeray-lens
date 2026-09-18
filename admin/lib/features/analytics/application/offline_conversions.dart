@@ -49,6 +49,21 @@ class OfflineConversionImportPreview {
 
   final List<OfflineConversionImportRow> rows;
 
+  int get tooOldRows => rows.where((row) {
+    final convertedAt = DateTime.parse(row.convertedAt).toUtc();
+    return DateTime.now().toUtc().difference(convertedAt) >
+        const Duration(days: 7);
+  }).length;
+
+  int get futureRows => rows.where((row) {
+    final convertedAt = DateTime.parse(row.convertedAt).toUtc();
+    return convertedAt.isAfter(
+      DateTime.now().toUtc().add(const Duration(minutes: 5)),
+    );
+  }).length;
+
+  int get eligibleRows => rows.length - tooOldRows - futureRows;
+
   DateTime get firstConversion => rows
       .map((row) => DateTime.parse(row.convertedAt).toUtc())
       .reduce((a, b) => a.isBefore(b) ? a : b);
@@ -478,6 +493,92 @@ final microsoftAdsConversionConfigProvider =
             '/api/v1/sites/$siteId/offline-conversions/microsoft-ads/config',
           );
       return MicrosoftAdsConversionConfig.fromJson(
+        Map<String, dynamic>.from(response as Map),
+      );
+    });
+
+class MetaAdsGoalMapping {
+  const MetaAdsGoalMapping({
+    required this.goalId,
+    required this.goalName,
+    required this.eventName,
+  });
+
+  final String goalId;
+  final String goalName;
+  final String eventName;
+
+  factory MetaAdsGoalMapping.fromJson(Map<String, dynamic> json) =>
+      MetaAdsGoalMapping(
+        goalId: json['goalId'] as String? ?? '',
+        goalName: json['goalName'] as String? ?? 'Goal',
+        eventName: json['eventName'] as String? ?? '',
+      );
+}
+
+class MetaAdsConversionConfig {
+  const MetaAdsConversionConfig({
+    required this.canManage,
+    required this.configured,
+    required this.credentialConfigured,
+    required this.goalMappings,
+    this.datasetId,
+    this.currencyCode,
+  });
+
+  final bool canManage;
+  final bool configured;
+  final bool credentialConfigured;
+  final String? datasetId;
+  final String? currencyCode;
+  final List<MetaAdsGoalMapping> goalMappings;
+
+  MetaAdsGoalMapping? mappingFor(String? goalId) =>
+      goalMappings.where((mapping) => mapping.goalId == goalId).firstOrNull;
+
+  factory MetaAdsConversionConfig.fromJson(
+    Map<String, dynamic> json,
+  ) => MetaAdsConversionConfig(
+    canManage: json['canManage'] as bool? ?? false,
+    configured: json['configured'] as bool? ?? false,
+    credentialConfigured: json['credentialConfigured'] as bool? ?? false,
+    datasetId: json['datasetId'] as String?,
+    currencyCode: json['currencyCode'] as String?,
+    goalMappings: (json['goalMappings'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (mapping) =>
+              MetaAdsGoalMapping.fromJson(Map<String, dynamic>.from(mapping)),
+        )
+        .toList(growable: false),
+  );
+}
+
+class MetaAdsTransferResult {
+  const MetaAdsTransferResult({
+    required this.rowsProcessed,
+    required this.eventsReceived,
+  });
+
+  final int rowsProcessed;
+  final int eventsReceived;
+
+  factory MetaAdsTransferResult.fromJson(Map<String, dynamic> json) =>
+      MetaAdsTransferResult(
+        rowsProcessed: (json['rowsProcessed'] as num?)?.toInt() ?? 0,
+        eventsReceived: (json['eventsReceived'] as num?)?.toInt() ?? 0,
+      );
+}
+
+final metaAdsConversionConfigProvider =
+    FutureProvider.family<MetaAdsConversionConfig, String>((ref, siteId) async {
+      final response = await ref
+          .read(apiProvider)
+          .request(
+            'GET',
+            '/api/v1/sites/$siteId/offline-conversions/meta-ads/config',
+          );
+      return MetaAdsConversionConfig.fromJson(
         Map<String, dynamic>.from(response as Map),
       );
     });
