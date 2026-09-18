@@ -91,6 +91,192 @@ final class SeeRayAnalyticsTests: XCTestCase {
         XCTAssertTrue(payloads.isEmpty)
     }
 
+    func testNativeCrashCaptureRequiresSeparateConsentAndRestoresAnonymousReport() async throws {
+        let store = MemoryStorage()
+        let transport = RecordingTransport()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("seeray-ios-crash-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outbox = SeeRayNativeCrashOutbox(rootDirectory: root)
+        let options = SeeRayAnalyticsOptions(
+            siteId: "srl_ios_test",
+            apiOrigin: "https://analytics.example.test/edge",
+            requireConsent: true,
+            captureNativeCrashes: true,
+            appRelease: "ios-4.2.1+88",
+            crashContextURL: "https://www.example.test/checkout"
+        )
+        let analytics = try SeeRayAnalytics(
+            options: options,
+            storage: store,
+            transport: transport,
+            nativeCrashOutbox: outbox
+        )
+        let registration = SeeRayNativeCrashRegistration(
+            id: UUID(),
+            options: options,
+            storage: store,
+            outbox: outbox
+        )
+
+        SeeRayNativeCrashPrivacy.capture(
+            registration: registration,
+            errorName: "NSInvalidArgumentException",
+            message: "token=never-store-this for alice@example.test at https://app.example.test/account/12345678",
+            functionName: "0 Example 0x1234567890 checkout + 12"
+        )
+        XCTAssertTrue(outbox.pending(siteId: options.siteId).isEmpty)
+
+        await analytics.setConsent(granted: true)
+        SeeRayNativeCrashPrivacy.capture(
+            registration: registration,
+            errorName: "NSInvalidArgumentException",
+            message: "token=never-store-this for alice@example.test at https://app.example.test/account/12345678",
+            functionName: "0 Example 0x1234567890 checkout + 12"
+        )
+        XCTAssertTrue(outbox.pending(siteId: options.siteId).isEmpty)
+
+        await analytics.setNativeCrashConsent(granted: true)
+        await analytics.trackScreen(
+            name: "checkout",
+            url: "https://www.example.test/account/12345678?session=page-secret"
+        )
+        XCTAssertEqual(
+            store.string(forKey: "seeray:srl_ios_test:last_screen_url"),
+            "https://www.example.test/account/%3Cid%3E"
+        )
+        SeeRayNativeCrashPrivacy.capture(
+            registration: registration,
+            errorName: "NSInvalidArgumentException",
+            message: "token=never-store-this for alice@example.test at https://app.example.test/account/12345678",
+            functionName: "0 Example 0x1234567890 checkout + 12"
+        )
+        let reports = outbox.pending(siteId: options.siteId)
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertEqual(reports[0].url, "https://www.example.test/account/%3Cid%3E")
+        XCTAssertFalse(reports[0].message.contains("never-store-this"))
+        XCTAssertFalse(reports[0].message.contains("alice@example.test"))
+        XCTAssertFalse(reports[0].message.contains("12345678"))
+        XCTAssertFalse(reports[0].functionName?.contains("0x1234567890") ?? true)
+
+        await analytics.close()
+        let nextLaunch = try SeeRayAnalytics(
+            options: options,
+            storage: store,
+            transport: transport,
+            nativeCrashOutbox: outbox
+        )
+        let restoredCount = await nextLaunch.queuedEventCount()
+        XCTAssertEqual(restoredCount, 1)
+        let delivered = await nextLaunch.flush()
+        XCTAssertTrue(delivered)
+        XCTAssertTrue(outbox.pending(siteId: options.siteId).isEmpty)
+
+        let payloads = await transport.payloads()
+        let lastPayload = try XCTUnwrap(payloads.last)
+        let batch = try XCTUnwrap(JSONSerialization.jsonObject(with: lastPayload) as? [String: Any])
+        let events = try XCTUnwrap(batch["events"] as? [[String: Any]])
+        let crash = try XCTUnwrap(events.first { $0["type"] as? String == "client_error" })
+        let properties = try XCTUnwrap(crash["properties"] as? [String: String])
+        XCTAssertEqual(crash["action"] as? String, "native_ios")
+        XCTAssertEqual(crash["url"] as? String, "https://www.example.test/account/%3Cid%3E")
+        XCTAssertNil(crash["visitorId"])
+        XCTAssertNil(crash["sessionId"])
+        XCTAssertNil(crash["userId"])
+        XCTAssertEqual(properties["platform"], "ios")
+        XCTAssertEqual(properties["releaseId"], "ios-4.2.1+88")
+        XCTAssertFalse(String(data: lastPayload, encoding: .utf8)?.contains("never-store-this") ?? true)
+        XCTAssertFalse(String(data: lastPayload, encoding: .utf8)?.contains("alice@example.test") ?? true)
+
+        await nextLaunch.close()
+    }
+
+    func testNativeCrashConsentWithdrawalClearsDurableReports() async throws {
+        let store = MemoryStorage()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("seeray-ios-crash-withdraw-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outbox = SeeRayNativeCrashOutbox(rootDirectory: root)
+        let options = SeeRayAnalyticsOptions(
+            siteId: "srl_ios_test",
+            apiOrigin: "https://analytics.example.test",
+            captureNativeCrashes: true,
+            appRelease: "ios-1",
+            crashContextURL: "https://www.example.test/"
+        )
+        let analytics = try SeeRayAnalytics(
+            options: options,
+            storage: store,
+            transport: RecordingTransport(),
+            nativeCrashOutbox: outbox
+        )
+        let registration = SeeRayNativeCrashRegistration(
+            id: UUID(),
+            options: options,
+            storage: store,
+            outbox: outbox
+        )
+
+        await analytics.setNativeCrashConsent(granted: true)
+        SeeRayNativeCrashPrivacy.capture(
+            registration: registration,
+            errorName: "NSException",
+            message: "safe summary",
+            functionName: nil
+        )
+        XCTAssertEqual(outbox.pending(siteId: options.siteId).count, 1)
+
+        await analytics.setNativeCrashConsent(granted: false)
+        XCTAssertTrue(outbox.pending(siteId: options.siteId).isEmpty)
+        let queuedCount = await analytics.queuedEventCount()
+        XCTAssertEqual(queuedCount, 0)
+        XCTAssertEqual(store.string(forKey: "seeray:srl_ios_test:native_crash_consent"), "denied")
+        XCTAssertNil(store.string(forKey: "seeray:srl_ios_test:last_screen_url"))
+
+        await analytics.close()
+    }
+
+    func testDisablingNativeCrashCaptureClearsStoredCrashConsentAndContext() throws {
+        let store = MemoryStorage()
+        store.set("granted", forKey: "seeray:srl_ios_test:consent")
+        store.set("granted", forKey: "seeray:srl_ios_test:native_crash_consent")
+        store.set("https://www.example.test/account/secret", forKey: "seeray:srl_ios_test:last_screen_url")
+        _ = try makeAnalytics(store: store, transport: RecordingTransport(), requireConsent: false)
+
+        XCTAssertNil(store.string(forKey: "seeray:srl_ios_test:native_crash_consent"))
+        XCTAssertNil(store.string(forKey: "seeray:srl_ios_test:last_screen_url"))
+    }
+
+    func testNativeCrashConfigurationRequiresImmutableReleaseAndHTTPSContext() {
+        XCTAssertThrowsError(try SeeRayAnalytics(
+            options: SeeRayAnalyticsOptions(
+                siteId: "srl_ios_test",
+                apiOrigin: "https://analytics.example.test",
+                captureNativeCrashes: true,
+                appRelease: "bad release",
+                crashContextURL: "https://www.example.test/"
+            ),
+            storage: MemoryStorage(),
+            transport: RecordingTransport()
+        )) { error in
+            XCTAssertEqual(error as? SeeRayAnalyticsError, .invalidNativeCrashConfiguration)
+        }
+
+        XCTAssertThrowsError(try SeeRayAnalytics(
+            options: SeeRayAnalyticsOptions(
+                siteId: "srl_ios_test",
+                apiOrigin: "https://analytics.example.test",
+                captureNativeCrashes: true,
+                appRelease: "ios-1",
+                crashContextURL: "http://www.example.test/"
+            ),
+            storage: MemoryStorage(),
+            transport: RecordingTransport()
+        )) { error in
+            XCTAssertEqual(error as? SeeRayAnalyticsError, .invalidNativeCrashConfiguration)
+        }
+    }
+
     func testFailedBatchIsRetriedWithoutChangingEventIdentity() async throws {
         let transport = RecordingTransport()
         await transport.failNextRequest()

@@ -71,7 +71,7 @@ private final class URLSessionTransport: SeeRayAnalyticsTransport, @unchecked Se
 
 /// Explicit, consent-aware analytics for native iOS applications.
 ///
-/// The SDK does not infer navigation, crashes, device models, advertising IDs, or user identity.
+/// The SDK does not infer navigation, device models, advertising IDs, or user identity.
 /// The host app decides when a screen becomes visible and when its conversion actually succeeds.
 public actor SeeRayAnalytics {
     private static let maximumBatchSize = 10
@@ -85,12 +85,14 @@ public actor SeeRayAnalytics {
     private let now: @Sendable () -> Date
     private let batchSize: Int
     private let flushInterval: TimeInterval
+    private let nativeCrashOutbox: SeeRayNativeCrashOutbox?
 
     private var pending: [SeeRayTrackingEvent] = []
     private var flushTask: Task<Void, Never>?
     private var userId: String?
     private var closed = false
     private var droppedEventCount = 0
+    private var nativeCrashRegistrationID: UUID?
 
     public init(options: SeeRayAnalyticsOptions) throws {
         let configuration = URLSessionConfiguration.ephemeral
@@ -101,7 +103,8 @@ public actor SeeRayAnalytics {
             options: options,
             storage: UserDefaultsStorage(defaults: .standard),
             transport: URLSessionTransport(session: URLSession(configuration: configuration)),
-            now: { Date() }
+            now: { Date() },
+            nativeCrashOutbox: nil
         )
     }
 
@@ -109,7 +112,8 @@ public actor SeeRayAnalytics {
         options: SeeRayAnalyticsOptions,
         storage: SeeRayAnalyticsStorage,
         transport: SeeRayAnalyticsTransport,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        nativeCrashOutbox: SeeRayNativeCrashOutbox? = nil
     ) throws {
         guard options.siteId.range(
             of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"#,
@@ -123,6 +127,16 @@ public actor SeeRayAnalytics {
         guard let endpoint = Self.endpoint(for: options.apiOrigin) else {
             throw SeeRayAnalyticsError.invalidAPIOrigin
         }
+        if options.captureNativeCrashes {
+            guard let release = options.appRelease,
+                  release.range(of: #"^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$"#, options: .regularExpression) != nil,
+                  let contextURL = options.crashContextURL,
+                  let minimizedContext = Self.minimizedURL(contextURL),
+                  URLComponents(string: minimizedContext)?.scheme?.lowercased() == "https"
+            else {
+                throw SeeRayAnalyticsError.invalidNativeCrashConfiguration
+            }
+        }
 
         self.options = options
         self.endpoint = endpoint
@@ -131,6 +145,49 @@ public actor SeeRayAnalytics {
         self.now = now
         self.batchSize = min(max(options.batchSize, 1), Self.maximumBatchSize)
         self.flushInterval = min(max(options.flushInterval, 0.2), 60)
+        self.nativeCrashOutbox = options.captureNativeCrashes
+            ? nativeCrashOutbox ?? SeeRayNativeCrashOutbox()
+            : nil
+
+        if let outbox = self.nativeCrashOutbox {
+            let registration = SeeRayNativeCrashRegistration(
+                id: UUID(),
+                options: options,
+                storage: storage,
+                outbox: outbox
+            )
+            nativeCrashRegistrationID = registration.id
+            SeeRayNativeCrashRegistry.shared.register(registration)
+            let consent = storage.string(forKey: "seeray:\(options.siteId):consent")
+            let analyticsAllowed = consent == SeeRayConsentState.granted.rawValue
+                || (consent == nil && !options.requireConsent)
+            let crashAllowed = storage.string(forKey: "seeray:\(options.siteId):native_crash_consent")
+                == SeeRayConsentState.granted.rawValue
+            if !analyticsAllowed || !crashAllowed {
+                outbox.clear(siteId: options.siteId)
+                storage.removeValue(forKey: "seeray:\(options.siteId):last_screen_url")
+                if !analyticsAllowed {
+                    storage.set(
+                        SeeRayConsentState.denied.rawValue,
+                        forKey: "seeray:\(options.siteId):native_crash_consent"
+                    )
+                }
+            } else {
+                let restored = outbox.pending(siteId: options.siteId)
+                    .prefix(10)
+                    .map { $0.trackingEvent(context: Self.context()) }
+                self.pending.append(contentsOf: restored)
+                if !restored.isEmpty {
+                    Task { [weak self] in
+                        await self?.scheduleFlush(immediate: true)
+                    }
+                }
+            }
+        } else {
+            storage.removeValue(forKey: "seeray:\(options.siteId):last_screen_url")
+            storage.removeValue(forKey: "seeray:\(options.siteId):native_crash_consent")
+            SeeRayNativeCrashOutbox().clear(siteId: options.siteId)
+        }
     }
 
     public func consentState() -> SeeRayConsentState {
@@ -147,8 +204,14 @@ public actor SeeRayAnalytics {
         guard !closed else { return }
         storage.set(granted ? SeeRayConsentState.granted.rawValue : SeeRayConsentState.denied.rawValue,
                     forKey: consentKey)
-        guard !granted else { return }
+        guard !granted else {
+            if storage.string(forKey: nativeCrashConsentKey) == SeeRayConsentState.granted.rawValue {
+                restorePendingNativeCrashes()
+            }
+            return
+        }
 
+        storage.set(SeeRayConsentState.denied.rawValue, forKey: nativeCrashConsentKey)
         pending.removeAll(keepingCapacity: false)
         flushTask?.cancel()
         flushTask = nil
@@ -156,6 +219,23 @@ public actor SeeRayAnalytics {
         storage.removeValue(forKey: visitorKey)
         storage.removeValue(forKey: sessionKey)
         storage.removeValue(forKey: lastActivityKey)
+        storage.removeValue(forKey: lastScreenURLKey)
+        nativeCrashOutbox?.clear(siteId: options.siteId)
+    }
+
+    /// Enable native exception reports only after a separate, explicit application-level choice.
+    public func setNativeCrashConsent(granted: Bool) {
+        guard !closed, options.captureNativeCrashes else { return }
+        let allowed = granted && consentState() == .granted
+        storage.set(allowed ? SeeRayConsentState.granted.rawValue : SeeRayConsentState.denied.rawValue,
+                    forKey: nativeCrashConsentKey)
+        guard allowed else {
+            pending.removeAll { $0.pendingCrashId != nil }
+            nativeCrashOutbox?.clear(siteId: options.siteId)
+            storage.removeValue(forKey: lastScreenURLKey)
+            return
+        }
+        restorePendingNativeCrashes()
     }
 
     /// Store an opaque application account ID for subsequent consented events only.
@@ -244,6 +324,9 @@ public actor SeeRayAnalytics {
             let encoder = JSONEncoder()
             try await transport.send(encoder.encode(body), to: endpoint)
             storage.set(String(now().timeIntervalSince1970), forKey: lastActivityKey)
+            for crashID in batchEvents.compactMap(\.pendingCrashId) {
+                nativeCrashOutbox?.remove(siteId: options.siteId, eventId: crashID)
+            }
             if !pending.isEmpty, !closed { scheduleFlush() }
             return true
         } catch {
@@ -258,6 +341,10 @@ public actor SeeRayAnalytics {
     public func close() async {
         guard !closed else { return }
         closed = true
+        if let registrationID = nativeCrashRegistrationID {
+            SeeRayNativeCrashRegistry.shared.unregister(registrationID)
+            nativeCrashRegistrationID = nil
+        }
         flushTask?.cancel()
         flushTask = nil
         _ = await flush()
@@ -303,10 +390,34 @@ public actor SeeRayAnalytics {
                 action: Self.cleanText(action, maximumLength: 120),
                 name: Self.cleanText(name, maximumLength: 120),
                 properties: cleanProperties.isEmpty ? nil : cleanProperties,
-                context: Self.context()
+                context: Self.context(),
+                pendingCrashId: nil
             )
         )
+        if options.captureNativeCrashes, type == "page_view" {
+            if mayCaptureNativeCrashes {
+                storage.set(SeeRayNativeCrashPrivacy.safePageURL(pageURL), forKey: lastScreenURLKey)
+            } else {
+                storage.removeValue(forKey: lastScreenURLKey)
+            }
+        }
         scheduleFlush(immediate: pending.count >= batchSize)
+    }
+
+    private var mayCaptureNativeCrashes: Bool {
+        options.captureNativeCrashes
+            && consentState() == .granted
+            && storage.string(forKey: nativeCrashConsentKey) == SeeRayConsentState.granted.rawValue
+    }
+
+    private func restorePendingNativeCrashes() {
+        guard mayCaptureNativeCrashes, let outbox = nativeCrashOutbox else { return }
+        let queuedIDs = Set(pending.compactMap(\.pendingCrashId))
+        for crash in outbox.pending(siteId: options.siteId).prefix(10) where !queuedIDs.contains(crash.eventId) {
+            guard pending.count < Self.maximumQueuedEvents else { break }
+            pending.append(crash.trackingEvent(context: Self.context()))
+        }
+        if !pending.isEmpty { scheduleFlush(immediate: pending.count >= batchSize) }
     }
 
     private func ensureIdentity(at date: Date) -> (visitor: String, session: String) {
@@ -407,7 +518,9 @@ public actor SeeRayAnalytics {
     }
 
     private var consentKey: String { "seeray:\(options.siteId):consent" }
+    private var nativeCrashConsentKey: String { "seeray:\(options.siteId):native_crash_consent" }
     private var visitorKey: String { "seeray:\(options.siteId):visitor_id" }
     private var sessionKey: String { "seeray:\(options.siteId):session_id" }
     private var lastActivityKey: String { "seeray:\(options.siteId):session_last_activity" }
+    private var lastScreenURLKey: String { "seeray:\(options.siteId):last_screen_url" }
 }

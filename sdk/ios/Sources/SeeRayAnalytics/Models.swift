@@ -6,19 +6,28 @@ public struct SeeRayAnalyticsOptions: Sendable {
     public let requireConsent: Bool
     public let batchSize: Int
     public let flushInterval: TimeInterval
+    public let captureNativeCrashes: Bool
+    public let appRelease: String?
+    public let crashContextURL: String?
 
     public init(
         siteId: String,
         apiOrigin: String,
         requireConsent: Bool = false,
         batchSize: Int = 10,
-        flushInterval: TimeInterval = 10
+        flushInterval: TimeInterval = 10,
+        captureNativeCrashes: Bool = false,
+        appRelease: String? = nil,
+        crashContextURL: String? = nil
     ) {
         self.siteId = siteId
         self.apiOrigin = apiOrigin
         self.requireConsent = requireConsent
         self.batchSize = batchSize
         self.flushInterval = flushInterval
+        self.captureNativeCrashes = captureNativeCrashes
+        self.appRelease = appRelease
+        self.crashContextURL = crashContextURL
     }
 }
 
@@ -26,6 +35,7 @@ public enum SeeRayAnalyticsError: Error, Equatable {
     case invalidSiteId
     case invalidAPIOrigin
     case invalidFlushInterval
+    case invalidNativeCrashConfiguration
 }
 
 public enum SeeRayConsentState: String, Sendable {
@@ -96,14 +106,32 @@ struct SeeRayTrackingEvent: Encodable, Sendable {
     let url: String
     let title: String?
     let referrer: String?
-    let visitorId: String
-    let sessionId: String
+    let visitorId: String?
+    let sessionId: String?
     let userId: String?
     let category: String?
     let action: String?
     let name: String?
     let properties: [String: SeeRayValue]?
     let context: SeeRayEventContext
+    let pendingCrashId: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId
+        case type
+        case occurredAt
+        case url
+        case title
+        case referrer
+        case visitorId
+        case sessionId
+        case userId
+        case category
+        case action
+        case name
+        case properties
+        case context
+    }
 }
 
 struct SeeRayTrackingBatch: Encodable, Sendable {

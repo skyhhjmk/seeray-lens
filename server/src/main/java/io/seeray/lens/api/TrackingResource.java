@@ -145,7 +145,7 @@ public class TrackingResource {
         value.put(
                 "action",
                 clientError
-                        ? Set.of("javascript", "unhandled_rejection", "native_android")
+                        ? Set.of("javascript", "unhandled_rejection", "native_android", "native_ios")
                                         .contains(event.action())
                                 ? event.action()
                                 : "javascript"

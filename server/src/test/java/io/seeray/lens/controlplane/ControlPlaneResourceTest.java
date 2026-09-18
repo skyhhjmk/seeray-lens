@@ -1314,9 +1314,17 @@ class ControlPlaneResourceTest {
                 + "\"message\":\"token=native-secret failed for bob@example.test\","
                 + "\"sourcePath\":\"/assets/app.js\",\"line\":1,\"column\":1,"
                 + "\"releaseId\":\"web-1\",\"platform\":\"android\",\"functionName\":\"a.b\"}}";
+        String nativeIosEvent = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"type\":\"client_error\","
+                + "\"occurredAt\":\"" + occurred.plusSeconds(3)
+                + "\",\"url\":\"https://example.com/checkout\","
+                + "\"category\":\"error\",\"action\":\"native_ios\",\"name\":\"NSException\","
+                + "\"properties\":{\"errorName\":\"NSException\","
+                + "\"message\":\"password=ios-secret failed for eve@example.test\","
+                + "\"sourcePath\":\"ios-native\",\"releaseId\":\"ios-1.2.3\","
+                + "\"platform\":\"ios\",\"functionName\":\"CheckoutController.submit\"}}";
         given().contentType("application/json")
                 .body("{\"schemaVersion\":1,\"siteId\":\"" + trackingId + "\",\"events\":[" + firstEvent + ","
-                        + secondEvent + "," + nativeEvent + "]}")
+                        + secondEvent + "," + nativeEvent + "," + nativeIosEvent + "]}")
                 .post("/api/v1/collect")
                 .then()
                 .statusCode(202);
@@ -1334,8 +1342,8 @@ class ControlPlaneResourceTest {
                     count = result.getLong(1);
                 }
             }
-        } while (count < 3 && System.currentTimeMillis() < deadline);
-        assertEquals(3, count);
+        } while (count < 4 && System.currentTimeMillis() < deadline);
+        assertEquals(4, count);
         try (var connection = dataSource.getConnection();
                 var statement = connection.prepareStatement(
                         "select page_path,page_title,referrer_path,client_visitor_id,client_session_id,event_data::text from raw_event where site_id=? and event_type='client_error' and event_data->'data'->>'platform'='web' order by page_path")) {
@@ -1388,6 +1396,26 @@ class ControlPlaneResourceTest {
                 assertFalse(result.next());
             }
         }
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select page_path,client_visitor_id,client_session_id,event_data::text "
+                                + "from raw_event where site_id=? and event_type='client_error' "
+                                + "and event_data->'data'->>'platform'='ios'")) {
+            statement.setObject(1, UUID.fromString(site));
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals("/checkout", result.getString(1));
+                assertNull(result.getString(2));
+                assertNull(result.getString(3));
+                String stored = result.getString(4);
+                assertTrue(stored.contains("NSException"));
+                assertTrue(stored.contains("\"platform\": \"ios\""));
+                assertTrue(stored.contains("CheckoutController.submit"));
+                assertFalse(stored.contains("ios-secret"));
+                assertFalse(stored.contains("eve@example.test"));
+                assertFalse(result.next());
+            }
+        }
 
         var report = given().header("Authorization", "Bearer " + owner.access())
                 .get("/api/v1/sites/" + site + "/analytics/crashes?from=" + today + "&to=" + today)
@@ -1395,8 +1423,8 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .extract()
                 .response();
-        assertEquals(3L, ((Number) report.path("occurrences")).longValue());
-        assertEquals(2, ((Number) report.path("issueCount")).intValue());
+        assertEquals(4L, ((Number) report.path("occurrences")).longValue());
+        assertEquals(3, ((Number) report.path("issueCount")).intValue());
         assertEquals("TypeError", report.path("rows[0].errorName"));
         assertEquals("/src/app.ts", report.path("rows[0].sourcePath"));
         assertEquals(1, ((Number) report.path("rows[0].line")).intValue());
@@ -1405,7 +1433,9 @@ class ControlPlaneResourceTest {
         assertEquals(2, ((Number) report.path("rows[0].affectedPages")).intValue());
         assertEquals("Chrome", report.path("rows[0].browsers"));
         assertEquals("web", report.path("rows[0].platforms"));
-        assertEquals("android", report.path("rows[1].platforms"));
+        List<String> reportPlatforms = report.jsonPath().getList("rows.platforms", String.class);
+        assertTrue(reportPlatforms.contains("android"));
+        assertTrue(reportPlatforms.contains("ios"));
         assertFalse(report.asString().contains(visitor));
         assertFalse(report.asString().contains(session));
         assertFalse(report.asString().contains("stack-secret"));
