@@ -53,7 +53,32 @@ await analytics.trackGoal(
 - Withdrawal is immediate: pending events and SDK-owned visitor/session IDs are cleared. The denial choice remains stored for that site on that device.
 - The SDK accepts HTTPS collector origins only. Event URLs must use HTTP or HTTPS; query strings and fragments are stripped before transmission, and the server checks site-domain authorization.
 - Visitor IDs are random and site-scoped. Session IDs rotate after 30 minutes without activity. Batches contain at most 10 events, the in-memory queue is bounded at 100, and failed batches are retried while the app process remains alive.
-- It does not collect advertising IDs, device models, contacts, location, screen hierarchy, navigation, crashes, or purchases. The server receives the network request and applies its normal site policy. Do not put personal data in screen names, paths, event properties, or goal names.
+- It does not collect advertising IDs, device models, contacts, location, screen hierarchy, or infer navigation. Native exception reports are separately opt-in; see below. Purchases are not tracked automatically.
 - The host app owns the privacy UI and must call `setConsent` only from the visitor’s actual choice. Review the site notice and applicable policy before enabling collection.
 
 The package has Linux SwiftPM unit coverage for payload shape, consent, withdrawal, URL minimization, retries, and session rotation. That is not an iOS Simulator or physical-device acceptance; those checks remain required before production rollout.
+
+## Optional native exception diagnostics
+
+Native diagnostics are disabled unless `captureNativeCrashes` is enabled in the SDK options, and still require an independent explicit choice through `setNativeCrashConsent(true)`. If `requireConsent` is enabled, grant ordinary analytics consent first. Withdrawal of either applicable choice deletes queued crash reports.
+
+```swift
+let analytics = try SeeRayAnalytics(
+    options: .init(
+        siteId: "srl_your_tracking_id",
+        apiOrigin: "https://analytics.example.com",
+        requireConsent: true,
+        captureNativeCrashes: true,
+        appRelease: "ios-4.2.1+88",
+        crashContextURL: "https://www.example.com/mobile/"
+    )
+)
+
+// After the visitor accepts analytics and crash diagnostics separately:
+await analytics.setConsent(granted: visitorAcceptedAnalytics)
+await analytics.setNativeCrashConsent(granted: visitorAcceptedCrashDiagnostics)
+```
+
+The SDK currently captures uncaught Objective-C `NSException`s only. It does not capture Swift `fatalError`, POSIX signals such as `SIGABRT`/`SIGSEGV`, watchdog termination, jetsam, or device-level failures. Reports contain a redacted exception name/message and one top symbol, never a full stack or visitor/session/user IDs. They are synchronously written to the app Caches directory, marked excluded from backup, and retried at the next launch while consent remains granted. The URL comes from the last tracked screen or the HTTPS `crashContextURL` fallback; configure it with an enabled site domain.
+
+This hook is process-global and delegates to the exception handler installed before SeeRay. Exception messages and symbol names can still contain application-specific sensitive text that generic redaction cannot recognize. Linux SwiftPM tests verify consent, redaction, outbox recovery, and anonymous delivery; iOS Simulator/device acceptance remains required before production use.

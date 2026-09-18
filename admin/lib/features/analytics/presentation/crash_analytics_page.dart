@@ -37,9 +37,9 @@ class CrashAnalyticsPage extends ConsumerWidget {
                 englishTitle: 'Crash analytics',
                 chineseTitle: '崩溃分析说明',
                 englishBody:
-                    'Reports opt-in browser JavaScript errors and Android native crashes grouped by a privacy-scrubbed fingerprint. Full stack traces and visitor/session identifiers are not collected.',
+                    'Reports opt-in browser JavaScript errors and separately consented Android/iOS native exceptions grouped by a privacy-scrubbed fingerprint. Full stack traces and visitor/session identifiers are not collected.',
                 chineseBody:
-                    '报告明确启用后的浏览器 JavaScript 错误和 Android 原生崩溃，并按脱敏指纹聚类。不采集完整堆栈或访客/会话标识。',
+                    '报告明确启用后的浏览器 JavaScript 错误及单独授权的 Android/iOS 原生异常，并按脱敏指纹聚类。不采集完整堆栈或访客/会话标识。',
               ),
               rangeState: range,
               onSelectRange: () =>
@@ -94,8 +94,8 @@ class _CrashReport extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   context.tr(
-                    'Find recurring browser and Android errors by sanitized source frame and affected pages.',
-                    '按脱敏来源帧和受影响页面定位重复出现的浏览器或 Android 错误。',
+                    'Find recurring browser and mobile errors by sanitized source frame and affected pages.',
+                    '按脱敏来源帧和受影响页面定位重复出现的浏览器或移动端错误。',
                   ),
                 ),
               ],
@@ -122,8 +122,8 @@ class _CrashReport extends StatelessWidget {
               Expanded(
                 child: Text(
                   context.tr(
-                    'Browser errors require data-track-errors. Android crash diagnostics require captureNativeCrashes plus a separate explicit app choice and are sent on the next launch. The server stores only redacted summaries and a top frame; it discards full stacks, titles, referrers, queries and visitor/session IDs.',
-                    '浏览器错误需显式添加 data-track-errors。Android 崩溃诊断需启用 captureNativeCrashes 并单独取得应用内明确同意，且在下次启动时发送。服务器只保存脱敏摘要和首个有效堆栈帧；完整 stack、标题、来源页、查询参数及访客/会话 ID 均不保存。',
+                    'Browser errors require data-track-errors. Android and iOS diagnostics require captureNativeCrashes plus a separate explicit app choice and are sent on the next launch. iOS currently captures uncaught Objective-C exceptions only. The server stores redacted summaries and one top frame/symbol; it discards full stacks, titles, referrers, queries and visitor/session IDs.',
+                    '浏览器错误需显式添加 data-track-errors。Android/iOS 诊断需启用 captureNativeCrashes 并单独取得应用内明确同意，且在下次启动时发送。当前 iOS 仅捕获未处理的 Objective-C 异常。服务器只保存脱敏摘要和一个首帧/符号；完整 stack、标题、来源页、查询参数及访客/会话 ID 均不保存。',
                   ),
                 ),
               ),
@@ -303,8 +303,8 @@ class _EmptyCrashes extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           context.tr(
-            'Crash tracking is optional. Enable browser errors or Android crash diagnostics only after reviewing your privacy notice and explicit consent flow.',
-            '崩溃追踪为可选功能；请先检查隐私告知及明确同意流程，再启用浏览器错误或 Android 崩溃诊断。',
+            'Crash tracking is optional. Enable browser errors or Android/iOS diagnostics only after reviewing your privacy notice and explicit consent flow.',
+            '崩溃追踪为可选功能；请先检查隐私告知及明确同意流程，再启用浏览器错误或 Android/iOS 崩溃诊断。',
           ),
           textAlign: TextAlign.center,
         ),

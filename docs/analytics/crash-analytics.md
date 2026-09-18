@@ -16,4 +16,10 @@ The first-party Android SDK can optionally capture uncaught native exceptions. T
 
 Android reports use the same site crash page and display their platform and app release. They omit full stacks and all visitor/session/user identifiers. The selected URL comes from the last tracked screen, or from `crashContextUrl` for a crash before the first screen event; both must use a host enabled in the site's domain allowlist. The existing source-map manager applies only to browser JavaScript. R8/ProGuard retrace is not yet available, so minified Android builds may show obfuscated top-frame names.
 
-Native iOS crash capture, Android R8/ProGuard mapping support, live Quarkus/Admin browser acceptance, real-device acceptance, and production acceptance remain separate work. Error messages can still contain application-specific sensitive text that generic redaction cannot recognize, so enable collection only after reviewing the site's privacy notice and consent requirements; do not enable it for applications that put secrets into error messages.
+## iOS native exceptions
+
+The Swift SDK can optionally capture uncaught Objective-C `NSException`s. This is a separate opt-in, disabled by default, requires `setNativeCrashConsent(true)`, and also respects the site's ordinary analytics consent when required. It records one top symbol and a redacted message without a full stack or visitor/session/user IDs, writes to the app Caches directory excluded from backup, then retries at next launch. The URL comes from the last tracked screen or the HTTPS fallback URL configured in the site-specific Swift setup.
+
+The process-global exception hook delegates to the previously installed handler. It does not capture Swift `fatalError`, POSIX signals, watchdog termination, jetsam, or device-level failures. Source-map symbolication is only supported for browser JavaScript; iOS dSYM upload/symbolication is not available.
+
+Android R8/ProGuard mapping support, live Quarkus/Admin browser acceptance, iOS Simulator/device and Android real-device acceptance, and production acceptance remain separate work. Error messages can still contain application-specific sensitive text that generic redaction cannot recognize, so enable collection only after reviewing the site's privacy notice and consent requirements; do not enable it for applications that put secrets into error messages.

@@ -306,6 +306,7 @@ void main() {
     expect(snippet.data, contains('data-track-errors'));
     expect(snippet.data, contains('data-require-consent="true"'));
     expect(find.textContaining('never sends stack traces'), findsOneWidget);
+    expect(find.text('Release identifier'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Android native crash diagnostics'),
       180,
@@ -314,17 +315,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Android native crash diagnostics'), findsOneWidget);
     expect(find.text('Immutable Android release ID'), findsOneWidget);
-    final androidSnippet = tester.widget<SelectableText>(
-      find.byType(SelectableText).at(1),
-    );
-    expect(androidSnippet.data, contains('captureNativeCrashes = true'));
-    expect(androidSnippet.data, contains('https://www.example.test/'));
+    expect(find.textContaining('captureNativeCrashes = true'), findsOneWidget);
+    expect(find.textContaining('https://www.example.test/'), findsWidgets);
     expect(
       find.textContaining('R8/ProGuard mapping upload is not yet supported.'),
       findsOneWidget,
     );
     expect(find.textContaining('setNativeCrashConsent(true)'), findsOneWidget);
-    expect(find.text('Release identifier'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('iOS native exception diagnostics'),
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('iOS native exception diagnostics'), findsOneWidget);
+    expect(find.text('Immutable iOS release ID'), findsOneWidget);
+    expect(find.textContaining('captureNativeCrashes: true'), findsOneWidget);
+    expect(
+      find.textContaining('crashContextURL: "https://www.example.test/"'),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is SelectableText &&
+            widget.data?.contains('await analytics.setNativeCrashConsent') ==
+                true,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Swift fatalError, POSIX signals'),
+      findsOneWidget,
+    );
     await tester.scrollUntilVisible(
       find.text('Upload a JavaScript source map'),
       180,

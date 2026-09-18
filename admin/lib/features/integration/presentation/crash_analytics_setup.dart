@@ -36,7 +36,9 @@ class _CrashAnalyticsSetupState extends ConsumerState<CrashAnalyticsSetup> {
   late final TextEditingController _releaseController;
   late final TextEditingController _bundleController;
   late final TextEditingController _androidReleaseController;
+  late final TextEditingController _iosReleaseController;
   String? _androidHost;
+  String? _iosHost;
   List<_SourceMapRow> _maps = const [];
   bool _canManage = false;
   bool _loading = true;
@@ -61,6 +63,8 @@ class _CrashAnalyticsSetupState extends ConsumerState<CrashAnalyticsSetup> {
     _bundleController = TextEditingController();
     _androidReleaseController = TextEditingController()
       ..addListener(_refreshSnippet);
+    _iosReleaseController = TextEditingController()
+      ..addListener(_refreshSnippet);
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadMaps());
   }
 
@@ -69,6 +73,7 @@ class _CrashAnalyticsSetupState extends ConsumerState<CrashAnalyticsSetup> {
     _releaseController.dispose();
     _bundleController.dispose();
     _androidReleaseController.dispose();
+    _iosReleaseController.dispose();
     super.dispose();
   }
 
@@ -237,8 +242,8 @@ class _CrashAnalyticsSetupState extends ConsumerState<CrashAnalyticsSetup> {
         const SizedBox(height: 8),
         Text(
           context.tr(
-            'Browser crash collection is off by default. Add data-track-errors only after reviewing your privacy notice and consent policy. The tracker records uncaught JavaScript exceptions and unhandled promise rejections; it ignores resource load errors. It never sends stack traces, document titles, referrers, query strings, or visitor/session IDs. Messages are redacted again on the server, source/page paths have common IDs removed. Android native diagnostics are configured separately below; iOS native capture is not available. Do not enable browser crash collection on sensitive pages: data-seeray-no-track does not suppress global JavaScript error hooks, and applications can put secrets into error messages.',
-            '浏览器崩溃采集默认关闭。请先检查隐私告知和同意策略，再添加 data-track-errors。追踪器记录未捕获的 JavaScript 异常和未处理的 Promise 拒绝，忽略资源加载错误；不会发送 stack、页面标题、来源页、查询参数或访客/会话 ID。服务器会再次脱敏错误消息，并从页面/脚本路径中移除常见标识。Android 原生诊断在下方单独配置；目前不支持 iOS 原生捕获。敏感页面不要启用浏览器崩溃采集：data-seeray-no-track 不会屏蔽全局 JavaScript 错误钩子，而且应用可能把机密放入错误消息。',
+            'Browser crash collection is off by default. Add data-track-errors only after reviewing your privacy notice and consent policy. The tracker records uncaught JavaScript exceptions and unhandled promise rejections; it ignores resource load errors. It never sends stack traces, document titles, referrers, query strings, or visitor/session IDs. Messages are redacted again on the server, source/page paths have common IDs removed. Android and iOS native exception diagnostics are configured separately below. Do not enable browser crash collection on sensitive pages: data-seeray-no-track does not suppress global JavaScript error hooks, and applications can put secrets into error messages.',
+            '浏览器崩溃采集默认关闭。请先检查隐私告知和同意策略，再添加 data-track-errors。追踪器记录未捕获的 JavaScript 异常和未处理的 Promise 拒绝，忽略资源加载错误；不会发送 stack、页面标题、来源页、查询参数或访客/会话 ID。服务器会再次脱敏错误消息，并从页面/脚本路径中移除常见标识。Android 和 iOS 原生异常诊断在下方单独配置。敏感页面不要启用浏览器崩溃采集：data-seeray-no-track 不会屏蔽全局 JavaScript 错误钩子，而且应用可能把机密放入错误消息。',
           ),
         ),
         const SizedBox(height: 14),
@@ -285,6 +290,8 @@ class _CrashAnalyticsSetupState extends ConsumerState<CrashAnalyticsSetup> {
         ),
         const SizedBox(height: 12),
         _androidCrashSetupCard(context, domains),
+        const SizedBox(height: 12),
+        _iosCrashSetupCard(context, domains),
         const SizedBox(height: 12),
         if (_canManage)
           Card(
@@ -584,6 +591,175 @@ class _CrashAnalyticsSetupState extends ConsumerState<CrashAnalyticsSetup> {
 
 // After your separate, explicit crash-diagnostics choice:
 analytics.setNativeCrashConsent(granted = visitorAcceptedCrashDiagnostics)''';
+  }
+
+  Widget _iosCrashSetupCard(
+    BuildContext context,
+    AsyncValue<List<AllowedDomain>> domains,
+  ) => Card(
+    elevation: 0,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            context.tr('iOS native exception diagnostics', 'iOS 原生异常诊断'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            context.tr(
+              'This is a separate opt-in, off by default. It captures uncaught Objective-C exceptions only: Swift fatalError, POSIX signals, watchdog termination and OS kills are not captured. One redacted top symbol and a bounded message are written to the app Caches directory (excluded from backup) and sent on next launch. It forwards exceptions to the handler that was installed before SeeRay and never sends visitor/session IDs or a full stack.',
+              '此功能需单独启用，默认关闭。当前只捕获未处理的 Objective-C 异常，不捕获 Swift fatalError、POSIX 信号、watchdog 终止或系统强制结束。脱敏后的首个有效符号和有限长度错误摘要写入应用 Caches 目录（排除备份），并在下次启动发送。SDK 会继续调用原异常处理器，不发送访客/会话 ID 或完整堆栈。',
+            ),
+          ),
+          const SizedBox(height: 12),
+          domains.when(
+            loading: () => const LinearProgressIndicator(),
+            error: (error, stack) => Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.tr(
+                      'Could not load allowed domains for crash context.',
+                      '无法加载崩溃报告所需的允许域名。',
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      ref.invalidate(domainsProvider(widget.siteId)),
+                  child: Text(context.tr('Retry', '重试')),
+                ),
+              ],
+            ),
+            data: (items) {
+              if (Uri.tryParse(widget.apiOrigin)?.scheme != 'https') {
+                return Text(
+                  context.tr(
+                    'The iOS SDK requires an HTTPS analytics endpoint. Enable HTTPS before generating crash setup code.',
+                    'iOS SDK 要求 HTTPS 分析端点；启用 HTTPS 后才能生成崩溃接入代码。',
+                  ),
+                );
+              }
+              final enabled = items.where((domain) => domain.enabled).toList();
+              final selected = enabled.any((domain) => domain.host == _iosHost)
+                  ? _iosHost
+                  : enabled.firstOrNull?.host;
+              if (enabled.isEmpty) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.tr(
+                        'Add and enable an HTTPS site domain before generating iOS crash setup code.',
+                        '请先添加并启用 HTTPS 站点域名，再生成 iOS 崩溃接入代码。',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          context.go('/sites/${widget.siteId}/domains'),
+                      icon: const Icon(Icons.domain_add_outlined),
+                      label: Text(
+                        context.tr('Manage allowed domains', '管理允许的域名'),
+                      ),
+                    ),
+                  ],
+                );
+              }
+              final snippet = _iosCrashSnippet(selected!);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: selected,
+                    decoration: InputDecoration(
+                      labelText: context.tr(
+                        'Allowed app/site domain',
+                        '允许的应用/站点域名',
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: enabled
+                        .map(
+                          (domain) => DropdownMenuItem(
+                            value: domain.host,
+                            child: Text(domain.host),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() => _iosHost = value),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _iosReleaseController,
+                    decoration: InputDecoration(
+                      labelText: context.tr(
+                        'Immutable iOS release ID',
+                        '不可变的 iOS 版本标识',
+                      ),
+                      hintText: 'ios-4.2.1+88',
+                      helperText: context.tr(
+                        'Use the same value for every installation of this app build.',
+                        '同一应用构建的所有安装都使用相同标识。',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SelectableText(
+                    snippet,
+                    style: const TextStyle(fontFamily: 'monospace'),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () =>
+                          Clipboard.setData(ClipboardData(text: snippet)),
+                      icon: const Icon(Icons.copy),
+                      label: Text(context.tr('Copy iOS setup', '复制 iOS 接入代码')),
+                    ),
+                  ),
+                  Text(
+                    context.tr(
+                      'After the visitor accepts crash diagnostics in your app’s own consent UI, call await analytics.setNativeCrashConsent(granted: true). If this site requires analytics consent, grant it first. On the next launch, queued reports are retried automatically while both consent choices remain granted. Track a screen with this selected allowed HTTPS domain so reports have the right page context.',
+                      '用户在应用自己的同意界面接受崩溃诊断后，再调用 await analytics.setNativeCrashConsent(granted: true)。如果站点要求普通分析同意，请先授予。只要两项同意仍有效，待发送报告会在下次启动自动重试。请用所选允许的 HTTPS 域名追踪至少一个页面，以便报告携带正确页面上下文。',
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+
+  String _iosCrashSnippet(String host) {
+    final release = _iosReleaseController.text.trim();
+    final releaseValue =
+        RegExp(r'^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$').hasMatch(release)
+        ? release
+        : 'ios-app-version';
+    return '''let analytics = try SeeRayAnalytics(
+    options: .init(
+        siteId: "${widget.trackingId}",
+        apiOrigin: "${widget.apiOrigin}",
+        requireConsent: ${widget.requireConsent},
+        captureNativeCrashes: true,
+        appRelease: "$releaseValue",
+        crashContextURL: "https://$host/"
+    )
+)
+
+// After your separate, explicit choices; apply analytics consent first when required:
+Task {
+    if (${widget.requireConsent}) {
+        await analytics.setConsent(granted: visitorAcceptedAnalytics)
+    }
+    await analytics.setNativeCrashConsent(granted: visitorAcceptedCrashDiagnostics)
+}''';
   }
 }
 

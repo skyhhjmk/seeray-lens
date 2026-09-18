@@ -25,7 +25,7 @@ void main() {
     expect(find.text('View setup instructions'), findsOneWidget);
   });
 
-  testWidgets('separates Android native errors from browser errors', (
+  testWidgets('shows Android and iOS native issues alongside browser errors', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 1000);
@@ -52,6 +52,21 @@ void main() {
                   'firstSeen': '2026-09-19T01:00:00Z',
                   'lastSeen': '2026-09-19T02:00:00Z',
                 },
+                {
+                  'fingerprint': 'fedcba9876543210',
+                  'errorName': 'NSException',
+                  'message': 'failed safely',
+                  'sourcePath': 'ios-native',
+                  'line': null,
+                  'column': null,
+                  'functionName': 'CheckoutController.submit',
+                  'occurrences': 2,
+                  'affectedPages': 1,
+                  'browsers': 'Other',
+                  'platforms': 'ios',
+                  'firstSeen': '2026-09-19T01:00:00Z',
+                  'lastSeen': '2026-09-19T02:00:00Z',
+                },
               ],
             ),
           ),
@@ -65,7 +80,9 @@ void main() {
 
     expect(find.text('Platforms'), findsOneWidget);
     expect(find.text('android'), findsOneWidget);
+    expect(find.text('ios'), findsOneWidget);
     expect(find.text('IllegalStateException'), findsOneWidget);
+    expect(find.text('NSException'), findsOneWidget);
   });
 }
 

@@ -74,9 +74,9 @@ class IntegrationPage extends ConsumerWidget {
                   englishTitle: 'Tracking integration',
                   chineseTitle: '追踪集成说明',
                   englishBody:
-                      'Use the JavaScript snippet for websites and the native SDK guide for Android apps. Repeated web snippets for the same site are de-duplicated by the tracker. The no-JavaScript image fallback belongs inside noscript.',
+                      'Use the JavaScript snippet for websites and the native SDK guides for Android and iOS apps. Repeated web snippets for the same site are de-duplicated by the tracker. The no-JavaScript image fallback belongs inside noscript.',
                   chineseBody:
-                      '网站使用 JavaScript 代码，Android 应用使用原生 SDK 向导。同一站点重复嵌入的网页追踪器会自动去重。无 JavaScript 图片回退必须放在 noscript 中。',
+                      '网站使用 JavaScript 代码，Android 和 iOS 应用使用对应的原生 SDK 向导。同一站点重复嵌入的网页追踪器会自动去重。无 JavaScript 图片回退必须放在 noscript 中。',
                 ),
               ),
         body: Column(
