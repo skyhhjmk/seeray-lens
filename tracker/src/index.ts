@@ -765,8 +765,11 @@ export class Tracker {
         'input[data-seeray-search-term],input[type="search"],input[name="q"],input[name="query"],input[name="search"]',
       );
       if (!input) return;
+      const rawResultsCount = form.getAttribute('data-seeray-search-results-count');
+      const parsedResultsCount = rawResultsCount === null ? undefined : Number(rawResultsCount);
       this.trackSiteSearch(input.value, {
         category: form.getAttribute('data-seeray-search-category') ?? undefined,
+        resultsCount: Number.isSafeInteger(parsedResultsCount) ? parsedResultsCount : undefined,
       });
     }, true);
   }
