@@ -71,28 +71,96 @@ class SitesPage extends ConsumerWidget {
                   ),
                 ),
               )
-            : ListView(
-                padding: const EdgeInsets.all(16),
-                children: items
-                    .map(
-                      (site) => Card(
-                        child: ListTile(
-                          title: Text(site.name),
-                          subtitle: Text(site.trackingId),
-                          trailing: Icon(
-                            site.trackingEnabled
-                                ? Icons.toggle_on
-                                : Icons.toggle_off,
-                            color: site.trackingEnabled
-                                ? Theme.of(context).colorScheme.primary
-                                : null,
+            : LayoutBuilder(
+                builder: (context, _) => GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 460,
+                    mainAxisExtent: 132,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                  ),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) {
+                    final site = items[index];
+                    final accent = Theme.of(context).colorScheme.primary;
+                    return Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => context.go('/sites/${site.id}/dashboard'),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      site.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleMedium,
+                                    ),
+                                  ),
+                                  Icon(
+                                    site.trackingEnabled
+                                        ? Icons.toggle_on
+                                        : Icons.toggle_off,
+                                    color: site.trackingEnabled ? accent : null,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                site.trackingId,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              const Spacer(),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: [
+                                  Chip(
+                                    visualDensity: VisualDensity.compact,
+                                    label: Text(site.timezone),
+                                  ),
+                                  Chip(
+                                    visualDensity: VisualDensity.compact,
+                                    avatar: Icon(
+                                      site.requireConsent
+                                          ? Icons.lock_outline
+                                          : Icons.lock_open_outlined,
+                                      size: 15,
+                                    ),
+                                    label: Text(
+                                      site.requireConsent
+                                          ? context.tr('Consent', '需同意')
+                                          : context.tr('Open', '直接采集'),
+                                    ),
+                                  ),
+                                  Text(
+                                    context.tr(
+                                      'Raw ${site.rawRetentionDays}d · Agg ${site.aggregateRetentionDays}d',
+                                      '原始 ${site.rawRetentionDays}天 · 汇总 ${site.aggregateRetentionDays}天',
+                                    ),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.labelSmall,
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
-                          onTap: () =>
-                              context.go('/sites/${site.id}/dashboard'),
                         ),
                       ),
-                    )
-                    .toList(),
+                    );
+                  },
+                ),
               ),
       ),
     );

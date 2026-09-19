@@ -47,6 +47,18 @@ class SiteTabShell extends ConsumerWidget {
         ? SiteTopTab.locations
         : path.contains('/visitors/') || path.endsWith('/visitors')
         ? SiteTopTab.visitors
+        : path.endsWith('/acquisition/attribution')
+        ? SiteTopTab.attribution
+        : path.endsWith('/acquisition/campaign-costs')
+        ? SiteTopTab.campaignCosts
+        : path.endsWith('/acquisition/offline-conversions')
+        ? SiteTopTab.offlineConversions
+        : path.endsWith('/acquisition/search-console')
+        ? SiteTopTab.searchConsole
+        : path.endsWith('/acquisition/bing-webmaster')
+        ? SiteTopTab.bingWebmaster
+        : path.endsWith('/acquisition/yandex-webmaster')
+        ? SiteTopTab.yandexWebmaster
         : path.contains('/acquisition')
         ? SiteTopTab.acquisition
         : path.endsWith('/behaviour/forms')
