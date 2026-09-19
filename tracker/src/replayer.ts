@@ -324,7 +324,10 @@ class SeeRayReplayerElement extends HTMLElement {
     scrollHint.style.cssText = 'margin-right:auto;color:#555';
     const play = (): void => {
       const current = replayer.getCurrentTime();
-      replayer.play(current >= duration ? 0 : current);
+      const offset = Number.isFinite(current) && current > 0 && current < duration
+        ? current
+        : 0;
+      replayer.play(offset);
     };
     replayer.on(ReplayerEvents.Start, () => {
       if (this.progressTimer !== undefined) window.clearInterval(this.progressTimer);
