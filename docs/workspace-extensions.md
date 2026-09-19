@@ -10,4 +10,4 @@ The manual test uses `POST` with `Content-Type: application/json`, `X-SeeRay-Ext
 
 The secret is returned only in the create/rotate response and is not included in list or update responses. Configure `SEERAY_SECRET_ENCRYPTION_KEY` with a stable base64-encoded 32-byte key before creating extensions.
 
-This is the lifecycle and analytics webhook layer for the future executable SDK/runtime hook layer. Full third-party runtime hooks, delivery metrics/alerting, and production-scale queue observability remain planned work.
+The browser-side client plugin API is documented in [tracker-plugin-sdk.md](tracker-plugin-sdk.md). It provides local runtime hooks without allowing the server to execute third-party code. Full third-party server runtime hooks, delivery metrics/alerting, and production-scale queue observability remain planned work.

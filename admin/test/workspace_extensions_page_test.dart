@@ -29,6 +29,10 @@ void main() {
       expect(find.text('CRM sync  v1.0.0'), findsOneWidget);
       expect(find.text('Enabled'), findsOneWidget);
       expect(find.text('Analytics events / 分析事件'), findsOneWidget);
+      expect(find.text('Client plugin SDK'), findsOneWidget);
+      await tester.tap(find.text('Client plugin SDK'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining("tracker.use"), findsOneWidget);
       await tester.tap(find.text('Add extension'));
       await tester.pumpAndSettle();
       final fields = find.byType(TextFormField);

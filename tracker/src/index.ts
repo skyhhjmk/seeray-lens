@@ -1,13 +1,49 @@
 import { onCLS, onINP, onLCP, type Metric } from 'web-vitals';
 
-export const TRACKER_VERSION = '0.8.0';
+export const TRACKER_VERSION = '0.9.0';
 
 export interface HeatmapOptions { enabled?: boolean; sampleRate?: number; navigationMode?: 'auto' | 'manual'; layoutVersion?: string; }
 export interface PageReadyOptions { url?: string; layoutVersion?: string; }
 export interface ScrollContainerOptions { id: string; element: HTMLElement; }
 export interface TagManagerPreviewOptions { sessionId: string; token: string; }
-export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; trackErrors?: boolean; crashRelease?: string; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; }
 export interface TrackOptions { url?: string; title?: string; referrer?: string; durationMs?: number; properties?: Record<string, unknown>; category?: string; action?: string; name?: string; anonymous?: boolean; }
+export type TrackerHook = 'track' | 'navigation' | 'consent';
+export interface TrackerEvent {
+  readonly eventId: string;
+  readonly type: string;
+  readonly occurredAt: string;
+  readonly url?: string;
+  readonly title?: string;
+  readonly referrer?: string;
+  readonly durationMs?: number;
+  readonly properties?: Readonly<Record<string, unknown>>;
+  readonly category?: string;
+  readonly action?: string;
+  readonly name?: string;
+}
+export interface TrackerNavigationEvent {
+  readonly phase: 'begin' | 'cancel' | 'ready';
+  readonly url?: string;
+}
+export interface TrackerConsentEvent {
+  readonly state: 'granted' | 'denied';
+  readonly granted: boolean;
+}
+export type TrackerPluginPayload = TrackerEvent | TrackerNavigationEvent | TrackerConsentEvent;
+export type TrackerPluginListener = (payload: TrackerPluginPayload) => void;
+export interface TrackerPluginContext {
+  readonly siteId: string;
+  readonly trackerVersion: string;
+  on(hook: TrackerHook, listener: TrackerPluginListener): () => void;
+  track(type: string, options?: TrackOptions): void;
+  getConsentState(): 'granted' | 'denied' | 'unknown';
+}
+export interface TrackerPlugin {
+  readonly name: string;
+  readonly version?: string;
+  setup(context: TrackerPluginContext): void | (() => void);
+}
+export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; trackErrors?: boolean; crashRelease?: string; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; plugins?: TrackerPlugin[]; }
 export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
 export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
 interface ClientContext { browser: string; browserVersion?: string; operatingSystem: string; operatingSystemVersion?: string; deviceType: string; language?: string; screenWidth?: number; screenHeight?: number; viewportWidth?: number; viewportHeight?: number; pixelRatio?: number; }
@@ -147,6 +183,8 @@ export class Tracker {
   private pageOverlayData?: PageOverlayData;
   private pageOverlayNavigationInstalled = false;
   private readyPromise: Promise<void> = Promise.resolve();
+  private readonly pluginListeners = new Map<TrackerHook, Set<TrackerPluginListener>>();
+  private readonly pluginCleanups = new Map<string, () => void>();
 
   constructor(private readonly options: TrackerOptions) {
     const apiBase = options.apiOrigin ?? options.endpoint;
@@ -166,6 +204,7 @@ export class Tracker {
     this.activateCollectionListeners();
     this.installPrivacyPreferencesBridge();
     this.readyPromise = this.loadConfigured();
+    for (const plugin of options.plugins ?? []) this.use(plugin);
   }
   private installPrivacyPreferencesBridge(): void {
     globalThis.addEventListener?.('message', (event: MessageEvent) => {
@@ -232,9 +271,52 @@ export class Tracker {
       this.activateCollectionListeners();
       this.readyPromise = this.loadConfigured();
     }
+    this.emitPlugin('consent', { state, granted });
   }
   optOut(): void { this.setConsent(false); }
   ready(): Promise<void> { return this.readyPromise; }
+  use(plugin: TrackerPlugin): () => void {
+    if (!plugin || !/^[a-z][a-z0-9._-]{1,63}$/.test(plugin.name)) {
+      throw new TypeError('Tracker plugin names must use 2-64 lowercase characters');
+    }
+    const previous = this.pluginCleanups.get(plugin.name);
+    if (previous) return previous;
+    const registrations = new Set<() => void>();
+    const context: TrackerPluginContext = {
+      siteId: this.options.siteId,
+      trackerVersion: TRACKER_VERSION,
+      on: (hook, listener) => {
+        if (typeof listener !== 'function') return () => undefined;
+        const listeners = this.pluginListeners.get(hook) ?? new Set<TrackerPluginListener>();
+        listeners.add(listener);
+        this.pluginListeners.set(hook, listeners);
+        const remove = (): void => { listeners.delete(listener); };
+        registrations.add(remove);
+        return remove;
+      },
+      track: (type, options) => this.track(type, options),
+      getConsentState: () => this.getConsentState(),
+    };
+    let setupCleanup: void | (() => void);
+    try {
+      setupCleanup = plugin.setup(context);
+    } catch {
+      setupCleanup = undefined;
+    }
+    const dispose = (): void => {
+      if (this.pluginCleanups.get(plugin.name) !== dispose) return;
+      for (const remove of registrations) remove();
+      try { setupCleanup?.(); } catch { /* A plugin cleanup must not break tracking. */ }
+      this.pluginCleanups.delete(plugin.name);
+    };
+    this.pluginCleanups.set(plugin.name, dispose);
+    return dispose;
+  }
+  private emitPlugin(hook: TrackerHook, payload: TrackerPluginPayload): void {
+    for (const listener of this.pluginListeners.get(hook) ?? []) {
+      try { listener(payload); } catch { /* A plugin must never interrupt collection. */ }
+    }
+  }
   assignExperiment(experiment: string, variations?: string[]): string | undefined { const name = experiment.trim(); const configured = name ? this.experimentDefinitions.get(name) : undefined; const choices = (variations?.length ? variations : configured?.variants ?? []).filter(value => value.trim()); if (!this.collectionAllowed() || !name || !choices.length || this.options.experiments && !configured || configured && !this.matchesExperimentTarget(configured.targeting)) return undefined; if (configured?.allocationGroup && !this.matchesExperimentLayer(name, configured.allocationGroup)) return undefined; const key = `seeray:${this.options.siteId}:experiment:${name}`; let selected: string | null = null; try { selected = globalThis.localStorage?.getItem(key) ?? null; if (!selected || !choices.includes(selected)) { selected = choices[Math.floor(Math.random() * choices.length)]; globalThis.localStorage?.setItem(key, selected); } } catch { selected = choices[Math.floor(Math.random() * choices.length)]; } this.track('experiment_exposure', { category: 'experiment', action: name, name: selected }); return selected; }
   trackPageView(options: TrackOptions = {}): void { if (!this.collectionAllowed() || this.pageViewRecorded) return; this.pageViewRecorded = true; const durationMs = this.currentPageStartedAt === undefined ? options.durationMs : Math.max(0, Date.now() - this.currentPageStartedAt); this.currentPageStartedAt = Date.now(); this.track('page_view', { ...options, durationMs }); this.fireTagTriggers({ event: 'page_view', ...options }); }
   trackGoal(name: string, options: Omit<TrackOptions, 'name'> = {}): void { if (name.trim()) this.track('goal', { ...options, name: name.trim() }); }
@@ -573,12 +655,48 @@ export class Tracker {
     });
   }
   push(data: DataLayerEvent): void { if (!data?.event) return; this.track(data.event, { url: data.url, title: data.title, referrer: data.referrer, category: data.eventCategory, action: data.eventAction, name: data.eventName, properties: data.properties }); this.fireTagTriggers(data); }
-  track(type: string, options: TrackOptions = {}): void { if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return; this.queue.push({ eventId: uuid(), type, occurredAt: new Date().toISOString(), url: options.url ?? globalThis.location?.href, title: options.title === null ? undefined : options.title ?? globalThis.document?.title, referrer: options.referrer === null ? undefined : options.referrer ?? globalThis.document?.referrer, durationMs: options.durationMs, properties: options.properties, category: options.category, action: options.action, name: options.name, visitorId: options.anonymous ? undefined : this.visitorId, sessionId: options.anonymous ? undefined : this.sessionId, userId: options.anonymous ? undefined : this.userId, context: clientContext() }); if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule(); }
+  track(type: string, options: TrackOptions = {}): void {
+    if (this.options.tagManagerPreview || !this.collectionAllowed() || !type || type.length > 64) return;
+    const eventId = uuid();
+    const occurredAt = new Date().toISOString();
+    const event = {
+      eventId,
+      type,
+      occurredAt,
+      url: options.url ?? globalThis.location?.href,
+      title: options.title === null ? undefined : options.title ?? globalThis.document?.title,
+      referrer: options.referrer === null ? undefined : options.referrer ?? globalThis.document?.referrer,
+      durationMs: options.durationMs,
+      properties: options.properties,
+      category: options.category,
+      action: options.action,
+      name: options.name,
+      visitorId: options.anonymous ? undefined : this.visitorId,
+      sessionId: options.anonymous ? undefined : this.sessionId,
+      userId: options.anonymous ? undefined : this.userId,
+      context: clientContext(),
+    };
+    this.queue.push(event);
+    this.emitPlugin('track', {
+      eventId,
+      type,
+      occurredAt,
+      url: event.url,
+      title: event.title,
+      referrer: event.referrer,
+      durationMs: event.durationMs,
+      properties: event.properties ? { ...event.properties } : undefined,
+      category: event.category,
+      action: event.action,
+      name: event.name,
+    });
+    if (this.queue.length >= this.maxBatchSize) void this.flush(); else this.schedule();
+  }
   async flush(unload = false): Promise<void> { if (this.timer) clearTimeout(this.timer); this.timer = undefined; if (!this.queue.length || !this.collectionAllowed()) return; const events = this.queue.splice(0, this.maxBatchSize); const body = JSON.stringify({ schemaVersion: 1, siteId: this.options.siteId, sentAt: new Date().toISOString(), events }); if (unload && globalThis.navigator?.sendBeacon && globalThis.navigator.sendBeacon(this.endpoint, new Blob([body], { type: 'application/json' }))) return; try { const response = await fetch(this.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: unload }); if (!response.ok) throw new Error(`collector returned ${response.status}`); } catch { this.queue.unshift(...events); this.schedule(); } }
 
-  beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); this.formViewObserver?.disconnect(); } this.pageViewRecorded = false; }
-  cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); this.refreshContentTracking(true); this.refreshFormTracking(true); }
-  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); this.refreshContentTracking(true); this.refreshFormTracking(true); this.refreshMediaTracking(true); } if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
+  beginNavigation(): void { if (!this.heatmapNavigating) { this.heatmapNavigating = true; void this.flushHeatmap(); this.stopRecorder(); this.contentObserver?.disconnect(); this.formViewObserver?.disconnect(); } this.pageViewRecorded = false; this.emitPlugin('navigation', { phase: 'begin', url: globalThis.location?.href }); }
+  cancelNavigation(): void { if (!this.heatmapNavigating) return; this.heatmapNavigating = false; this.navigationSerial++; this.pageViewRecorded = this.currentPageStartedAt !== undefined; this.refreshHeatmapLayout(); this.refreshContentTracking(true); this.refreshFormTracking(true); this.emitPlugin('navigation', { phase: 'cancel', url: globalThis.location?.href }); }
+  pageReady(options: PageReadyOptions = {}): void { const newLifecycle = this.heatmapNavigating || this.currentPageStartedAt === undefined; this.heatmapNavigating = false; if (newLifecycle) { this.pageViewRecorded = false; this.trackPageView({ url: options.url }); this.refreshContentTracking(true); this.refreshFormTracking(true); this.refreshMediaTracking(true); } this.emitPlugin('navigation', { phase: 'ready', url: options.url ?? globalThis.location?.href }); if (!this.captureEnabled()) return; if (!newLifecycle && this.heatmapInstance) { this.refreshHeatmapLayout(); return; } this.stopRecorder(); this.heatmapInstance = uuid(); this.heatmapUrl = options.url ?? globalThis.location?.href ?? ''; this.heatmapLayoutVersion = options.layoutVersion ?? this.options.heatmap?.layoutVersion ?? 'unversioned'; this.heatmapSelected = !!this.heatmapConfig?.enabled && Math.random() * 100 < this.heatmapConfig.sampleRate; this.recordingSelected = !!this.heatmapConfig?.recordingEnabled && Math.random() * 100 < this.heatmapConfig.recordingSampleRate; this.moveCount = this.clickCount = this.dropped = 0; this.moveTruncated = this.clickTruncated = false; this.scrollBins.clear(); this.layoutSegments.clear(); if (this.heatmapSelected) { this.installHeatmapListeners(); this.captureStart(true); this.observeLayouts(); } if ((this.heatmapSelected && this.heatmapConfig?.autoSnapshotEnabled) || this.recordingSelected) void this.startRecorder(); }
   registerScrollContainer(options: ScrollContainerOptions): () => void { if (!options.id.trim() || this.containers.has(options.id)) return () => undefined; const listener = () => this.recordScroll(options.id); options.element.addEventListener('scroll', listener, { passive: true }); this.containers.set(options.id, { element: options.element, remove: () => options.element.removeEventListener('scroll', listener) }); this.resizeObserver?.observe(options.element); if (this.heatmapInstance && this.heatmapSelected) this.captureTargetStart(options.id, options.element, true); return () => { const entry = this.containers.get(options.id); entry?.remove(); this.resizeObserver?.unobserve(options.element); this.containers.delete(options.id); this.scrollBins.delete(options.id); this.lastScroll.delete(options.id); this.layoutSegments.delete(options.id); }; }
   refreshHeatmapLayout(): void { if (!this.heatmapInstance || !this.heatmapSelected) return; if (this.layoutTimer) clearTimeout(this.layoutTimer); this.layoutTimer = setTimeout(() => this.captureStart(), 200); }
   private collectionAllowed(): boolean { return !doNotTrack() && this.hasConsent(); }
@@ -1214,6 +1332,10 @@ export const SeeRay = {
     const tracker = new Tracker(options);
     trackers.set(options.siteId, tracker);
     return tracker;
+  },
+  use(plugin: TrackerPlugin): () => void {
+    const removers = [...trackers.values()].map(tracker => tracker.use(plugin));
+    return () => removers.forEach(remove => remove());
   },
   ready(): Promise<void> { return Promise.all([...trackers.values()].map(t => t.ready())).then(() => undefined); },
   trackPageView(options?: TrackOptions): void { trackers.forEach(t => t.trackPageView(options)); },

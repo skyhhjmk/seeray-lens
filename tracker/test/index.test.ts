@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SeeRay, TRACKER_VERSION, Tracker } from '../src/index.js';
+import { SeeRay, TRACKER_VERSION, Tracker, type TrackerPlugin } from '../src/index.js';
 
 const storageStub = (values: Map<string, string>) => ({
   get length(): number { return values.size; },
@@ -11,7 +11,46 @@ const storageStub = (values: Map<string, string>) => ({
 
 describe('tracker package', () => {
   it('exposes the tracker version', () => {
-    expect(TRACKER_VERSION).toBe('0.8.0');
+    expect(TRACKER_VERSION).toBe('0.9.0');
+  });
+
+  it('supports safe client plugins with track, consent and navigation hooks', async () => {
+    vi.stubGlobal('navigator', { doNotTrack: '0' });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    vi.stubGlobal('fetch', fetch);
+    const seen: string[] = [];
+    const plugin: TrackerPlugin = {
+      name: 'checkout.audit',
+      version: '1.0.0',
+      setup(context) {
+        expect(context.siteId).toBe('srl_plugin');
+        expect(context.trackerVersion).toBe('0.9.0');
+        const removeTrack = context.on('track', event => {
+          if ('type' in event) seen.push(`track:${event.type}`);
+          expect(event).not.toHaveProperty('visitorId');
+          expect(event).not.toHaveProperty('sessionId');
+        });
+        context.on('consent', event => seen.push(`consent:${event.granted}`));
+        context.on('navigation', event => seen.push(`navigation:${event.phase}`));
+        return removeTrack;
+      },
+    };
+    const tracker = new Tracker({ siteId: 'srl_plugin', plugins: [plugin] });
+    tracker.setConsent(true);
+    tracker.beginNavigation();
+    tracker.pageReady({ url: 'https://shop.example.test/checkout' });
+    tracker.track('purchase', { properties: { orderTotal: 42 } });
+    await tracker.flush();
+    expect(seen).toEqual(expect.arrayContaining([
+      'consent:true',
+      'navigation:begin',
+      'navigation:ready',
+      'track:page_view',
+      'track:purchase',
+    ]));
+    tracker.use({ name: 'temporary', setup: context => context.on('track', () => seen.push('temporary')) });
+    tracker.track('after-plugin');
+    expect(seen).toContain('temporary');
   });
 
   it('strips the short-lived overlay capability from the page URL before requesting its data', () => {

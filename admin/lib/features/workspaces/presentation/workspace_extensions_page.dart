@@ -24,6 +24,20 @@ class _WorkspaceExtensionsPageState
     'analytics.page_view': 'Page views / 页面浏览',
     'diagnostics.alert': 'Diagnostic alerts / 诊断告警',
   };
+  static const _pluginSnippet = r'''import { init } from '@seeray/lens-tracker';
+
+const tracker = init({ siteId: 'YOUR_SITE_ID' });
+tracker.use({
+  name: 'checkout.audit',
+  version: '1.0.0',
+  setup(context) {
+    return context.on('track', (event) => {
+      if (event.type === 'purchase') {
+        console.info('Purchase observed', event.name);
+      }
+    });
+  },
+});''';
 
   List<Map<String, dynamic>> _extensions = const [];
   bool _loading = true;
@@ -135,6 +149,8 @@ class _WorkspaceExtensionsPageState
           ),
         ),
         const SizedBox(height: 16),
+        _pluginSdkCard(context),
+        const SizedBox(height: 16),
         if (_extensions.isEmpty)
           Card(
             child: Padding(
@@ -151,6 +167,41 @@ class _WorkspaceExtensionsPageState
       ],
     );
   }
+
+  Widget _pluginSdkCard(BuildContext context) => Card(
+    child: ExpansionTile(
+      leading: const Icon(Icons.code_outlined),
+      title: Text(context.tr('Client plugin SDK', '客户端插件 SDK')),
+      subtitle: Text(
+        context.tr(
+          'Install a local plugin with track, consent and navigation hooks. Plugin code is never downloaded or executed by SeeRay.',
+          '在客户端注册本地插件，使用采集、同意和导航钩子。SeeRay 不会下载或执行插件代码。',
+        ),
+      ),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            context.tr(
+              'The SDK exposes privacy-safe event metadata only; visitor and session identifiers are not passed to plugin hooks.',
+              'SDK 只暴露隐私安全的事件元数据；插件钩子不会收到访客和会话标识。',
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const SelectableText(_pluginSnippet),
+        ),
+      ],
+    ),
+  );
 
   Widget _extensionCard(BuildContext context, Map<String, dynamic> extension) {
     final status = extension['status'] as String? ?? 'disabled';

@@ -1,6 +1,6 @@
 {
   "name": "@seeray/lens-tracker",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "description": "Lightweight, privacy-first browser tracker for SeeRay Lens.",
   "type": "module",
   "main": "./dist/index.global.js",
