@@ -5,6 +5,8 @@ import io.seeray.lens.application.WorkspaceAccess;
 import io.seeray.lens.domain.site.Site;
 import io.seeray.lens.domain.site.SiteAllowedDomain;
 import io.seeray.lens.domain.workspace.WorkspaceRole;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -14,6 +16,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /** Read-only, workspace-scoped checks that turn operational failures into actionable admin work. */
 @Authenticated
@@ -21,6 +24,12 @@ import java.util.UUID;
 @Produces(MediaType.APPLICATION_JSON)
 public class WorkspaceDiagnosticsResource {
     private final WorkspaceAccess access;
+
+    @Inject
+    EntityManager entityManager;
+
+    @ConfigProperty(name = "seeray.app.release-version", defaultValue = "development")
+    String releaseVersion;
 
     public WorkspaceDiagnosticsResource(WorkspaceAccess access) {
         this.access = access;
@@ -117,6 +126,8 @@ public class WorkspaceDiagnosticsResource {
                         ? null
                         : "Edit retention settings so raw data is positive and does not outlive aggregate retention."));
 
+        checks.add(releaseCheck());
+
         String overall = checks.stream().anyMatch(check -> "error".equals(check.status))
                 ? "error"
                 : checks.stream().anyMatch(check -> "warning".equals(check.status)) ? "warning" : "pass";
@@ -129,6 +140,27 @@ public class WorkspaceDiagnosticsResource {
                 "pass",
                 "Database query succeeded; " + count + " site" + (count == 1 ? "" : "s")
                         + " are visible to the control plane.");
+    }
+
+    private CheckView releaseCheck() {
+        try {
+            Number applied = (Number) entityManager
+                    .createNativeQuery("select count(*) from databasechangelog")
+                    .getSingleResult();
+            return new CheckView(
+                    "release",
+                    "pass",
+                    "Release and migrations",
+                    "Release " + releaseVersion + " is running with " + applied.longValue() + " migrations applied.",
+                    "Database migrations are applied automatically at startup; review the release notes before deploying a newer build.");
+        } catch (RuntimeException error) {
+            return new CheckView(
+                    "release",
+                    "warning",
+                    "Release and migrations",
+                    "The current release or migration history could not be read.",
+                    "Check the deployed release configuration and database changelog before upgrading.");
+        }
     }
 
     private record OrganizationCheck(String status, String detail) {}

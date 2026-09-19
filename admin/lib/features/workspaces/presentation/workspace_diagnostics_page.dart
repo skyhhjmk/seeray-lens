@@ -37,8 +37,13 @@ class _WorkspaceDiagnosticsPageState
     try {
       final data = await ref
           .read(apiProvider)
-          .request('GET', '/api/v1/workspaces/${widget.workspaceId}/diagnostics');
-      if (data is! Map) throw const FormatException('Invalid diagnostics response');
+          .request(
+            'GET',
+            '/api/v1/workspaces/${widget.workspaceId}/diagnostics',
+          );
+      if (data is! Map) {
+        throw const FormatException('Invalid diagnostics response');
+      }
       if (!mounted) return;
       setState(() {
         _report = Map<String, dynamic>.from(data);
@@ -64,8 +69,7 @@ class _WorkspaceDiagnosticsPageState
           chineseTitle: '系统诊断',
           englishBody:
               'These read-only checks help workspace owners and admins find configuration problems that can prevent tracking or reporting. They do not inspect event contents or expose secrets.',
-          chineseBody:
-              '这些只读检查帮助工作区所有者和管理员发现可能阻止采集或报表的配置问题，不读取事件内容，也不会暴露密钥。',
+          chineseBody: '这些只读检查帮助工作区所有者和管理员发现可能阻止采集或报表的配置问题，不读取事件内容，也不会暴露密钥。',
         ),
         const LanguageMenu(),
         IconButton(
@@ -77,10 +81,7 @@ class _WorkspaceDiagnosticsPageState
     ),
     body: _loading
         ? const Center(child: CircularProgressIndicator())
-        : RefreshIndicator(
-            onRefresh: _load,
-            child: _body(context),
-          ),
+        : RefreshIndicator(onRefresh: _load, child: _body(context)),
   );
 
   Widget _body(BuildContext context) {
@@ -102,7 +103,8 @@ class _WorkspaceDiagnosticsPageState
       );
     }
     final report = _report ?? const <String, dynamic>{};
-    final checks = (report['checks'] as List?)
+    final checks =
+        (report['checks'] as List?)
             ?.whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .toList(growable: false) ??
@@ -133,7 +135,9 @@ class _WorkspaceDiagnosticsPageState
         : status == 'warning'
         ? Icons.warning_amber_outlined
         : Icons.error_outline;
-    final parsed = checkedAt is String ? DateTime.tryParse(checkedAt)?.toLocal() : null;
+    final parsed = checkedAt is String
+        ? DateTime.tryParse(checkedAt)?.toLocal()
+        : null;
     final time = parsed == null
         ? ''
         : context.tr(
@@ -151,8 +155,8 @@ class _WorkspaceDiagnosticsPageState
         ),
         subtitle: Text(
           context.tr(
-            'Read-only checks for tracking, origins, retention and database connectivity. $time',
-            '检查采集、来源、留存和数据库连通性，只读不读取事件内容。$time',
+            'Read-only checks for tracking, origins, retention, migrations and database connectivity. $time',
+            '检查采集、来源、留存、迁移和数据库连通性，只读不读取事件内容。$time',
           ),
         ),
       ),
@@ -174,7 +178,10 @@ class _WorkspaceDiagnosticsPageState
                 Icon(_statusIcon(status), color: color),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
                 Chip(
                   label: Text(_statusLabel(context, status)),
@@ -235,6 +242,7 @@ class _WorkspaceDiagnosticsPageState
     'tracking' => context.tr('Tracking availability', '采集可用性'),
     'origins' => context.tr('Allowed tracker origins', '允许的采集来源'),
     'retention' => context.tr('Retention policy', '留存策略'),
+    'release' => context.tr('Release and migrations', '版本与迁移'),
     _ => key,
   };
 }

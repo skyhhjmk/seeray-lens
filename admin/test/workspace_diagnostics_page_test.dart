@@ -88,6 +88,13 @@ class _DiagnosticsApi extends SeeRayApi {
           'detail': 'Retention is consistent.',
           'remediation': null,
         },
+        {
+          'key': 'release',
+          'status': 'pass',
+          'title': 'Release and migrations',
+          'detail': 'Release development is running.',
+          'remediation': null,
+        },
       ],
     };
   }

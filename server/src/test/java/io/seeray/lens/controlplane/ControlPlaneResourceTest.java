@@ -435,12 +435,13 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("overallStatus", is("warning"))
-                .body("checks.size()", is(5))
+                .body("checks.size()", is(6))
                 .body("checks.find { it.key == 'database' }.status", is("pass"))
                 .body("checks.find { it.key == 'sites' }.status", is("pass"))
                 .body("checks.find { it.key == 'tracking' }.status", is("pass"))
                 .body("checks.find { it.key == 'origins' }.status", is("warning"))
-                .body("checks.find { it.key == 'retention' }.status", is("pass"));
+                .body("checks.find { it.key == 'retention' }.status", is("pass"))
+                .body("checks.find { it.key == 'release' }.status", is("pass"));
 
         Tokens outsider = register("diagnostics-outsider" + System.nanoTime() + "@example.test");
         given().header("Authorization", "Bearer " + outsider.access())

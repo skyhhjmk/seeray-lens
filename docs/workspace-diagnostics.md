@@ -20,6 +20,10 @@ and a stable list of checks:
   browser origin checks to reject collection or Tag Manager delivery.
 - `retention`: detects invalid raw/aggregate retention relationships before a
   retention job can produce surprising results.
+- `release`: reports the configured release identifier and the number of
+  applied database migrations. Migrations are still applied by the server at
+  startup; this check makes upgrade readiness visible without pretending to
+  execute a remote upgrade.
 
 Each warning or error includes a recommended next action. A healthy response is
 not a production acceptance claim: queue health, browser/device behavior,
