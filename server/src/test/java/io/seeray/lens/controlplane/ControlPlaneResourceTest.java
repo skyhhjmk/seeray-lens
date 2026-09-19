@@ -523,6 +523,70 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void workspaceExtensionsHaveValidatedLifecycleAndOneTimeSecrets() {
+        Tokens owner = register("extension-owner" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String path = "/api/v1/workspaces/" + workspaceId + "/extensions";
+        var created = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"extensionKey\":\"crm.sync\",\"name\":\"CRM sync\",\"version\":\"1.0.0\","
+                        + "\"endpointUrl\":\"https://extensions.example.test/hook\","
+                        + "\"subscriptions\":[\"analytics.event\",\"analytics.page_view\"]}")
+                .post(path)
+                .then()
+                .statusCode(201)
+                .body("extension.extensionKey", is("crm.sync"))
+                .body("extension.status", is("enabled"))
+                .body("extension.secretConfigured", is(true))
+                .body("secret", not(isEmptyOrNullString()))
+                .extract();
+        String extensionId = created.path("extension.id");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].secret", nullValue());
+
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"CRM sync v2\",\"version\":\"2.0.0\","
+                        + "\"endpointUrl\":\"https://extensions.example.test/v2\","
+                        + "\"subscriptions\":[\"diagnostics.alert\"],\"status\":\"disabled\"}")
+                .put(path + "/" + extensionId)
+                .then()
+                .statusCode(200)
+                .body("version", is("2.0.0"))
+                .body("status", is("disabled"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .post(path + "/" + extensionId + "/rotate-secret")
+                .then()
+                .statusCode(200)
+                .body("secret", not(isEmptyOrNullString()))
+                .body("extensionId", is(extensionId));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .post(path + "/" + extensionId + "/archive")
+                .then()
+                .statusCode(200)
+                .body("status", is("archived"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"extensionKey\":\"unsafe\",\"name\":\"Unsafe\",\"version\":\"1\","
+                        + "\"endpointUrl\":\"http://localhost/hook\",\"subscriptions\":[]}")
+                .post(path)
+                .then()
+                .statusCode(400)
+                .body("code", is("INVALID_WORKSPACE_EXTENSION"));
+        Tokens outsider = register("extension-outsider" + System.nanoTime() + "@example.test");
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(path)
+                .then()
+                .statusCode(404);
+    }
+
+    @Test
     void workspaceOwnerManagesMembersAndCanTransferOwnershipSafely() {
         String ownerEmail = "member-owner" + System.nanoTime() + "@example.test";
         String firstMemberEmail = "member-first" + System.nanoTime() + "@example.test";

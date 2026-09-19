@@ -73,6 +73,15 @@ class WorkspacePage extends ConsumerWidget {
                       if (workspace.role == 'owner' ||
                           workspace.role == 'admin')
                         IconButton(
+                          tooltip: context.tr('Workspace extensions', '工作区扩展'),
+                          onPressed: () => context.go(
+                            '/workspaces/${workspace.id}/extensions',
+                          ),
+                          icon: const Icon(Icons.extension_outlined),
+                        ),
+                      if (workspace.role == 'owner' ||
+                          workspace.role == 'admin')
+                        IconButton(
                           tooltip: context.tr('System diagnostics', '系统诊断'),
                           onPressed: () => context.go(
                             '/workspaces/${workspace.id}/diagnostics',

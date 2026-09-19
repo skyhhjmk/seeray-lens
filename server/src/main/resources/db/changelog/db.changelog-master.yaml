@@ -503,3 +503,24 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0072-workspace-branding-audit-action.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0073-workspace-extensions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0073-workspace-extensions.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0074-workspace-extension-audit-actions
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0074-workspace-extension-audit-actions.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0075-workspace-extension-secret-audit-action
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0075-workspace-extension-secret-audit-action.sql
+            relativeToChangelogFile: false

@@ -49,6 +49,7 @@ import 'features/workspaces/presentation/workspace_rollup_page.dart';
 import 'features/workspaces/presentation/workspace_audit_log_page.dart';
 import 'features/workspaces/presentation/workspace_diagnostics_page.dart';
 import 'features/workspaces/presentation/workspace_branding_page.dart';
+import 'features/workspaces/presentation/workspace_extensions_page.dart';
 import 'features/workspaces/application/workspace_controller.dart';
 
 class SeeRayLensAdminApp extends ConsumerStatefulWidget {
@@ -115,6 +116,14 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
         path: '/workspaces/:workspaceId/branding',
         builder: (context, state) => _Authenticated(
           child: WorkspaceBrandingPage(
+            workspaceId: state.pathParameters['workspaceId']!,
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/workspaces/:workspaceId/extensions',
+        builder: (context, state) => _Authenticated(
+          child: WorkspaceExtensionsPage(
             workspaceId: state.pathParameters['workspaceId']!,
           ),
         ),

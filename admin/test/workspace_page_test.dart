@@ -8,7 +8,7 @@ void main() {
   testWidgets('workspace owners and admins can discover the member directory', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(390, 844);
+    tester.view.physicalSize = const Size(1000, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -32,6 +32,7 @@ void main() {
     expect(find.byTooltip('Workspace activity'), findsNWidgets(2));
     expect(find.byTooltip('System diagnostics'), findsNWidgets(2));
     expect(find.byTooltip('Branding'), findsOneWidget);
+    expect(find.byTooltip('Workspace extensions'), findsNWidgets(2));
   });
 }
 
