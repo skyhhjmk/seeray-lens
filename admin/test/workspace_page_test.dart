@@ -30,6 +30,7 @@ void main() {
     expect(find.byTooltip('Manage members'), findsOneWidget);
     expect(find.byTooltip('View members'), findsOneWidget);
     expect(find.byTooltip('Workspace activity'), findsNWidgets(2));
+    expect(find.byTooltip('System diagnostics'), findsNWidgets(2));
   });
 }
 

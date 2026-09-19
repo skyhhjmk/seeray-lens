@@ -47,6 +47,7 @@ import 'features/workspaces/presentation/workspace_page.dart';
 import 'features/workspaces/presentation/workspace_members_page.dart';
 import 'features/workspaces/presentation/workspace_rollup_page.dart';
 import 'features/workspaces/presentation/workspace_audit_log_page.dart';
+import 'features/workspaces/presentation/workspace_diagnostics_page.dart';
 
 class SeeRayLensAdminApp extends ConsumerStatefulWidget {
   const SeeRayLensAdminApp({super.key});
@@ -96,6 +97,14 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
         path: '/workspaces/:workspaceId/activity',
         builder: (context, state) => _Authenticated(
           child: WorkspaceAuditLogPage(
+            workspaceId: state.pathParameters['workspaceId']!,
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/workspaces/:workspaceId/diagnostics',
+        builder: (context, state) => _Authenticated(
+          child: WorkspaceDiagnosticsPage(
             workspaceId: state.pathParameters['workspaceId']!,
           ),
         ),

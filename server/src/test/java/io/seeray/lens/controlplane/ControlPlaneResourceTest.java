@@ -425,6 +425,30 @@ class ControlPlaneResourceTest {
                 .statusCode(404);
     }
 
+    @Test
+    void workspaceDiagnosticsReturnsActionableChecksAndEnforcesWorkspaceAccess() {
+        Tokens owner = register("diagnostics-owner" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        createSite(owner.access(), workspaceId, "Diagnostics site");
+        given().header("Authorization", "Bearer " + owner.access())
+                .get("/api/v1/workspaces/" + workspaceId + "/diagnostics")
+                .then()
+                .statusCode(200)
+                .body("overallStatus", is("warning"))
+                .body("checks.size()", is(5))
+                .body("checks.find { it.key == 'database' }.status", is("pass"))
+                .body("checks.find { it.key == 'sites' }.status", is("pass"))
+                .body("checks.find { it.key == 'tracking' }.status", is("pass"))
+                .body("checks.find { it.key == 'origins' }.status", is("warning"))
+                .body("checks.find { it.key == 'retention' }.status", is("pass"));
+
+        Tokens outsider = register("diagnostics-outsider" + System.nanoTime() + "@example.test");
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get("/api/v1/workspaces/" + workspaceId + "/diagnostics")
+                .then()
+                .statusCode(404);
+    }
+
     private String createSite(String access, String workspaceId, String name) {
         return given().header("Authorization", "Bearer " + access)
                 .contentType("application/json")
