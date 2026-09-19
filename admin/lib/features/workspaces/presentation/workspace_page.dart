@@ -56,6 +56,7 @@ class WorkspacePage extends ConsumerWidget {
             ...items.map(
               (workspace) => Card(
                 child: ListTile(
+                  leading: _workspaceAvatar(workspace),
                   title: Text(workspace.name),
                   subtitle: Text(_workspaceRole(context, workspace.role)),
                   trailing: Row(
@@ -137,6 +138,31 @@ class WorkspacePage extends ConsumerWidget {
       }
     }
   }
+}
+
+Widget _workspaceAvatar(Workspace workspace) {
+  final logo = workspace.brandLogoUrl?.trim();
+  if (logo != null && logo.isNotEmpty) {
+    return CircleAvatar(
+      backgroundColor: Colors.transparent,
+      child: ClipOval(
+        child: Image.network(
+          logo,
+          width: 40,
+          height: 40,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) =>
+              _workspaceInitial(workspace),
+        ),
+      ),
+    );
+  }
+  return _workspaceInitial(workspace);
+}
+
+Widget _workspaceInitial(Workspace workspace) {
+  final name = workspace.displayName.trim();
+  return CircleAvatar(child: Text(name.isEmpty ? 'S' : name[0].toUpperCase()));
 }
 
 String _workspaceRole(BuildContext context, String role) => switch (role) {

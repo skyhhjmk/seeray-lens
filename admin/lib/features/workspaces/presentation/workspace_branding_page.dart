@@ -370,6 +370,25 @@ class _WorkspaceBrandingPageState extends ConsumerState<WorkspaceBrandingPage> {
 
   Widget _logoPreview(Color color, String name) {
     final initial = name.trim().isEmpty ? 'S' : name.trim()[0].toUpperCase();
+    final logo = _logoUrl.text.trim();
+    final uri = Uri.tryParse(logo);
+    if (uri != null &&
+        uri.scheme.toLowerCase() == 'https' &&
+        uri.host.isNotEmpty) {
+      return ClipOval(
+        child: Image.network(
+          logo,
+          width: 40,
+          height: 40,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => CircleAvatar(
+            backgroundColor: color,
+            foregroundColor: Colors.white,
+            child: Text(initial),
+          ),
+        ),
+      );
+    }
     return CircleAvatar(
       backgroundColor: color,
       foregroundColor: Colors.white,
