@@ -33,6 +33,12 @@ void main() {
       await tester.tap(find.text('Client plugin SDK'));
       await tester.pumpAndSettle();
       expect(find.textContaining("tracker.use"), findsOneWidget);
+      await tester.tap(find.text('Delivery activity'));
+      await tester.pumpAndSettle();
+      expect(find.text('Total 3'), findsOneWidget);
+      expect(find.text('Delivered 2'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Add extension'));
       await tester.pumpAndSettle();
       final fields = find.byType(TextFormField);
@@ -63,6 +69,26 @@ class _ExtensionsApi extends SeeRayApi {
     Object? body,
     bool retried = false,
   }) async {
+    if (method == 'GET' && path.endsWith('/deliveries/summary')) {
+      return {
+        'total': 3,
+        'pending': 1,
+        'sending': 0,
+        'delivered': 2,
+        'failed': 0,
+      };
+    }
+    if (method == 'GET' && path.contains('/deliveries?')) {
+      return [
+        {
+          'id': 'delivery-1',
+          'eventType': 'analytics.event',
+          'status': 'delivered',
+          'attempts': 1,
+          'responseStatus': 204,
+        },
+      ];
+    }
     if (method == 'POST' && path.endsWith('/extensions')) {
       lastMutationPath = path;
       lastBody = body;

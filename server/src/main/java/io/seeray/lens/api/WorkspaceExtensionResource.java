@@ -74,6 +74,13 @@ public class WorkspaceExtensionResource {
         return deliveryService.list(workspaceId, extensionId, limit);
     }
 
+    @GET
+    @Path("/{extensionId}/deliveries/summary")
+    public io.seeray.lens.application.WorkspaceExtensionDeliveryService.DeliverySummary deliverySummary(
+            @PathParam("workspaceId") UUID workspaceId, @PathParam("extensionId") UUID extensionId) {
+        return deliveryService.summary(workspaceId, extensionId);
+    }
+
     @POST
     @Path("/{extensionId}/deliveries/{deliveryId}/retry")
     public io.seeray.lens.application.WorkspaceExtensionDeliveryService.DeliveryView retryDelivery(

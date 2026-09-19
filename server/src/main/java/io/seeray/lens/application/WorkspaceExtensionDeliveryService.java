@@ -105,6 +105,35 @@ public class WorkspaceExtensionDeliveryService {
                 .toList();
     }
 
+    /** Returns bounded queue counters for the extension activity card. */
+    public DeliverySummary summary(UUID workspaceId, UUID extensionId) {
+        var member = access.member(workspaceId);
+        List<Object[]> rows = entityManager
+                .createQuery(
+                        "select d.status, count(d) from WorkspaceExtensionDelivery d "
+                                + "where d.extension.id = :extensionId and d.extension.organization.id = :organizationId "
+                                + "group by d.status",
+                        Object[].class)
+                .setParameter("extensionId", extensionId)
+                .setParameter("organizationId", member.organization.id)
+                .getResultList();
+        long pending = 0;
+        long sending = 0;
+        long delivered = 0;
+        long failed = 0;
+        for (Object[] row : rows) {
+            long count = ((Number) row[1]).longValue();
+            switch (Objects.toString(row[0], "")) {
+                case "pending" -> pending = count;
+                case "sending" -> sending = count;
+                case "delivered" -> delivered = count;
+                case "failed" -> failed = count;
+                default -> {}
+            }
+        }
+        return new DeliverySummary(pending + sending + delivered + failed, pending, sending, delivered, failed);
+    }
+
     @Transactional
     public void enqueueDiagnosticsAlerts(UUID workspaceId, List<DiagnosticAlert> alerts) {
         if (alerts == null || alerts.isEmpty()) return;
@@ -349,6 +378,8 @@ public class WorkspaceExtensionDeliveryService {
             String lastError,
             Instant createdAt,
             Instant deliveredAt) {}
+
+    public record DeliverySummary(long total, long pending, long sending, long delivered, long failed) {}
 
     public record DiagnosticAlert(String key, String status, String title, String detail, String remediation) {}
 }

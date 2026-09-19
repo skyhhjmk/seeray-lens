@@ -391,12 +391,17 @@ tracker.use({
   }
 
   Future<void> _showDeliveries(Map<String, dynamic> extension) async {
-    final future = ref
-        .read(apiProvider)
-        .request(
-          'GET',
-          '/api/v1/workspaces/${widget.workspaceId}/extensions/${extension['id']}/deliveries?limit=25',
-        );
+    final api = ref.read(apiProvider);
+    final future = Future.wait<dynamic>([
+      api.request(
+        'GET',
+        '/api/v1/workspaces/${widget.workspaceId}/extensions/${extension['id']}/deliveries?limit=25',
+      ),
+      api.request(
+        'GET',
+        '/api/v1/workspaces/${widget.workspaceId}/extensions/${extension['id']}/deliveries/summary',
+      ),
+    ]);
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -426,68 +431,87 @@ tracker.use({
                   ),
                 );
               }
-              final rows = (snapshot.data as List)
-                  .whereType<Map>()
-                  .map((item) => Map<String, dynamic>.from(item))
-                  .toList(growable: false);
-              if (rows.isEmpty) {
-                return Text(
-                  context.tr(
-                    'No analytics events have been delivered yet.',
-                    '还没有投递过分析事件。',
-                  ),
-                );
-              }
-              return SizedBox(
-                height: 360,
-                child: ListView.separated(
-                  itemCount: rows.length,
-                  separatorBuilder: (_, index) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final row = rows[index];
-                    final status = row['status'] as String? ?? 'pending';
-                    final color = _deliveryColor(status);
-                    final retry = status == 'failed'
-                        ? IconButton(
-                            tooltip: context.tr('Retry delivery', '重试投递'),
-                            icon: const Icon(Icons.refresh),
-                            onPressed: () async {
-                              try {
-                                await ref
-                                    .read(apiProvider)
-                                    .request(
-                                      'POST',
-                                      '/api/v1/workspaces/${widget.workspaceId}/extensions/${extension['id']}/deliveries/${row['id']}/retry',
-                                    );
-                                if (!dialogContext.mounted) return;
-                                Navigator.pop(dialogContext);
-                                await _showDeliveries(extension);
-                              } catch (error) {
-                                _showError(error);
-                              }
-                            },
-                          )
-                        : null;
-                    return ListTile(
-                      dense: true,
-                      leading: Icon(_deliveryIcon(status), color: color),
-                      title: Text(_deliveryLabel(context, status)),
-                      subtitle: Text(
-                        '${row['eventType'] ?? ''} · ${row['attempts'] ?? 0} ${context.tr('attempts', '次尝试')}',
+              final payload = snapshot.data as List;
+              final rows =
+                  (payload.isNotEmpty && payload.first is List
+                          ? payload.first as List
+                          : const <dynamic>[])
+                      .whereType<Map>()
+                      .map((item) => Map<String, dynamic>.from(item))
+                      .toList(growable: false);
+              final summary = payload.length > 1 && payload[1] is Map
+                  ? Map<String, dynamic>.from(payload[1] as Map)
+                  : const <String, dynamic>{};
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _deliverySummary(context, summary),
+                  const SizedBox(height: 12),
+                  if (rows.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 28),
+                      child: Text(
+                        context.tr(
+                          'No analytics events have been delivered yet.',
+                          '还没有投递过分析事件。',
+                        ),
                       ),
-                      trailing: retry == null && row['responseStatus'] == null
-                          ? null
-                          : Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (row['responseStatus'] != null)
-                                  Text('${row['responseStatus']}'),
-                                ?retry,
-                              ],
+                    )
+                  else
+                    SizedBox(
+                      height: 300,
+                      child: ListView.separated(
+                        itemCount: rows.length,
+                        separatorBuilder: (_, index) =>
+                            const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final row = rows[index];
+                          final status = row['status'] as String? ?? 'pending';
+                          final color = _deliveryColor(status);
+                          final retry = status == 'failed'
+                              ? IconButton(
+                                  tooltip: context.tr('Retry delivery', '重试投递'),
+                                  icon: const Icon(Icons.refresh),
+                                  onPressed: () async {
+                                    try {
+                                      await ref
+                                          .read(apiProvider)
+                                          .request(
+                                            'POST',
+                                            '/api/v1/workspaces/${widget.workspaceId}/extensions/${extension['id']}/deliveries/${row['id']}/retry',
+                                          );
+                                      if (!dialogContext.mounted) return;
+                                      Navigator.pop(dialogContext);
+                                      await _showDeliveries(extension);
+                                    } catch (error) {
+                                      _showError(error);
+                                    }
+                                  },
+                                )
+                              : null;
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(_deliveryIcon(status), color: color),
+                            title: Text(_deliveryLabel(context, status)),
+                            subtitle: Text(
+                              '${row['eventType'] ?? ''} · ${row['attempts'] ?? 0} ${context.tr('attempts', '次尝试')}',
                             ),
-                    );
-                  },
-                ),
+                            trailing:
+                                retry == null && row['responseStatus'] == null
+                                ? null
+                                : Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (row['responseStatus'] != null)
+                                        Text('${row['responseStatus']}'),
+                                      ?retry,
+                                    ],
+                                  ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
               );
             },
           ),
@@ -498,6 +522,33 @@ tracker.use({
             child: Text(context.tr('Close', '关闭')),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _deliverySummary(BuildContext context, Map<String, dynamic> summary) {
+    final metrics = <(String, String, IconData)>[
+      ('Total', 'total', Icons.all_inbox_outlined),
+      ('Waiting', 'pending', Icons.schedule),
+      ('Sending', 'sending', Icons.sync),
+      ('Delivered', 'delivered', Icons.check_circle_outline),
+      ('Failed', 'failed', Icons.error_outline),
+    ];
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: metrics
+            .map(
+              (metric) => Chip(
+                avatar: Icon(metric.$3, size: 16),
+                label: Text(
+                  '${context.tr(metric.$1, metric.$1)} ${summary[metric.$2] ?? 0}',
+                ),
+              ),
+            )
+            .toList(),
       ),
     );
   }
