@@ -48,6 +48,8 @@ import 'features/workspaces/presentation/workspace_members_page.dart';
 import 'features/workspaces/presentation/workspace_rollup_page.dart';
 import 'features/workspaces/presentation/workspace_audit_log_page.dart';
 import 'features/workspaces/presentation/workspace_diagnostics_page.dart';
+import 'features/workspaces/presentation/workspace_branding_page.dart';
+import 'features/workspaces/application/workspace_controller.dart';
 
 class SeeRayLensAdminApp extends ConsumerStatefulWidget {
   const SeeRayLensAdminApp({super.key});
@@ -105,6 +107,14 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
         path: '/workspaces/:workspaceId/diagnostics',
         builder: (context, state) => _Authenticated(
           child: WorkspaceDiagnosticsPage(
+            workspaceId: state.pathParameters['workspaceId']!,
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/workspaces/:workspaceId/branding',
+        builder: (context, state) => _Authenticated(
+          child: WorkspaceBrandingPage(
             workspaceId: state.pathParameters['workspaceId']!,
           ),
         ),
@@ -518,14 +528,26 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
 
 class _SeeRayLensAdminAppState extends ConsumerState<SeeRayLensAdminApp> {
   @override
-  Widget build(BuildContext context) => MaterialApp.router(
-    title: 'SeeRay Lens',
-    theme: AppTheme.light,
-    locale: ref.watch(localeProvider),
-    supportedLocales: const [Locale('zh'), Locale('en')],
-    localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    routerConfig: SeeRayLensAdminApp._router,
-  );
+  Widget build(BuildContext context) {
+    final workspace = ref.watch(currentWorkspaceProvider);
+    return MaterialApp.router(
+      title: workspace?.displayName ?? 'SeeRay Lens',
+      theme: AppTheme.light(
+        seedColor: _brandColor(workspace?.brandAccentColor),
+      ),
+      locale: ref.watch(localeProvider),
+      supportedLocales: const [Locale('zh'), Locale('en')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      routerConfig: SeeRayLensAdminApp._router,
+    );
+  }
+
+  Color? _brandColor(String? value) {
+    if (value == null || !RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(value)) {
+      return null;
+    }
+    return Color(int.parse('FF${value.substring(1)}', radix: 16));
+  }
 }
 
 /*

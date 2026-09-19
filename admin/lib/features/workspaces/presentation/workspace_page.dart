@@ -61,13 +61,18 @@ class WorkspacePage extends ConsumerWidget {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (workspace.role == 'owner')
+                        IconButton(
+                          tooltip: context.tr('Branding', '品牌设置'),
+                          onPressed: () => context.go(
+                            '/workspaces/${workspace.id}/branding',
+                          ),
+                          icon: const Icon(Icons.palette_outlined),
+                        ),
                       if (workspace.role == 'owner' ||
                           workspace.role == 'admin')
                         IconButton(
-                          tooltip: context.tr(
-                            'System diagnostics',
-                            '系统诊断',
-                          ),
+                          tooltip: context.tr('System diagnostics', '系统诊断'),
                           onPressed: () => context.go(
                             '/workspaces/${workspace.id}/diagnostics',
                           ),

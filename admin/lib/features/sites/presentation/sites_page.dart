@@ -23,7 +23,7 @@ class SitesPage extends ConsumerWidget {
     }
     return Scaffold(
       appBar: AppBar(
-        title: Text('${workspace.name} ${context.tr('sites', '站点')}'),
+        title: Text('${workspace.displayName} ${context.tr('sites', '站点')}'),
         leading: IconButton(
           onPressed: () => context.go('/workspaces'),
           icon: const Icon(Icons.business),

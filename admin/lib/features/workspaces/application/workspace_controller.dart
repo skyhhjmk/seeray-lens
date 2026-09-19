@@ -3,16 +3,32 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/application/auth_controller.dart';
 
 class Workspace {
-  const Workspace({required this.id, required this.name, required this.role});
+  const Workspace({
+    required this.id,
+    required this.name,
+    required this.role,
+    this.brandName,
+    this.brandAccentColor,
+    this.brandLogoUrl,
+  });
 
   final String id;
   final String name;
   final String role;
+  final String? brandName;
+  final String? brandAccentColor;
+  final String? brandLogoUrl;
+
+  String get displayName =>
+      brandName?.trim().isNotEmpty == true ? brandName!.trim() : name;
 
   factory Workspace.fromJson(Map<String, dynamic> json) => Workspace(
     id: json['id'] as String,
     name: json['name'] as String,
     role: json['role'] as String,
+    brandName: json['brandName'] as String?,
+    brandAccentColor: json['brandAccentColor'] as String?,
+    brandLogoUrl: json['brandLogoUrl'] as String?,
   );
 }
 

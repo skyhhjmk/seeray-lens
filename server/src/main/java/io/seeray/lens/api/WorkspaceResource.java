@@ -9,6 +9,8 @@ import jakarta.transaction.Transactional;
 import jakarta.validation.constraints.*;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Instant;
 import java.util.*;
 
@@ -67,6 +69,36 @@ public class WorkspaceResource {
         return dto(m.organization, m.role);
     }
 
+    @GET
+    @Path("/{id}/branding")
+    public BrandingDto branding(@PathParam("id") UUID id) {
+        OrganizationMember m = access.member(id);
+        return brandingDto(m.organization, m.role);
+    }
+
+    @PATCH
+    @Path("/{id}/branding")
+    @Transactional
+    public BrandingDto updateBranding(@PathParam("id") UUID id, BrandingUpdate request) {
+        OrganizationMember m = access.require(id, WorkspaceRole.OWNER);
+        if (request == null) throw invalidBranding();
+        String brandName = optionalText(request.brandName, 120, "INVALID_WORKSPACE_BRANDING", "Brand name is too long");
+        String accentColor = optionalText(
+                request.brandAccentColor, 7, "INVALID_WORKSPACE_BRANDING", "Accent color must be a 6-digit hex color");
+        if (accentColor != null && !accentColor.matches("^#[0-9A-Fa-f]{6}$")) throw invalidBranding();
+        String logoUrl = optionalText(request.brandLogoUrl, 2048, "INVALID_WORKSPACE_BRANDING", "Logo URL is too long");
+        if (logoUrl != null && !isHttpsUrl(logoUrl)) {
+            throw new ControlPlaneException(
+                    400, "INVALID_WORKSPACE_BRANDING", "Logo URL must be an HTTPS URL with a hostname");
+        }
+        m.organization.brandName = brandName;
+        m.organization.brandAccentColor = accentColor == null ? null : accentColor.toUpperCase(Locale.ROOT);
+        m.organization.brandLogoUrl = logoUrl;
+        m.organization.updatedAt = Instant.now();
+        audit.record(id, access.userId(), "UPDATE_WORKSPACE_BRANDING", "workspace", id);
+        return brandingDto(m.organization, m.role);
+    }
+
     @PATCH
     @Path("/{id}")
     @Transactional
@@ -81,12 +113,45 @@ public class WorkspaceResource {
     }
 
     static WorkspaceDto dto(Organization o, WorkspaceRole role) {
-        return new WorkspaceDto(o.id, o.name, role.name().toLowerCase(Locale.ROOT));
+        return new WorkspaceDto(
+                o.id, o.name, role.name().toLowerCase(Locale.ROOT), o.brandName, o.brandAccentColor, o.brandLogoUrl);
+    }
+
+    private static BrandingDto brandingDto(Organization o, WorkspaceRole role) {
+        return new BrandingDto(role == WorkspaceRole.OWNER, o.brandName, o.brandAccentColor, o.brandLogoUrl);
+    }
+
+    private static String optionalText(String value, int maxLength, String code, String message) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) throw new ControlPlaneException(400, code, message);
+        return normalized;
+    }
+
+    private static boolean isHttpsUrl(String value) {
+        try {
+            URI uri = new URI(value);
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null
+                    && uri.getUserInfo() == null
+                    && uri.getFragment() == null;
+        } catch (URISyntaxException error) {
+            return false;
+        }
+    }
+
+    private static ControlPlaneException invalidBranding() {
+        return new ControlPlaneException(400, "INVALID_WORKSPACE_BRANDING", "Check the workspace branding fields");
     }
 
     public record UpdateWorkspace(@NotBlank @Size(max = 120) String name) {}
 
     public record CreateWorkspace(@NotBlank @Size(max = 120) String name) {}
 
-    public record WorkspaceDto(UUID id, String name, String role) {}
+    public record WorkspaceDto(
+            UUID id, String name, String role, String brandName, String brandAccentColor, String brandLogoUrl) {}
+
+    public record BrandingDto(boolean canManage, String brandName, String brandAccentColor, String brandLogoUrl) {}
+
+    public record BrandingUpdate(String brandName, String brandAccentColor, String brandLogoUrl) {}
 }

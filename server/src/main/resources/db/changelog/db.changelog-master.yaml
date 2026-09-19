@@ -489,3 +489,17 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0070-tag-manager-capability-policy.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0071-workspace-branding
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0071-workspace-branding.sql
+            relativeToChangelogFile: false
+  - changeSet:
+      id: 0072-workspace-branding-audit-action
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0072-workspace-branding-audit-action.sql
+            relativeToChangelogFile: false

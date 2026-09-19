@@ -31,6 +31,7 @@ void main() {
     expect(find.byTooltip('View members'), findsOneWidget);
     expect(find.byTooltip('Workspace activity'), findsNWidgets(2));
     expect(find.byTooltip('System diagnostics'), findsNWidgets(2));
+    expect(find.byTooltip('Branding'), findsOneWidget);
   });
 }
 

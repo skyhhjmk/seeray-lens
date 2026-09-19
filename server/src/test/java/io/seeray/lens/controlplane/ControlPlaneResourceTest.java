@@ -475,6 +475,53 @@ class ControlPlaneResourceTest {
     }
 
     @Test
+    void workspaceBrandingIsOwnerManagedAndReturnedInWorkspaceContext() {
+        Tokens owner = register("branding-owner" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String branding = "/api/v1/workspaces/" + workspaceId + "/branding";
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(branding)
+                .then()
+                .statusCode(200)
+                .body("canManage", is(true))
+                .body("brandName", nullValue())
+                .body("brandAccentColor", nullValue());
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"brandName\":\"Northstar Analytics\",\"brandAccentColor\":\"#0f766e\",\"brandLogoUrl\":\"https://cdn.example.test/logo.svg?v=2\"}")
+                .patch(branding)
+                .then()
+                .statusCode(200)
+                .body("brandName", is("Northstar Analytics"))
+                .body("brandAccentColor", is("#0F766E"))
+                .body("brandLogoUrl", is("https://cdn.example.test/logo.svg?v=2"));
+        workspace(owner.access())
+                .body("[0].brandName", is("Northstar Analytics"))
+                .body("[0].brandAccentColor", is("#0F766E"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"brandAccentColor\":\"blue\"}")
+                .patch(branding)
+                .then()
+                .statusCode(400)
+                .body("code", is("INVALID_WORKSPACE_BRANDING"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"brandLogoUrl\":\"http://cdn.example.test/logo.svg\"}")
+                .patch(branding)
+                .then()
+                .statusCode(400)
+                .body("code", is("INVALID_WORKSPACE_BRANDING"));
+
+        Tokens outsider = register("branding-outsider" + System.nanoTime() + "@example.test");
+        given().header("Authorization", "Bearer " + outsider.access())
+                .get(branding)
+                .then()
+                .statusCode(404);
+    }
+
+    @Test
     void workspaceOwnerManagesMembersAndCanTransferOwnershipSafely() {
         String ownerEmail = "member-owner" + System.nanoTime() + "@example.test";
         String firstMemberEmail = "member-first" + System.nanoTime() + "@example.test";
