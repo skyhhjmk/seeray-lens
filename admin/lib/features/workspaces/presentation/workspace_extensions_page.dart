@@ -40,6 +40,7 @@ tracker.use({
 });''';
 
   List<Map<String, dynamic>> _extensions = const [];
+  Map<String, dynamic>? _summary;
   bool _loading = true;
   String? _error;
 
@@ -55,12 +56,18 @@ tracker.use({
       _error = null;
     });
     try {
-      final data = await ref
-          .read(apiProvider)
-          .request(
-            'GET',
-            '/api/v1/workspaces/${widget.workspaceId}/extensions',
-          );
+      final api = ref.read(apiProvider);
+      final responses = await Future.wait<dynamic>([
+        api.request(
+          'GET',
+          '/api/v1/workspaces/${widget.workspaceId}/extensions',
+        ),
+        api.request(
+          'GET',
+          '/api/v1/workspaces/${widget.workspaceId}/extensions/summary',
+        ),
+      ]);
+      final data = responses.first;
       if (data is! List) {
         throw const FormatException('Invalid extensions response');
       }
@@ -70,6 +77,9 @@ tracker.use({
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .toList(growable: false);
+        _summary = responses.length > 1 && responses[1] is Map
+            ? Map<String, dynamic>.from(responses[1] as Map)
+            : null;
         _loading = false;
       });
     } catch (error) {
@@ -149,6 +159,10 @@ tracker.use({
           ),
         ),
         const SizedBox(height: 16),
+        if (_summary != null) ...[
+          _workspaceQueueCard(context, _summary!),
+          const SizedBox(height: 16),
+        ],
         _pluginSdkCard(context),
         const SizedBox(height: 16),
         if (_extensions.isEmpty)
@@ -202,6 +216,84 @@ tracker.use({
       ],
     ),
   );
+
+  Widget _workspaceQueueCard(
+    BuildContext context,
+    Map<String, dynamic> summary,
+  ) {
+    final failed = (summary['failed'] as num?)?.toInt() ?? 0;
+    final pending = (summary['pending'] as num?)?.toInt() ?? 0;
+    final status = failed > 0
+        ? context.tr('Action required', '需要处理')
+        : pending > 100
+        ? context.tr('Backlog growing', '队列积压')
+        : context.tr('Healthy', '健康');
+    final color = failed > 0
+        ? Colors.red
+        : pending > 100
+        ? Colors.orange
+        : Colors.green;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.monitor_heart_outlined, color: color),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    context.tr('Extension queue health', '扩展队列健康度'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                Chip(
+                  label: Text(status),
+                  side: BorderSide(color: color.withValues(alpha: .5)),
+                  labelStyle: TextStyle(color: color),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              context.tr(
+                'Workspace-wide delivery counters help you spot failed or backlogged extensions before reports are missed.',
+                '工作区级投递计数帮助你在报表丢失前发现失败或积压的扩展。',
+              ),
+            ),
+            const SizedBox(height: 10),
+            _summaryChips(context, summary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryChips(BuildContext context, Map<String, dynamic> summary) {
+    final metrics = <(String, String, IconData)>[
+      ('Total', 'total', Icons.all_inbox_outlined),
+      ('Waiting', 'pending', Icons.schedule),
+      ('Sending', 'sending', Icons.sync),
+      ('Delivered', 'delivered', Icons.check_circle_outline),
+      ('Failed', 'failed', Icons.error_outline),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: metrics
+          .map(
+            (metric) => Chip(
+              avatar: Icon(metric.$3, size: 16),
+              label: Text(
+                '${context.tr(metric.$1, metric.$1)} ${summary[metric.$2] ?? 0}',
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
 
   Widget _extensionCard(BuildContext context, Map<String, dynamic> extension) {
     final status = extension['status'] as String? ?? 'disabled';

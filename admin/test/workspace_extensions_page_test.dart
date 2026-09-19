@@ -29,14 +29,16 @@ void main() {
       expect(find.text('CRM sync  v1.0.0'), findsOneWidget);
       expect(find.text('Enabled'), findsOneWidget);
       expect(find.text('Analytics events / 分析事件'), findsOneWidget);
+      expect(find.text('Extension queue health'), findsOneWidget);
+      expect(find.text('Total 3'), findsOneWidget);
       expect(find.text('Client plugin SDK'), findsOneWidget);
       await tester.tap(find.text('Client plugin SDK'));
       await tester.pumpAndSettle();
       expect(find.textContaining("tracker.use"), findsOneWidget);
       await tester.tap(find.text('Delivery activity'));
       await tester.pumpAndSettle();
-      expect(find.text('Total 3'), findsOneWidget);
-      expect(find.text('Delivered 2'), findsOneWidget);
+      expect(find.text('Total 3'), findsNWidgets(2));
+      expect(find.text('Delivered 2'), findsNWidgets(2));
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add extension'));
@@ -69,6 +71,15 @@ class _ExtensionsApi extends SeeRayApi {
     Object? body,
     bool retried = false,
   }) async {
+    if (method == 'GET' && path.endsWith('/extensions/summary')) {
+      return {
+        'total': 3,
+        'pending': 1,
+        'sending': 0,
+        'delivered': 2,
+        'failed': 0,
+      };
+    }
     if (method == 'GET' && path.endsWith('/deliveries/summary')) {
       return {
         'total': 3,

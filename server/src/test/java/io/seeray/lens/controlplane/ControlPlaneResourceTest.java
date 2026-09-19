@@ -692,6 +692,12 @@ class ControlPlaneResourceTest {
                 .body("sending", is(0))
                 .body("delivered", is(0))
                 .body("failed", is(0));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "/summary")
+                .then()
+                .statusCode(200)
+                .body("total", is(1))
+                .body("pending", is(1));
         try (var connection = dataSource.getConnection();
                 var statement = connection.prepareStatement(
                         "select payload_json::text from workspace_extension_delivery where extension_id=?")) {

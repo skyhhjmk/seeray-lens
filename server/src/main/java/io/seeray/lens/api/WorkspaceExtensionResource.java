@@ -35,6 +35,13 @@ public class WorkspaceExtensionResource {
         return Response.status(Response.Status.CREATED).entity(created).build();
     }
 
+    @GET
+    @Path("/summary")
+    public io.seeray.lens.application.WorkspaceExtensionDeliveryService.DeliverySummary summary(
+            @PathParam("workspaceId") UUID workspaceId) {
+        return deliveryService.workspaceSummary(workspaceId);
+    }
+
     @PUT
     @Path("/{extensionId}")
     public WorkspaceExtensionService.ExtensionView update(

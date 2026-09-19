@@ -117,6 +117,23 @@ public class WorkspaceExtensionDeliveryService {
                 .setParameter("extensionId", extensionId)
                 .setParameter("organizationId", member.organization.id)
                 .getResultList();
+        return summarize(rows);
+    }
+
+    /** Returns queue counters across every extension in the workspace. */
+    public DeliverySummary workspaceSummary(UUID workspaceId) {
+        var member = access.member(workspaceId);
+        List<Object[]> rows = entityManager
+                .createQuery(
+                        "select d.status, count(d) from WorkspaceExtensionDelivery d "
+                                + "where d.extension.organization.id = :organizationId group by d.status",
+                        Object[].class)
+                .setParameter("organizationId", member.organization.id)
+                .getResultList();
+        return summarize(rows);
+    }
+
+    private DeliverySummary summarize(List<Object[]> rows) {
         long pending = 0;
         long sending = 0;
         long delivered = 0;
