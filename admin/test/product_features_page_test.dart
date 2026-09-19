@@ -64,6 +64,49 @@ void main() {
     );
   });
 
+  testWidgets('edits the container script governance policy', (tester) async {
+    final api = _GraphicalFeatureApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: ProductFeaturesPage(
+            siteId: 'site-1',
+            trackingId: 'srl_site_1',
+            trackerUrl: 'https://lens.example.test/tracker.js',
+            mode: ProductFeatureMode.tagManager,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Script governance'));
+    await tester.pumpAndSettle();
+    expect(find.text('Script governance · Production'), findsOneWidget);
+    expect(find.text('Allow custom HTML / JavaScript'), findsOneWidget);
+    expect(find.text('Allowed external script origins'), findsOneWidget);
+    await tester.tap(find.text('Allow custom HTML / JavaScript'));
+    await tester.tap(find.byType(TextField));
+    await tester.enterText(
+      find.byType(TextField),
+      'https://cdn.example.com\nhttps://analytics.example.com',
+    );
+    await tester.tap(find.text('Save policy'));
+    await tester.pumpAndSettle();
+    expect(
+      api.lastMutationPath,
+      '/api/v1/sites/site-1/tag-manager/containers/container-1/script-policy',
+    );
+    expect(api.lastBody, {
+      'allowCustomCode': false,
+      'allowedScriptOrigins': [
+        'https://cdn.example.com',
+        'https://analytics.example.com',
+      ],
+    });
+    expect(find.text('Script governance policy saved.'), findsOneWidget);
+  });
+
   testWidgets('production review presents tag changes and reviewer actions', (
     tester,
   ) async {
@@ -1192,6 +1235,17 @@ class _GraphicalFeatureApi extends SeeRayApi {
     if (method == 'DELETE' && path.endsWith('/preview-1')) return null;
     if (method == 'GET' && path.endsWith('/tag-manager/templates')) {
       return templates;
+    }
+    if (method == 'GET' && path.endsWith('/script-policy')) {
+      return {
+        'canManage': true,
+        'allowCustomCode': true,
+        'allowedScriptOrigins': const <String>[],
+      };
+    }
+    if (method == 'PUT' && path.endsWith('/script-policy')) {
+      lastBody = body;
+      return {'canManage': true, ...(body as Map).cast<String, dynamic>()};
     }
     if (method == 'GET' && path.endsWith('/production-requests')) {
       return productionRequests;

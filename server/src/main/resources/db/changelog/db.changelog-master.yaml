@@ -475,3 +475,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0068-x-ads-capi-config.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0069-tag-manager-script-policy
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0069-tag-manager-script-policy.sql
+            relativeToChangelogFile: false

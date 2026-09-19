@@ -41,6 +41,27 @@ public class TagManagerResource {
         return tags.update(siteId, id, request == null ? null : request.name, request != null && request.enabled);
     }
 
+    @GET
+    @Authenticated
+    @Path("/containers/{containerId}/script-policy")
+    public TagManagerService.ScriptPolicyView scriptPolicy(
+            @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID containerId) {
+        return tags.scriptPolicy(siteId, containerId);
+    }
+
+    @PUT
+    @Authenticated
+    @Path("/containers/{containerId}/script-policy")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public TagManagerService.ScriptPolicyView saveScriptPolicy(
+            @PathParam("siteId") UUID siteId, @PathParam("containerId") UUID containerId, ScriptPolicyRequest request) {
+        return tags.saveScriptPolicy(
+                siteId,
+                containerId,
+                request != null && request.allowCustomCode,
+                request == null ? List.of() : request.allowedScriptOrigins);
+    }
+
     @DELETE
     @Authenticated
     @Path("/containers/{containerId}")
@@ -216,6 +237,11 @@ public class TagManagerResource {
     public static class UpdateRequest {
         public String name;
         public boolean enabled = true;
+    }
+
+    public static class ScriptPolicyRequest {
+        public boolean allowCustomCode = true;
+        public List<String> allowedScriptOrigins = List.of();
     }
 
     public static class TemplateRequest {

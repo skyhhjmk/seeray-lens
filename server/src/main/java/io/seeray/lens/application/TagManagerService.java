@@ -13,6 +13,8 @@ import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -20,12 +22,15 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @ApplicationScoped
 public class TagManagerService {
     private static final Set<String> ENVIRONMENTS = Set.of("development", "staging", "production");
     private static final SecureRandom PREVIEW_RANDOM = new SecureRandom();
     private static final Duration PREVIEW_TTL = Duration.ofMinutes(15);
+    private static final Pattern EXTERNAL_URL = Pattern.compile("(?i)https?://[^\\s\\\"'<>]+");
     private final SiteService sites;
     private final WorkspaceAccess access;
     private final ObjectMapper mapper;
@@ -45,6 +50,36 @@ public class TagManagerService {
         return TagContainer.<TagContainer>list("site.id = ?1 order by name", s.id).stream()
                 .map(this::view)
                 .toList();
+    }
+
+    public ScriptPolicyView scriptPolicy(UUID siteId, UUID containerId) {
+        TagContainer container = readableContainer(siteId, containerId);
+        WorkspaceRole role = access.member(container.site.organization.id).role;
+        TagContainerSecurityPolicy policy = policy(container.id);
+        return new ScriptPolicyView(
+                role == WorkspaceRole.OWNER || role == WorkspaceRole.ADMIN,
+                policy.allowCustomCode,
+                allowedOrigins(policy),
+                policy.updatedAt);
+    }
+
+    @Transactional
+    public ScriptPolicyView saveScriptPolicy(
+            UUID siteId, UUID containerId, boolean allowCustomCode, List<String> allowedOrigins) {
+        TagContainer container = writableContainer(siteId, containerId);
+        List<String> normalizedOrigins = normalizeOrigins(allowedOrigins);
+        TagContainerSecurityPolicy policy = policy(container.id);
+        policy.containerId = container.id;
+        policy.allowCustomCode = allowCustomCode;
+        try {
+            policy.allowedScriptOriginsJson = mapper.writeValueAsString(normalizedOrigins);
+        } catch (Exception error) {
+            throw new IllegalStateException("Could not encode tag script policy", error);
+        }
+        policy.updatedBy = access.userId();
+        policy.updatedAt = Instant.now();
+        policy.persist();
+        return scriptPolicy(siteId, containerId);
     }
 
     @Transactional
@@ -127,7 +162,7 @@ public class TagManagerService {
     @Transactional
     public VersionView draft(UUID siteId, UUID containerId, JsonNode tags) {
         TagContainer c = writableContainer(siteId, containerId);
-        validateTags(tags);
+        validateTags(c, tags);
         TagContainerVersion latest = TagContainerVersion.<TagContainerVersion>find(
                         "container.id = ?1 order by version desc", c.id)
                 .firstResult();
@@ -147,7 +182,7 @@ public class TagManagerService {
     public PreviewCreated createPreviewSession(
             UUID siteId, UUID containerId, JsonNode tags, boolean executeCustomCode) {
         TagContainer container = writableContainer(siteId, containerId);
-        validateTags(tags);
+        validateTags(container, tags);
         Instant now = Instant.now();
         TagManagerPreviewSession.delete("expiresAt <= ?1", now);
         byte[] bytes = new byte[32];
@@ -310,6 +345,133 @@ public class TagManagerService {
         for (JsonNode tag : tags) validateTag(tag);
     }
 
+    private void validateTags(TagContainer container, JsonNode tags) {
+        validateTags(tags);
+        TagContainerSecurityPolicy stored = policy(container.id);
+        ScriptPolicy scriptPolicy = new ScriptPolicy(stored.allowCustomCode, allowedOrigins(stored));
+        for (JsonNode tag : tags) validateScriptPolicy(tag, scriptPolicy);
+    }
+
+    private void validateVersionAgainstPolicy(TagContainer container, TagContainerVersion version) {
+        try {
+            validateTags(container, mapper.readTree(version.tagsJson));
+        } catch (ControlPlaneException error) {
+            throw error;
+        } catch (Exception error) {
+            throw invalid();
+        }
+    }
+
+    private static void validateScriptPolicy(JsonNode tag, ScriptPolicy policy) {
+        boolean customCode = "custom_html".equals(textOrNull(tag, "type")) || containsCustomJsTrigger(tag);
+        if (customCode && !policy.allowCustomCode()) {
+            throw new ControlPlaneException(
+                    409,
+                    "TAG_SCRIPT_POLICY_CUSTOM_CODE_BLOCKED",
+                    "This container policy does not allow custom HTML or JavaScript tags.");
+        }
+        if (policy.allowedOrigins().isEmpty()) return;
+        Matcher matcher = EXTERNAL_URL.matcher(tag.toString());
+        while (matcher.find()) {
+            String origin = originFromUrl(matcher.group().replace("\\", ""));
+            if (origin == null || !policy.allowedOrigins().contains(origin)) {
+                throw new ControlPlaneException(
+                        409,
+                        "TAG_SCRIPT_POLICY_ORIGIN_BLOCKED",
+                        "A script URL is not included in this container's allowed script origins.");
+            }
+        }
+    }
+
+    private static boolean containsCustomJsTrigger(JsonNode tag) {
+        JsonNode triggers = tag.get("triggers");
+        if (triggers != null && triggers.isArray()) {
+            for (JsonNode trigger : triggers) {
+                if (trigger != null && trigger.isObject() && "custom_js".equals(textOrNull(trigger, "type")))
+                    return true;
+            }
+        }
+        JsonNode trigger = tag.get("trigger");
+        return trigger != null && trigger.isObject() && "custom_js".equals(textOrNull(trigger, "type"));
+    }
+
+    private TagContainerSecurityPolicy policy(UUID containerId) {
+        TagContainerSecurityPolicy policy = TagContainerSecurityPolicy.findById(containerId);
+        if (policy != null) return policy;
+        policy = new TagContainerSecurityPolicy();
+        policy.containerId = containerId;
+        policy.allowCustomCode = true;
+        policy.allowedScriptOriginsJson = "[]";
+        policy.updatedBy = access.userId();
+        policy.updatedAt = Instant.now();
+        return policy;
+    }
+
+    private List<String> allowedOrigins(TagContainerSecurityPolicy policy) {
+        try {
+            JsonNode values = mapper.readTree(policy.allowedScriptOriginsJson);
+            if (values == null || !values.isArray()) return List.of();
+            List<String> origins = new ArrayList<>();
+            for (JsonNode value : values) {
+                if (value.isTextual()) origins.add(value.asText());
+            }
+            return List.copyOf(origins);
+        } catch (Exception error) {
+            throw new IllegalStateException("Could not read tag script policy", error);
+        }
+    }
+
+    private List<String> normalizeOrigins(List<String> values) {
+        if (values == null || values.size() > 50) {
+            throw new ControlPlaneException(
+                    400, "INVALID_TAG_SCRIPT_POLICY", "Enter at most 50 allowed script origins.");
+        }
+        LinkedHashSet<String> origins = new LinkedHashSet<>();
+        for (String value : values) {
+            if (value == null || value.isBlank()) continue;
+            String origin = normalizeOrigin(value.trim());
+            if (origin == null) {
+                throw new ControlPlaneException(
+                        400,
+                        "INVALID_TAG_SCRIPT_POLICY",
+                        "Allowed script origins must be http(s) origins such as https://cdn.example.com.");
+            }
+            origins.add(origin);
+        }
+        return List.copyOf(origins);
+    }
+
+    private static String normalizeOrigin(String value) {
+        try {
+            URI uri = new URI(value);
+            if (!Set.of("http", "https").contains(uri.getScheme().toLowerCase(Locale.ROOT))
+                    || uri.getHost() == null
+                    || uri.getUserInfo() != null
+                    || uri.getPath() != null && !uri.getPath().isEmpty() && !"/".equals(uri.getPath())
+                    || uri.getQuery() != null
+                    || uri.getFragment() != null) return null;
+            String host = uri.getHost().toLowerCase(Locale.ROOT);
+            String port = uri.getPort() < 0 ? "" : ":" + uri.getPort();
+            return uri.getScheme().toLowerCase(Locale.ROOT) + "://" + host + port;
+        } catch (URISyntaxException | NullPointerException error) {
+            return null;
+        }
+    }
+
+    private static String originFromUrl(String value) {
+        try {
+            URI uri = new URI(value);
+            if (!Set.of("http", "https").contains(uri.getScheme().toLowerCase(Locale.ROOT))
+                    || uri.getHost() == null
+                    || uri.getUserInfo() != null) return null;
+            String host = uri.getHost().toLowerCase(Locale.ROOT);
+            String port = uri.getPort() < 0 ? "" : ":" + uri.getPort();
+            return uri.getScheme().toLowerCase(Locale.ROOT) + "://" + host + port;
+        } catch (URISyntaxException | NullPointerException error) {
+            return null;
+        }
+    }
+
     private static void validateTag(JsonNode tag) {
         if (tag == null || !tag.isObject()) throw invalid();
         String type = text(tag, "type");
@@ -434,6 +596,13 @@ public class TagManagerService {
         TagContainerVersion v = TagContainerVersion.find("container.id = ?1 and version = ?2", c.id, version)
                 .firstResult();
         if (v == null) throw new ControlPlaneException(404, "VERSION_NOT_FOUND", "Container version was not found");
+        try {
+            validateTags(c, mapper.readTree(v.tagsJson));
+        } catch (ControlPlaneException error) {
+            throw error;
+        } catch (Exception error) {
+            throw invalid();
+        }
         TagContainerEnvironmentRelease release = TagContainerEnvironmentRelease.find(
                         "container.id = ?1 and environment = ?2", c.id, environment)
                 .firstResult();
@@ -458,6 +627,7 @@ public class TagManagerService {
                 .firstResult();
         if (target == null)
             throw new ControlPlaneException(404, "VERSION_NOT_FOUND", "Container version was not found");
+        validateVersionAgainstPolicy(c, target);
         if (Objects.equals(c.publishedVersion, version)) {
             throw new ControlPlaneException(
                     409, "VERSION_ALREADY_IN_PRODUCTION", "This version is already live in production");
@@ -505,6 +675,12 @@ public class TagManagerService {
                     "PRODUCTION_BASE_CHANGED",
                     "Production changed since this request was created; cancel it and review a fresh version");
         }
+        TagContainerVersion target = TagContainerVersion.find(
+                        "container.id = ?1 and version = ?2", c.id, request.targetVersion)
+                .firstResult();
+        if (target == null)
+            throw new ControlPlaneException(404, "VERSION_NOT_FOUND", "Container version was not found");
+        validateVersionAgainstPolicy(c, target);
         String reviewNote = optionalReviewNote(note);
         releaseProduction(c, request.targetVersion);
         request.status = "approved";
@@ -877,6 +1053,11 @@ public class TagManagerService {
             boolean enabled,
             Integer publishedVersion,
             Map<String, Integer> environmentVersions) {}
+
+    public record ScriptPolicyView(
+            boolean canManage, boolean allowCustomCode, List<String> allowedScriptOrigins, Instant updatedAt) {}
+
+    private record ScriptPolicy(boolean allowCustomCode, List<String> allowedOrigins) {}
 
     public record VersionView(UUID id, int version, String status, JsonNode tags) {}
 

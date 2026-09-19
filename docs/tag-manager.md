@@ -9,6 +9,8 @@ GET  /api/v1/sites/{siteId}/tag-manager/containers
 POST /api/v1/sites/{siteId}/tag-manager/containers
 GET  /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions
 POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions
+GET  /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/script-policy
+PUT  /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/script-policy
 POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/versions/{version}/environments/{environment}/publish
 GET  /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/production-requests
 POST /api/v1/sites/{siteId}/tag-manager/containers/{containerId}/production-requests
@@ -116,7 +118,25 @@ For event and page-view tags, string values in the graphical **Event properties*
 - Trigger event, event name, category, action, and a named event property (`{{Event Property: plan}}`)
 - Browser, operating system, device type, language, screen size, and viewport size
 
-For example, configure `landing_page` as `{{Page URL}}` and `source_plan` as `{{Event Property: plan}}`. Event properties supplied to `SeeRay.push()` remain available, while values configured on the tag override same-key event properties after variable resolution. Unknown variable names are preserved literally so a configuration mistake is visible in the resulting event. Variables are not interpolated into custom HTML or JavaScript; code snippets remain explicit code and are clearly marked in production review. Fine-grained script governance (per-tag capability policies, host allowlists, and risk-based review rules) remains follow-up work.
+For example, configure `landing_page` as `{{Page URL}}` and `source_plan` as `{{Event Property: plan}}`. Event properties supplied to `SeeRay.push()` remain available, while values configured on the tag override same-key event properties after variable resolution. Unknown variable names are preserved literally so a configuration mistake is visible in the resulting event. Variables are not interpolated into custom HTML or JavaScript; code snippets remain explicit code and are clearly marked in production review.
+
+### Script governance
+
+The **Script governance** action on each container opens a normal settings form
+for the container's script policy. Owners and admins can disable all custom HTML
+and JavaScript tags, or keep them enabled while entering an allowlist of external
+`http(s)` origins (one origin per line, without paths or query strings). The
+default policy preserves existing containers: custom code is enabled and an empty
+allowlist means no external-origin restriction until an administrator chooses to
+tighten it.
+
+The server enforces this policy when creating a draft, creating a live preview,
+deploying development/staging, and requesting production approval. It also
+rechecks the policy at approval time, so changing the policy cannot be bypassed
+by reusing an older draft. Disallowed custom code returns
+`TAG_SCRIPT_POLICY_CUSTOM_CODE_BLOCKED`; an external URL outside the allowlist
+returns `TAG_SCRIPT_POLICY_ORIGIN_BLOCKED`. Policy changes are ordinary
+site-scoped Tag Manager mutations and therefore appear in the audit log.
 
 ### Draft dry-run
 

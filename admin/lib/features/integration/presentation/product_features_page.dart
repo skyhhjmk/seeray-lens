@@ -599,6 +599,34 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
     );
   }
 
+  Future<void> _scriptPolicy(String containerId, String containerName) async {
+    await _run(() async {
+      final response =
+          await ref
+                  .read(apiProvider)
+                  .request('GET', '$_path/$containerId/script-policy')
+              as Map;
+      if (!mounted) return;
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (_) => _ScriptPolicyDialog(
+          containerName: containerName,
+          initial: Map<String, dynamic>.from(response),
+        ),
+      );
+      if (result == null || !mounted) return;
+      await ref
+          .read(apiProvider)
+          .request('PUT', '$_path/$containerId/script-policy', body: result);
+      setState(
+        () => _notice = context.tr(
+          'Script governance policy saved.',
+          '脚本治理策略已保存。',
+        ),
+      );
+    });
+  }
+
   Future<void> _useTemplate(
     String containerId,
     List<dynamic> templateTags,
@@ -864,6 +892,11 @@ class _ProductFeaturesPageState extends ConsumerState<ProductFeaturesPage> {
                 icon: const Icon(Icons.delete_outline),
               ),
             if (widget.mode == ProductFeatureMode.tagManager) ...[
+              IconButton(
+                tooltip: context.tr('Script governance', '脚本治理'),
+                onPressed: () => _scriptPolicy(id, name),
+                icon: const Icon(Icons.security_outlined),
+              ),
               IconButton(
                 tooltip: context.tr('Versions', '版本'),
                 onPressed: () => _versions(id),
@@ -2192,6 +2225,135 @@ class _ContainerEditorDialogState extends State<_ContainerEditorDialog> {
         child: Text(
           context.tr(_editing ? 'Save' : 'Create', _editing ? '保存' : '新建'),
         ),
+      ),
+    ],
+  );
+}
+
+class _ScriptPolicyDialog extends StatefulWidget {
+  const _ScriptPolicyDialog({
+    required this.containerName,
+    required this.initial,
+  });
+
+  final String containerName;
+  final Map<String, dynamic> initial;
+
+  @override
+  State<_ScriptPolicyDialog> createState() => _ScriptPolicyDialogState();
+}
+
+class _ScriptPolicyDialogState extends State<_ScriptPolicyDialog> {
+  late bool _allowCustomCode;
+  late final TextEditingController _origins;
+
+  @override
+  void initState() {
+    super.initState();
+    _allowCustomCode = widget.initial['allowCustomCode'] as bool? ?? true;
+    final origins =
+        (widget.initial['allowedScriptOrigins'] as List? ?? const [])
+            .whereType<String>()
+            .join('\n');
+    _origins = TextEditingController(text: origins);
+  }
+
+  @override
+  void dispose() {
+    _origins.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(
+      context.tr(
+        'Script governance · ${widget.containerName}',
+        '脚本治理 · ${widget.containerName}',
+      ),
+    ),
+    content: SizedBox(
+      width: 560,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              context.tr(
+                'This policy is enforced by the server when drafts, previews, and environment releases are created. It keeps custom code useful while giving owners a clear allowlist for third-party script origins.',
+                '此策略由服务端在创建草稿、预览和环境发布时强制执行。它保留自定义代码能力，同时让管理员明确控制第三方脚本来源。',
+              ),
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                context.tr(
+                  'Allow custom HTML / JavaScript',
+                  '允许自定义 HTML / JavaScript',
+                ),
+              ),
+              subtitle: Text(
+                context.tr(
+                  'When off, custom HTML tags and custom JavaScript triggers cannot be drafted or released.',
+                  '关闭后，不能创建或发布自定义 HTML 标签和自定义 JavaScript 触发器。',
+                ),
+              ),
+              value: _allowCustomCode,
+              onChanged: (value) => setState(() => _allowCustomCode = value),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _origins,
+              minLines: 3,
+              maxLines: 8,
+              autocorrect: false,
+              decoration: InputDecoration(
+                labelText: context.tr(
+                  'Allowed external script origins',
+                  '允许的外部脚本来源',
+                ),
+                hintText:
+                    'https://cdn.example.com\nhttps://analytics.example.com',
+                helperText: context.tr(
+                  'One origin per line. Leave empty to allow any origin when custom code is enabled. Use only http(s) origins, without paths or query strings.',
+                  '每行一个来源。启用自定义代码时留空表示不限制来源。只能填写不带路径和查询参数的 http(s) 来源。',
+                ),
+                border: const OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              context.tr(
+                'A production release still requires independent workspace-admin approval. This policy adds a second, explicit script boundary before that approval.',
+                '生产发布仍需要另一位工作区管理员独立审批；此策略会在审批前增加第二道明确的脚本边界。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(context.tr('Cancel', '取消')),
+      ),
+      FilledButton(
+        onPressed: () {
+          final origins = _origins.text
+              .split(RegExp(r'[\r\n]+'))
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .toList(growable: false);
+          Navigator.pop(context, {
+            'allowCustomCode': _allowCustomCode,
+            'allowedScriptOrigins': origins,
+          });
+        },
+        child: Text(context.tr('Save policy', '保存策略')),
       ),
     ],
   );

@@ -5621,7 +5621,78 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("name", is("Production tags"));
+        String policyPath = containerPath + "/" + container + "/script-policy";
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(policyPath)
+                .then()
+                .statusCode(200)
+                .body("canManage", is(true))
+                .body("allowCustomCode", is(true))
+                .body("allowedScriptOrigins", hasSize(0));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"allowCustomCode\":false,\"allowedScriptOrigins\":[\"https://cdn.example.com\"]}")
+                .put(policyPath)
+                .then()
+                .statusCode(200)
+                .body("allowCustomCode", is(false))
+                .body("allowedScriptOrigins[0]", is("https://cdn.example.com"));
         String draftPath = containerPath + "/" + container + "/versions";
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "[{\"type\":\"custom_html\",\"name\":\"blocked\",\"trigger\":\"page_view\",\"code\":\"<script>window.blocked=true;</script>\"}]")
+                .post(draftPath)
+                .then()
+                .statusCode(409)
+                .body("code", is("TAG_SCRIPT_POLICY_CUSTOM_CODE_BLOCKED"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"allowCustomCode\":true,\"allowedScriptOrigins\":[\"https://cdn.example.com\"]}")
+                .put(policyPath)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "[{\"type\":\"custom_html\",\"name\":\"blocked-origin\",\"trigger\":\"page_view\",\"code\":\"<script src=\\\"https://evil.example.com/tag.js\\\"></script>\"}]")
+                .post(draftPath)
+                .then()
+                .statusCode(409)
+                .body("code", is("TAG_SCRIPT_POLICY_ORIGIN_BLOCKED"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"allowCustomCode\":true,\"allowedScriptOrigins\":[]}")
+                .put(policyPath)
+                .then()
+                .statusCode(200);
+        String governedContainer = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"name\":\"Governed\"}")
+                .post(containerPath)
+                .then()
+                .statusCode(200)
+                .extract()
+                .path("id");
+        String governedPath = containerPath + "/" + governedContainer;
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"allowCustomCode\":true,\"allowedScriptOrigins\":[\"https://cdn.example.com\"]}")
+                .put(governedPath + "/script-policy")
+                .then()
+                .statusCode(200)
+                .body("allowedScriptOrigins", hasItem("https://cdn.example.com"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "[{\"type\":\"custom_html\",\"name\":\"allowed-origin\",\"trigger\":\"page_view\",\"code\":\"<script src=\\\"https://cdn.example.com/tag.js\\\"></script>\"}]")
+                .post(governedPath + "/versions")
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + owner.access())
+                .delete(governedPath)
+                .then()
+                .statusCode(204);
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("[{\"type\":\"html\",\"name\":\"unsafe\"}]")
@@ -5703,6 +5774,25 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(400)
                 .body("code", is("INVALID_PRODUCTION_REVIEW"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"allowCustomCode\":false,\"allowedScriptOrigins\":[]}")
+                .put(policyPath)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + reviewer.access())
+                .contentType("application/json")
+                .body("{\"reviewNote\":\"Policy must be restored\"}")
+                .post(requestPath + "/" + firstRequest + "/approve")
+                .then()
+                .statusCode(409)
+                .body("code", is("TAG_SCRIPT_POLICY_CUSTOM_CODE_BLOCKED"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"allowCustomCode\":true,\"allowedScriptOrigins\":[]}")
+                .put(policyPath)
+                .then()
+                .statusCode(200);
         given().header("Authorization", "Bearer " + reviewer.access())
                 .contentType("application/json")
                 .body("{\"reviewNote\":\"QA verified the event trigger and script scope\"}")
