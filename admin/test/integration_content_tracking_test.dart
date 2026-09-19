@@ -7,6 +7,37 @@ import 'package:seeray_lens_admin/features/integration/presentation/integration_
 import 'package:seeray_lens_admin/features/sites/application/site_controller.dart';
 
 void main() {
+  testWidgets('groups integration capabilities in dropdown menus', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(_IntegrationApi()),
+        ],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Collection & SDK'), findsOneWidget);
+    expect(find.text('Behaviour tools'), findsOneWidget);
+
+    await tester.tap(find.text('Behaviour tools'));
+    await tester.pumpAndSettle();
+    expect(find.text('Heatmaps'), findsNWidgets(2));
+
+    await tester.tap(find.text('Heatmaps').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Enable behaviour heatmaps'), findsOneWidget);
+  });
+
   testWidgets('provides a site-specific native Android SDK setup flow', (
     tester,
   ) async {
@@ -70,6 +101,11 @@ void main() {
 
     expect(find.text('HTTPS required for Android'), findsOneWidget);
     expect(find.text('Copy initialization code'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Copy tracking examples'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('Copy tracking examples'), findsOneWidget);
   });
 

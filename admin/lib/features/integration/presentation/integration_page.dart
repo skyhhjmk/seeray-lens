@@ -82,6 +82,9 @@ class IntegrationPage extends ConsumerWidget {
         body: Column(
           children: [
             Material(
+              child: _IntegrationGroupBar(groups: _integrationGroups(context)),
+            ),
+            Material(
               child: TabBar(
                 isScrollable: true,
                 tabs: [
@@ -303,6 +306,157 @@ class IntegrationPage extends ConsumerWidget {
       ),
     );
   }
+}
+
+class _IntegrationGroupBar extends StatelessWidget {
+  const _IntegrationGroupBar({required this.groups});
+
+  final List<_IntegrationGroup> groups;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = DefaultTabController.of(context);
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        return Container(
+          width: double.infinity,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final group in groups)
+                PopupMenuButton<int>(
+                  tooltip: context.tr(
+                    'Choose an integration capability',
+                    '选择集成功能',
+                  ),
+                  onSelected: controller.animateTo,
+                  itemBuilder: (context) => [
+                    for (final item in group.items)
+                      PopupMenuItem<int>(
+                        value: item.index,
+                        child: Row(
+                          children: [
+                            Expanded(child: Text(item.label)),
+                            if (controller.index == item.index)
+                              Icon(
+                                Icons.check,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color:
+                          group.items.any(
+                            (item) => item.index == controller.index,
+                          )
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : null,
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(group.icon, size: 18),
+                          const SizedBox(width: 6),
+                          Text(group.label),
+                          const SizedBox(width: 2),
+                          const Icon(Icons.arrow_drop_down, size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+List<_IntegrationGroup> _integrationGroups(BuildContext context) => [
+  _IntegrationGroup(
+    label: context.tr('Collection & SDK', '采集与 SDK'),
+    icon: Icons.code,
+    items: [
+      _IntegrationItem(0, context.tr('JavaScript', 'JavaScript')),
+      _IntegrationItem(1, context.tr('Android SDK', 'Android SDK')),
+      _IntegrationItem(2, context.tr('iOS SDK', 'iOS SDK')),
+      _IntegrationItem(3, context.tr('Image fallback', '图片回退')),
+      _IntegrationItem(4, context.tr('SVG fallback', 'SVG 回退')),
+    ],
+  ),
+  _IntegrationGroup(
+    label: context.tr('Analytics', '分析能力'),
+    icon: Icons.insights_outlined,
+    items: [
+      _IntegrationItem(5, context.tr('Goals', '目标事件')),
+      _IntegrationItem(6, context.tr('Site search', '站内搜索')),
+      _IntegrationItem(7, context.tr('Content analytics', '内容分析')),
+      _IntegrationItem(8, context.tr('Web Vitals', 'Web Vitals')),
+    ],
+  ),
+  _IntegrationGroup(
+    label: context.tr('Behaviour tools', '行为工具'),
+    icon: Icons.auto_graph,
+    items: [
+      _IntegrationItem(9, context.tr('Heatmaps', '行为热图')),
+      _IntegrationItem(10, context.tr('Funnels', '漏斗')),
+      _IntegrationItem(11, context.tr('A/B tests', 'A/B 测试')),
+      _IntegrationItem(12, context.tr('Tag Manager', 'Tag Manager')),
+    ],
+  ),
+  _IntegrationGroup(
+    label: context.tr('Privacy & quality', '隐私与质量'),
+    icon: Icons.verified_user_outlined,
+    items: [
+      _IntegrationItem(13, context.tr('Consent & privacy', '同意与隐私')),
+      _IntegrationItem(14, context.tr('Hosted privacy', '托管隐私')),
+      _IntegrationItem(15, context.tr('Form analytics', '表单分析')),
+      _IntegrationItem(16, context.tr('Media analytics', '媒体分析')),
+      _IntegrationItem(17, context.tr('Crash analytics', '崩溃分析')),
+    ],
+  ),
+  _IntegrationGroup(
+    label: context.tr('Identity', '身份关联'),
+    icon: Icons.person_outline,
+    items: [_IntegrationItem(18, context.tr('User identity', '用户身份关联'))],
+  ),
+];
+
+class _IntegrationGroup {
+  const _IntegrationGroup({
+    required this.label,
+    required this.icon,
+    required this.items,
+  });
+
+  final String label;
+  final IconData icon;
+  final List<_IntegrationItem> items;
+}
+
+class _IntegrationItem {
+  const _IntegrationItem(this.index, this.label);
+
+  final int index;
+  final String label;
 }
 
 class _ConsentSetup extends StatelessWidget {
