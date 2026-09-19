@@ -73,4 +73,13 @@ public class WorkspaceExtensionResource {
             @QueryParam("limit") @DefaultValue("25") int limit) {
         return deliveryService.list(workspaceId, extensionId, limit);
     }
+
+    @POST
+    @Path("/{extensionId}/deliveries/{deliveryId}/retry")
+    public io.seeray.lens.application.WorkspaceExtensionDeliveryService.DeliveryView retryDelivery(
+            @PathParam("workspaceId") UUID workspaceId,
+            @PathParam("extensionId") UUID extensionId,
+            @PathParam("deliveryId") UUID deliveryId) {
+        return deliveryService.retry(workspaceId, extensionId, deliveryId);
+    }
 }

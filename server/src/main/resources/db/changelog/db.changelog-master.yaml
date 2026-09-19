@@ -531,3 +531,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0076-workspace-extension-deliveries.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0077-workspace-extension-delivery-retry-audit
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0077-workspace-extension-delivery-retry-audit.sql
+            relativeToChangelogFile: false

@@ -127,6 +127,7 @@ public class WorkspaceDiagnosticsResource {
                         : "Edit retention settings so raw data is positive and does not outlive aggregate retention."));
 
         checks.add(releaseCheck());
+        checks.add(extensionDeliveryCheck(workspaceId));
 
         String overall = checks.stream().anyMatch(check -> "error".equals(check.status))
                 ? "error"
@@ -160,6 +161,52 @@ public class WorkspaceDiagnosticsResource {
                     "Release and migrations",
                     "The current release or migration history could not be read.",
                     "Check the deployed release configuration and database changelog before upgrading.");
+        }
+    }
+
+    private CheckView extensionDeliveryCheck(UUID workspaceId) {
+        try {
+            Object[] counts = (Object[]) entityManager
+                    .createNativeQuery("select count(*) filter (where d.status='pending'), "
+                            + "count(*) filter (where d.status='failed'), "
+                            + "count(*) filter (where d.status='sending') "
+                            + "from workspace_extension_delivery d "
+                            + "join workspace_extension e on e.id=d.extension_id "
+                            + "where e.organization_id=?1")
+                    .setParameter(1, workspaceId)
+                    .getSingleResult();
+            long pending = ((Number) counts[0]).longValue();
+            long failed = ((Number) counts[1]).longValue();
+            long sending = ((Number) counts[2]).longValue();
+            if (failed > 0) {
+                return new CheckView(
+                        "extension-delivery",
+                        "error",
+                        "Extension delivery queue",
+                        failed + (failed == 1 ? " extension delivery is" : " extension deliveries are") + " failed.",
+                        "Open Workspace → Extensions → Delivery activity and retry failed deliveries after checking the endpoint.");
+            }
+            if (pending > 100) {
+                return new CheckView(
+                        "extension-delivery",
+                        "warning",
+                        "Extension delivery queue",
+                        pending + " extension deliveries are waiting to be sent.",
+                        "Check the extension endpoint health and queue worker logs before accepting more traffic.");
+            }
+            return new CheckView(
+                    "extension-delivery",
+                    "pass",
+                    "Extension delivery queue",
+                    pending + " waiting, " + sending + " sending, and no failed extension deliveries.",
+                    null);
+        } catch (RuntimeException error) {
+            return new CheckView(
+                    "extension-delivery",
+                    "warning",
+                    "Extension delivery queue",
+                    "Extension delivery queue status could not be read.",
+                    "Check that the extension delivery migration and database connection are healthy.");
         }
     }
 

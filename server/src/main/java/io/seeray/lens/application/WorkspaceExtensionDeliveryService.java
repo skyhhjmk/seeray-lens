@@ -7,6 +7,7 @@ import io.seeray.lens.domain.common.UuidV7;
 import io.seeray.lens.domain.site.Site;
 import io.seeray.lens.domain.workspace.WorkspaceExtension;
 import io.seeray.lens.domain.workspace.WorkspaceExtensionDelivery;
+import io.seeray.lens.domain.workspace.WorkspaceRole;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -33,17 +34,20 @@ public class WorkspaceExtensionDeliveryService {
     private final ObjectMapper mapper;
     private final SecretEncryptionService encryption;
     private final WorkspaceAccess access;
+    private final WorkspaceAuditRecorder audit;
     private final HttpClient httpClient;
 
     public WorkspaceExtensionDeliveryService(
             EntityManager entityManager,
             ObjectMapper mapper,
             SecretEncryptionService encryption,
-            WorkspaceAccess access) {
+            WorkspaceAccess access,
+            WorkspaceAuditRecorder audit) {
         this.entityManager = entityManager;
         this.mapper = mapper;
         this.encryption = encryption;
         this.access = access;
+        this.audit = audit;
         this.httpClient =
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     }
@@ -99,6 +103,39 @@ public class WorkspaceExtensionDeliveryService {
                         delivery.createdAt,
                         delivery.deliveredAt))
                 .toList();
+    }
+
+    @Transactional
+    public DeliveryView retry(UUID workspaceId, UUID extensionId, UUID deliveryId) {
+        var member = access.require(workspaceId, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
+        WorkspaceExtensionDelivery delivery = WorkspaceExtensionDelivery.find(
+                        "id = ?1 and extension.id = ?2 and extension.organization.id = ?3",
+                        deliveryId,
+                        extensionId,
+                        member.organization.id)
+                .firstResult();
+        if (delivery == null)
+            throw new io.seeray.lens.domain.common.ControlPlaneException(
+                    404, "EXTENSION_DELIVERY_NOT_FOUND", "Extension delivery not found");
+        if (!"failed".equals(delivery.status))
+            throw new io.seeray.lens.domain.common.ControlPlaneException(
+                    409, "EXTENSION_DELIVERY_NOT_FAILED", "Only failed deliveries can be retried");
+        delivery.status = "pending";
+        delivery.availableAt = Instant.now();
+        delivery.lastError = null;
+        delivery.updatedAt = Instant.now();
+        audit.record(
+                workspaceId, access.userId(), "RETRY_EXTENSION_DELIVERY", "workspace_extension_delivery", delivery.id);
+        return new DeliveryView(
+                delivery.id,
+                delivery.clientEventId,
+                delivery.eventType,
+                delivery.status,
+                delivery.attempts,
+                delivery.responseStatus,
+                delivery.lastError,
+                delivery.createdAt,
+                delivery.deliveredAt);
     }
 
     @Scheduled(every = "5s", identity = "workspace-extension-delivery")

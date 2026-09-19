@@ -4,7 +4,7 @@ SeeRay Lens extensions are registered per workspace as outbound HTTPS webhooks. 
 
 Owners and admins can create, edit, disable, archive, rotate the secret, send a signed manual test, and inspect delivery activity from **Workspace → Extensions**. The endpoint must use HTTPS and cannot include user information, fragments, localhost, loopback, or `.local` hosts.
 
-Supported subscriptions are currently `analytics.event`, `analytics.page_view`, and `diagnostics.alert`. `analytics.event` and `analytics.page_view` are queued after the corresponding raw event is persisted. Delivery uses a durable outbox, idempotency by extension/event/type, five attempts with backoff, and a graphical delivered/waiting/failed history. Payloads contain the sanitized site/page/event data but remove visitor and session identifiers.
+Supported subscriptions are currently `analytics.event`, `analytics.page_view`, and `diagnostics.alert`. `analytics.event` and `analytics.page_view` are queued after the corresponding raw event is persisted. Delivery uses a durable outbox, idempotency by extension/event/type, five attempts with backoff, a graphical delivered/waiting/failed history, and a retry action for failed rows. Workspace diagnostics also reports failed or heavily backlogged extension deliveries. Payloads contain the sanitized site/page/event data but remove visitor and session identifiers.
 
 The manual test uses `POST` with `Content-Type: application/json`, `X-SeeRay-Extension-Event: extension.test`, and `X-SeeRay-Signature: sha256=<HMAC-SHA256 hex>`. Automatic deliveries use the subscription name in the event header. The signature covers the exact JSON request body and uses the current secret.
 

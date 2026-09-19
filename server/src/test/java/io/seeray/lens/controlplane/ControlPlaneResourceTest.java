@@ -441,13 +441,14 @@ class ControlPlaneResourceTest {
                 .then()
                 .statusCode(200)
                 .body("overallStatus", is("warning"))
-                .body("checks.size()", is(6))
+                .body("checks.size()", is(7))
                 .body("checks.find { it.key == 'database' }.status", is("pass"))
                 .body("checks.find { it.key == 'sites' }.status", is("pass"))
                 .body("checks.find { it.key == 'tracking' }.status", is("pass"))
                 .body("checks.find { it.key == 'origins' }.status", is("warning"))
                 .body("checks.find { it.key == 'retention' }.status", is("pass"))
-                .body("checks.find { it.key == 'release' }.status", is("pass"));
+                .body("checks.find { it.key == 'release' }.status", is("pass"))
+                .body("checks.find { it.key == 'extension-delivery' }.status", is("pass"));
 
         Tokens outsider = register("diagnostics-outsider" + System.nanoTime() + "@example.test");
         given().header("Authorization", "Bearer " + outsider.access())
@@ -638,14 +639,16 @@ class ControlPlaneResourceTest {
                 "private-visitor",
                 "private-session",
                 null)));
-        given().header("Authorization", "Bearer " + owner.access())
+        String deliveryId = given().header("Authorization", "Bearer " + owner.access())
                 .get(path + "/" + extensionId + "/deliveries")
                 .then()
                 .statusCode(200)
                 .body("size()", is(1))
                 .body("[0].eventType", is("analytics.event"))
                 .body("[0].status", is("pending"))
-                .body("[0].attempts", is(0));
+                .body("[0].attempts", is(0))
+                .extract()
+                .path("[0].id");
         try (var connection = dataSource.getConnection();
                 var statement = connection.prepareStatement(
                         "select payload_json::text from workspace_extension_delivery where extension_id=?")) {
@@ -658,6 +661,18 @@ class ControlPlaneResourceTest {
                 assertTrue(payload.contains("purchase"));
             }
         }
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "update workspace_extension_delivery set status='failed', last_error='endpoint unavailable' where extension_id=?")) {
+            statement.setObject(1, UUID.fromString(extensionId));
+            statement.executeUpdate();
+        }
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .post(path + "/" + extensionId + "/deliveries/" + deliveryId + "/retry")
+                .then()
+                .statusCode(200)
+                .body("status", is("pending"));
     }
 
     @Test

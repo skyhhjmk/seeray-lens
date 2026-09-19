@@ -396,6 +396,27 @@ class _WorkspaceExtensionsPageState
                     final row = rows[index];
                     final status = row['status'] as String? ?? 'pending';
                     final color = _deliveryColor(status);
+                    final retry = status == 'failed'
+                        ? IconButton(
+                            tooltip: context.tr('Retry delivery', '重试投递'),
+                            icon: const Icon(Icons.refresh),
+                            onPressed: () async {
+                              try {
+                                await ref
+                                    .read(apiProvider)
+                                    .request(
+                                      'POST',
+                                      '/api/v1/workspaces/${widget.workspaceId}/extensions/${extension['id']}/deliveries/${row['id']}/retry',
+                                    );
+                                if (!dialogContext.mounted) return;
+                                Navigator.pop(dialogContext);
+                                await _showDeliveries(extension);
+                              } catch (error) {
+                                _showError(error);
+                              }
+                            },
+                          )
+                        : null;
                     return ListTile(
                       dense: true,
                       leading: Icon(_deliveryIcon(status), color: color),
@@ -403,9 +424,16 @@ class _WorkspaceExtensionsPageState
                       subtitle: Text(
                         '${row['eventType'] ?? ''} · ${row['attempts'] ?? 0} ${context.tr('attempts', '次尝试')}',
                       ),
-                      trailing: row['responseStatus'] == null
+                      trailing: retry == null && row['responseStatus'] == null
                           ? null
-                          : Text('${row['responseStatus']}'),
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (row['responseStatus'] != null)
+                                  Text('${row['responseStatus']}'),
+                                ?retry,
+                              ],
+                            ),
                     );
                   },
                 ),
