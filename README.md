@@ -90,6 +90,12 @@ For local Flutter Web development, use the backend's configured development orig
 (cd admin && flutter run -d chrome --web-port 3000)
 ```
 
+Quarkus Dev Mode has safe local defaults for the encryption key and trusted
+proxy list, so it can start without copying production secrets into a laptop.
+Production still requires a stable `SEERAY_SECRET_ENCRYPTION_KEY`; enable geo
+location only after setting `SEERAY_GEO_TRUSTED_PROXY_CIDRS` to the exact edge
+proxy CIDRs.
+
 Native admin builds render DOM snapshots and recordings inside an application WebView. Desktop builds bundle a pinned CEF/Chromium runtime to avoid host WebKit and GPU-driver differences; Android and iOS use their system WebViews. The first desktop build downloads the CEF distribution and is substantially larger than the Web build.
 
 With the Quarkus control plane and PostgreSQL running, the real Flutter REST
