@@ -23,7 +23,7 @@
     trackErrors: script.hasAttribute('data-track-errors'),
     crashRelease: script.getAttribute('data-release') || undefined,
     heatmap: {
-      enabled: true,
+      enabled: script.hasAttribute('data-heatmap'),
       navigationMode: script.getAttribute('data-navigation-mode') === 'manual' ? 'manual' : 'auto',
       layoutVersion: script.getAttribute('data-layout-version') || undefined,
     },

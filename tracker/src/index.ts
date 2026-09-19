@@ -272,6 +272,9 @@ export class Tracker {
       this.readyPromise = this.loadConfigured();
     }
     this.emitPlugin('consent', { state, granted });
+    try {
+      globalThis.dispatchEvent?.(new CustomEvent('seeray:consent', { detail: { state, granted } }));
+    } catch { /* CustomEvent is unavailable in non-browser runtimes. */ }
   }
   optOut(): void { this.setConsent(false); }
   ready(): Promise<void> { return this.readyPromise; }
