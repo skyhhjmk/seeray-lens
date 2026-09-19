@@ -28,12 +28,13 @@ void main() {
 
     expect(find.text('Collection & SDK'), findsOneWidget);
     expect(find.text('Behaviour tools'), findsOneWidget);
+    expect(find.byType(TabBar), findsNothing);
 
     await tester.tap(find.text('Behaviour tools'));
     await tester.pumpAndSettle();
-    expect(find.text('Heatmaps'), findsNWidgets(2));
+    expect(find.text('Heatmaps'), findsOneWidget);
 
-    await tester.tap(find.text('Heatmaps').last);
+    await tester.tap(find.text('Heatmaps'));
     await tester.pumpAndSettle();
     expect(find.text('Enable behaviour heatmaps'), findsOneWidget);
   });
@@ -57,9 +58,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Android SDK'));
-    await tester.tap(find.text('Android SDK'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Collection & SDK', 'Android SDK');
 
     expect(find.text('Connect an Android app'), findsOneWidget);
     expect(find.text('Source build only · v0.1.0'), findsOneWidget);
@@ -95,9 +94,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Android SDK'));
-    await tester.tap(find.text('Android SDK'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Collection & SDK', 'Android SDK');
 
     expect(find.text('HTTPS required for Android'), findsOneWidget);
     expect(find.text('Copy initialization code'), findsNothing);
@@ -127,9 +124,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('iOS SDK'));
-    await tester.tap(find.text('iOS SDK'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Collection & SDK', 'iOS SDK');
 
     expect(find.text('Connect an iOS app'), findsOneWidget);
     expect(find.text('Public source package · master branch'), findsOneWidget);
@@ -163,9 +158,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('iOS SDK'));
-    await tester.tap(find.text('iOS SDK'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Collection & SDK', 'iOS SDK');
 
     expect(find.text('HTTPS required for iOS'), findsOneWidget);
     expect(find.text('Copy initialization code'), findsNothing);
@@ -183,10 +176,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Web Vitals'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Web Vitals'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Analytics', 'Web Vitals');
 
     expect(find.text('Measure Core Web Vitals'), findsOneWidget);
     final snippet = tester.widget<SelectableText>(
@@ -210,10 +200,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Content analytics'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Content analytics'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Analytics', 'Content analytics');
 
     expect(
       find.text('Measure content impressions and interactions'),
@@ -248,9 +235,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Consent & privacy'));
-    await tester.tap(find.text('Consent & privacy'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(
+      tester,
+      'Privacy & quality',
+      'Consent & privacy',
+    );
 
     expect(find.text('Visitor consent setup'), findsOneWidget);
     expect(find.text('Consent required for this site'), findsOneWidget);
@@ -262,9 +251,7 @@ void main() {
     expect(snippet.data, contains('SeeRay.optOut'));
     expect(snippet.data, contains('seeray-consent-manage-srl_demo'));
 
-    await tester.ensureVisible(find.text('Hosted privacy'));
-    await tester.tap(find.text('Hosted privacy'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Privacy & quality', 'Hosted privacy');
     expect(find.text('Hosted privacy preferences'), findsOneWidget);
     final hostedSnippet = tester.widget<SelectableText>(
       find.byType(SelectableText),
@@ -277,9 +264,7 @@ void main() {
     await tester.ensureVisible(find.text('Copy hosted privacy setup'));
     expect(find.text('Copy hosted privacy setup'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Image fallback'));
-    await tester.tap(find.text('Image fallback'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Collection & SDK', 'Image fallback');
     final pixelSnippet = tester.widget<SelectableText>(
       find.byType(SelectableText),
     );
@@ -298,9 +283,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('User identity'));
-    await tester.tap(find.text('User identity'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Identity', 'User identity');
 
     expect(
       find.text('Link authenticated visits across devices'),
@@ -329,9 +312,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Crash analytics'));
-    await tester.tap(find.text('Crash analytics'));
-    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Privacy & quality', 'Crash analytics');
     await tester.pump(const Duration(milliseconds: 50));
     await tester.pumpAndSettle();
 
@@ -399,6 +380,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Uploaded source maps'), findsOneWidget);
   });
+}
+
+Future<void> _selectIntegrationTab(
+  WidgetTester tester,
+  String group,
+  String item,
+) async {
+  await tester.tap(find.text(group));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(item));
+  await tester.pumpAndSettle();
 }
 
 class _SitesController extends SitesController {

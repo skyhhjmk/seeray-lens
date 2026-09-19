@@ -84,32 +84,6 @@ class IntegrationPage extends ConsumerWidget {
             Material(
               child: _IntegrationGroupBar(groups: _integrationGroups(context)),
             ),
-            Material(
-              child: TabBar(
-                isScrollable: true,
-                tabs: [
-                  Tab(text: context.tr('JavaScript', 'JavaScript')),
-                  Tab(text: context.tr('Android SDK', 'Android SDK')),
-                  Tab(text: context.tr('iOS SDK', 'iOS SDK')),
-                  Tab(text: context.tr('Image fallback', '图片回退')),
-                  Tab(text: context.tr('SVG fallback', 'SVG 回退')),
-                  Tab(text: context.tr('Goals', '目标事件')),
-                  Tab(text: context.tr('Site search', '站内搜索')),
-                  Tab(text: context.tr('Content analytics', '内容分析')),
-                  Tab(text: context.tr('Web Vitals', 'Web Vitals')),
-                  Tab(text: context.tr('Heatmaps', '行为热图')),
-                  Tab(text: context.tr('Funnels', '漏斗')),
-                  Tab(text: context.tr('A/B tests', 'A/B 测试')),
-                  Tab(text: context.tr('Tag Manager', 'Tag Manager')),
-                  Tab(text: context.tr('Consent & privacy', '同意与隐私')),
-                  Tab(text: context.tr('Hosted privacy', '托管隐私')),
-                  Tab(text: context.tr('Form analytics', '表单分析')),
-                  Tab(text: context.tr('Media analytics', '媒体分析')),
-                  Tab(text: context.tr('Crash analytics', '崩溃分析')),
-                  Tab(text: context.tr('User identity', '用户身份关联')),
-                ],
-              ),
-            ),
             Expanded(
               child: TabBarView(
                 children: [
@@ -328,64 +302,76 @@ class _IntegrationGroupBar extends StatelessWidget {
             runSpacing: 6,
             children: [
               for (final group in groups)
-                PopupMenuButton<int>(
-                  tooltip: context.tr(
-                    'Choose an integration capability',
-                    '选择集成功能',
-                  ),
-                  onSelected: controller.animateTo,
-                  itemBuilder: (context) => [
-                    for (final item in group.items)
-                      PopupMenuItem<int>(
-                        value: item.index,
-                        child: Row(
-                          children: [
-                            Expanded(child: Text(item.label)),
-                            if (controller.index == item.index)
-                              Icon(
-                                Icons.check,
-                                size: 18,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                          ],
-                        ),
-                      ),
-                  ],
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color:
-                          group.items.any(
-                            (item) => item.index == controller.index,
-                          )
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : null,
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outline,
-                      ),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(group.icon, size: 18),
-                          const SizedBox(width: 6),
-                          Text(group.label),
-                          const SizedBox(width: 2),
-                          const Icon(Icons.arrow_drop_down, size: 18),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+                _IntegrationGroupMenu(group: group, controller: controller),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+class _IntegrationGroupMenu extends StatelessWidget {
+  const _IntegrationGroupMenu({required this.group, required this.controller});
+
+  final _IntegrationGroup group;
+  final TabController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = group.items
+        .where((item) => item.index == controller.index)
+        .firstOrNull;
+    final active = current != null;
+    return PopupMenuButton<int>(
+      tooltip: context.tr('Choose an integration capability', '选择集成功能'),
+      onSelected: controller.animateTo,
+      itemBuilder: (context) => [
+        for (final item in group.items)
+          PopupMenuItem<int>(
+            value: item.index,
+            child: Row(
+              children: [
+                Expanded(child: Text(item.label)),
+                if (controller.index == item.index)
+                  Icon(
+                    Icons.check,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+              ],
+            ),
+          ),
+      ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: active ? Theme.of(context).colorScheme.primaryContainer : null,
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(group.icon, size: 18),
+              const SizedBox(width: 6),
+              Text(group.label),
+              if (current != null) ...[
+                const SizedBox(width: 5),
+                Text(
+                  '· ${current.label}',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 2),
+              const Icon(Icons.arrow_drop_down, size: 18),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
