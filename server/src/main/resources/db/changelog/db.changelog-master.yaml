@@ -482,3 +482,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0069-tag-manager-script-policy.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0070-tag-manager-capability-policy
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0070-tag-manager-capability-policy.sql
+            relativeToChangelogFile: false

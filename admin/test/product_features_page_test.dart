@@ -85,7 +85,10 @@ void main() {
     expect(find.text('Script governance · Production'), findsOneWidget);
     expect(find.text('Allow custom HTML / JavaScript'), findsOneWidget);
     expect(find.text('Allowed external script origins'), findsOneWidget);
+    expect(find.text('Allowed tag capabilities'), findsOneWidget);
+    expect(find.text('Allow custom JavaScript triggers'), findsOneWidget);
     await tester.tap(find.text('Allow custom HTML / JavaScript'));
+    await tester.ensureVisible(find.byType(TextField));
     await tester.tap(find.byType(TextField));
     await tester.enterText(
       find.byType(TextField),
@@ -103,6 +106,8 @@ void main() {
         'https://cdn.example.com',
         'https://analytics.example.com',
       ],
+      'allowedTagTypes': ['page_view', 'event', 'custom_html'],
+      'allowCustomJsTriggers': true,
     });
     expect(find.text('Script governance policy saved.'), findsOneWidget);
   });
@@ -1241,6 +1246,8 @@ class _GraphicalFeatureApi extends SeeRayApi {
         'canManage': true,
         'allowCustomCode': true,
         'allowedScriptOrigins': const <String>[],
+        'allowedTagTypes': const <String>['page_view', 'event', 'custom_html'],
+        'allowCustomJsTriggers': true,
       };
     }
     if (method == 'PUT' && path.endsWith('/script-policy')) {

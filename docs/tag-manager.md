@@ -130,6 +130,12 @@ default policy preserves existing containers: custom code is enabled and an empt
 allowlist means no external-origin restriction until an administrator chooses to
 tighten it.
 
+The same form exposes a capability matrix for page-view tags, event tags, and
+custom HTML tags, plus an independent switch for custom JavaScript triggers.
+This lets a workspace keep ordinary event instrumentation while prohibiting a
+specific higher-risk capability in one container. Existing containers default
+to all supported capabilities enabled.
+
 The server enforces this policy when creating a draft, creating a live preview,
 deploying development/staging, and requesting production approval. It also
 rechecks the policy at approval time, so changing the policy cannot be bypassed
@@ -137,6 +143,8 @@ by reusing an older draft. Disallowed custom code returns
 `TAG_SCRIPT_POLICY_CUSTOM_CODE_BLOCKED`; an external URL outside the allowlist
 returns `TAG_SCRIPT_POLICY_ORIGIN_BLOCKED`. Policy changes are ordinary
 site-scoped Tag Manager mutations and therefore appear in the audit log.
+Disallowed tag types return `TAG_SCRIPT_POLICY_CAPABILITY_BLOCKED`, while a
+disabled custom-JavaScript trigger returns `TAG_SCRIPT_POLICY_CUSTOM_JS_BLOCKED`.
 
 ### Draft dry-run
 

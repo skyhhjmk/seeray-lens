@@ -59,7 +59,9 @@ public class TagManagerResource {
                 siteId,
                 containerId,
                 request != null && request.allowCustomCode,
-                request == null ? List.of() : request.allowedScriptOrigins);
+                request == null ? List.of() : request.allowedScriptOrigins,
+                request == null ? List.of("page_view", "event", "custom_html") : request.allowedTagTypes,
+                request == null || request.allowCustomJsTriggers);
     }
 
     @DELETE
@@ -242,6 +244,8 @@ public class TagManagerResource {
     public static class ScriptPolicyRequest {
         public boolean allowCustomCode = true;
         public List<String> allowedScriptOrigins = List.of();
+        public List<String> allowedTagTypes = List.of("page_view", "event", "custom_html");
+        public boolean allowCustomJsTriggers = true;
     }
 
     public static class TemplateRequest {

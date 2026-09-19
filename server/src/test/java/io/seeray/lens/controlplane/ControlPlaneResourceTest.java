@@ -5628,7 +5628,9 @@ class ControlPlaneResourceTest {
                 .statusCode(200)
                 .body("canManage", is(true))
                 .body("allowCustomCode", is(true))
-                .body("allowedScriptOrigins", hasSize(0));
+                .body("allowedScriptOrigins", hasSize(0))
+                .body("allowedTagTypes", hasItems("page_view", "event", "custom_html"))
+                .body("allowCustomJsTriggers", is(true));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"allowCustomCode\":false,\"allowedScriptOrigins\":[\"https://cdn.example.com\"]}")
@@ -5649,6 +5651,38 @@ class ControlPlaneResourceTest {
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"allowCustomCode\":true,\"allowedScriptOrigins\":[\"https://cdn.example.com\"]}")
+                .put(policyPath)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"allowCustomCode\":true,\"allowedScriptOrigins\":[],\"allowedTagTypes\":[\"page_view\",\"event\"],\"allowCustomJsTriggers\":false}")
+                .put(policyPath)
+                .then()
+                .statusCode(200)
+                .body("allowedTagTypes", hasItems("page_view", "event"))
+                .body("allowCustomJsTriggers", is(false));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "[{\"type\":\"custom_html\",\"name\":\"capability-blocked\",\"trigger\":\"page_view\",\"code\":\"<script>window.blocked=true;</script>\"}]")
+                .post(draftPath)
+                .then()
+                .statusCode(409)
+                .body("code", is("TAG_SCRIPT_POLICY_CAPABILITY_BLOCKED"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "[{\"type\":\"event\",\"name\":\"custom-trigger\",\"eventType\":\"signup\",\"triggers\":[{\"type\":\"custom_js\",\"functionName\":\"shouldFire\",\"code\":\"(event) => true\"}]}]")
+                .post(draftPath)
+                .then()
+                .statusCode(409)
+                .body("code", is("TAG_SCRIPT_POLICY_CUSTOM_JS_BLOCKED"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body(
+                        "{\"allowCustomCode\":true,\"allowedScriptOrigins\":[\"https://cdn.example.com\"],\"allowedTagTypes\":[\"page_view\",\"event\",\"custom_html\"],\"allowCustomJsTriggers\":true}")
                 .put(policyPath)
                 .then()
                 .statusCode(200);

@@ -60,24 +60,34 @@ public class TagManagerService {
                 role == WorkspaceRole.OWNER || role == WorkspaceRole.ADMIN,
                 policy.allowCustomCode,
                 allowedOrigins(policy),
+                allowedTagTypes(policy),
+                policy.allowCustomJsTriggers,
                 policy.updatedAt);
     }
 
     @Transactional
     public ScriptPolicyView saveScriptPolicy(
-            UUID siteId, UUID containerId, boolean allowCustomCode, List<String> allowedOrigins) {
+            UUID siteId,
+            UUID containerId,
+            boolean allowCustomCode,
+            List<String> allowedOrigins,
+            List<String> allowedTagTypes,
+            boolean allowCustomJsTriggers) {
         TagContainer container = writableContainer(siteId, containerId);
         List<String> normalizedOrigins = normalizeOrigins(allowedOrigins);
+        List<String> normalizedTagTypes = normalizeTagTypes(allowedTagTypes);
         TagContainerSecurityPolicy policy = policy(container.id);
         policy.containerId = container.id;
         policy.allowCustomCode = allowCustomCode;
         try {
             policy.allowedScriptOriginsJson = mapper.writeValueAsString(normalizedOrigins);
+            policy.allowedTagTypesJson = mapper.writeValueAsString(normalizedTagTypes);
         } catch (Exception error) {
             throw new IllegalStateException("Could not encode tag script policy", error);
         }
         policy.updatedBy = access.userId();
         policy.updatedAt = Instant.now();
+        policy.allowCustomJsTriggers = allowCustomJsTriggers;
         policy.persist();
         return scriptPolicy(siteId, containerId);
     }
@@ -348,7 +358,8 @@ public class TagManagerService {
     private void validateTags(TagContainer container, JsonNode tags) {
         validateTags(tags);
         TagContainerSecurityPolicy stored = policy(container.id);
-        ScriptPolicy scriptPolicy = new ScriptPolicy(stored.allowCustomCode, allowedOrigins(stored));
+        ScriptPolicy scriptPolicy = new ScriptPolicy(
+                stored.allowCustomCode, allowedOrigins(stored), allowedTagTypes(stored), stored.allowCustomJsTriggers);
         for (JsonNode tag : tags) validateScriptPolicy(tag, scriptPolicy);
     }
 
@@ -363,7 +374,21 @@ public class TagManagerService {
     }
 
     private static void validateScriptPolicy(JsonNode tag, ScriptPolicy policy) {
-        boolean customCode = "custom_html".equals(textOrNull(tag, "type")) || containsCustomJsTrigger(tag);
+        String type = textOrNull(tag, "type");
+        if (!policy.allowedTagTypes().contains(type)) {
+            throw new ControlPlaneException(
+                    409,
+                    "TAG_SCRIPT_POLICY_CAPABILITY_BLOCKED",
+                    "This container policy does not allow this tag capability.");
+        }
+        boolean customJsTrigger = containsCustomJsTrigger(tag);
+        if (customJsTrigger && !policy.allowCustomJsTriggers()) {
+            throw new ControlPlaneException(
+                    409,
+                    "TAG_SCRIPT_POLICY_CUSTOM_JS_BLOCKED",
+                    "This container policy does not allow custom JavaScript triggers.");
+        }
+        boolean customCode = "custom_html".equals(type) || customJsTrigger;
         if (customCode && !policy.allowCustomCode()) {
             throw new ControlPlaneException(
                     409,
@@ -402,6 +427,8 @@ public class TagManagerService {
         policy.containerId = containerId;
         policy.allowCustomCode = true;
         policy.allowedScriptOriginsJson = "[]";
+        policy.allowedTagTypesJson = "[\"page_view\",\"event\",\"custom_html\"]";
+        policy.allowCustomJsTriggers = true;
         policy.updatedBy = access.userId();
         policy.updatedAt = Instant.now();
         return policy;
@@ -418,6 +445,20 @@ public class TagManagerService {
             return List.copyOf(origins);
         } catch (Exception error) {
             throw new IllegalStateException("Could not read tag script policy", error);
+        }
+    }
+
+    private List<String> allowedTagTypes(TagContainerSecurityPolicy policy) {
+        try {
+            JsonNode values = mapper.readTree(policy.allowedTagTypesJson == null ? "[]" : policy.allowedTagTypesJson);
+            if (values == null || !values.isArray()) return List.of();
+            List<String> types = new ArrayList<>();
+            for (JsonNode value : values) {
+                if (value.isTextual()) types.add(value.asText());
+            }
+            return List.copyOf(types);
+        } catch (Exception error) {
+            throw new IllegalStateException("Could not read tag capability policy", error);
         }
     }
 
@@ -439,6 +480,21 @@ public class TagManagerService {
             origins.add(origin);
         }
         return List.copyOf(origins);
+    }
+
+    private List<String> normalizeTagTypes(List<String> values) {
+        if (values == null || values.size() > 3) {
+            throw new ControlPlaneException(400, "INVALID_TAG_SCRIPT_POLICY", "Choose valid tag capabilities.");
+        }
+        Set<String> supported = Set.of("page_view", "event", "custom_html");
+        LinkedHashSet<String> types = new LinkedHashSet<>();
+        for (String value : values) {
+            if (value == null || !supported.contains(value)) {
+                throw new ControlPlaneException(400, "INVALID_TAG_SCRIPT_POLICY", "Choose valid tag capabilities.");
+            }
+            types.add(value);
+        }
+        return List.copyOf(types);
     }
 
     private static String normalizeOrigin(String value) {
@@ -1055,9 +1111,18 @@ public class TagManagerService {
             Map<String, Integer> environmentVersions) {}
 
     public record ScriptPolicyView(
-            boolean canManage, boolean allowCustomCode, List<String> allowedScriptOrigins, Instant updatedAt) {}
+            boolean canManage,
+            boolean allowCustomCode,
+            List<String> allowedScriptOrigins,
+            List<String> allowedTagTypes,
+            boolean allowCustomJsTriggers,
+            Instant updatedAt) {}
 
-    private record ScriptPolicy(boolean allowCustomCode, List<String> allowedOrigins) {}
+    private record ScriptPolicy(
+            boolean allowCustomCode,
+            List<String> allowedOrigins,
+            List<String> allowedTagTypes,
+            boolean allowCustomJsTriggers) {}
 
     public record VersionView(UUID id, int version, String status, JsonNode tags) {}
 

@@ -2245,12 +2245,22 @@ class _ScriptPolicyDialog extends StatefulWidget {
 
 class _ScriptPolicyDialogState extends State<_ScriptPolicyDialog> {
   late bool _allowCustomCode;
+  late bool _allowCustomJsTriggers;
+  late final Set<String> _allowedTagTypes;
   late final TextEditingController _origins;
 
   @override
   void initState() {
     super.initState();
     _allowCustomCode = widget.initial['allowCustomCode'] as bool? ?? true;
+    _allowCustomJsTriggers =
+        widget.initial['allowCustomJsTriggers'] as bool? ?? true;
+    _allowedTagTypes = ((widget.initial['allowedTagTypes'] as List?) ?? const [])
+        .whereType<String>()
+        .toSet();
+    if (_allowedTagTypes.isEmpty) {
+      _allowedTagTypes.addAll(const ['page_view', 'event', 'custom_html']);
+    }
     final origins =
         (widget.initial['allowedScriptOrigins'] as List? ?? const [])
             .whereType<String>()
@@ -2303,6 +2313,51 @@ class _ScriptPolicyDialogState extends State<_ScriptPolicyDialog> {
               value: _allowCustomCode,
               onChanged: (value) => setState(() => _allowCustomCode = value),
             ),
+            const Divider(),
+            Text(
+              context.tr('Allowed tag capabilities', '允许的标签能力'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.tr(
+                'Turn off capabilities that this container should never be allowed to draft or release.',
+                '关闭后，该容器将不能创建或发布对应能力的标签。',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            for (final capability in const [
+              ('page_view', 'Page view', '页面浏览'),
+              ('event', 'Event', '事件'),
+              ('custom_html', 'Custom HTML', '自定义 HTML'),
+            ])
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text(context.tr(capability.$2, capability.$3)),
+                value: _allowedTagTypes.contains(capability.$1),
+                onChanged: (value) => setState(() {
+                  if (value == true) {
+                    _allowedTagTypes.add(capability.$1);
+                  } else {
+                    _allowedTagTypes.remove(capability.$1);
+                  }
+                }),
+              ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                context.tr('Allow custom JavaScript triggers', '允许自定义 JavaScript 触发器'),
+              ),
+              subtitle: Text(
+                context.tr(
+                  'Custom JavaScript triggers are evaluated by the browser and can be disabled independently of custom HTML tags.',
+                  '自定义 JavaScript 触发器在浏览器中执行，可独立于自定义 HTML 标签关闭。',
+                ),
+              ),
+              value: _allowCustomJsTriggers,
+              onChanged: (value) => setState(() => _allowCustomJsTriggers = value),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _origins,
@@ -2351,6 +2406,8 @@ class _ScriptPolicyDialogState extends State<_ScriptPolicyDialog> {
           Navigator.pop(context, {
             'allowCustomCode': _allowCustomCode,
             'allowedScriptOrigins': origins,
+            'allowedTagTypes': _allowedTagTypes.toList(growable: false),
+            'allowCustomJsTriggers': _allowCustomJsTriggers,
           });
         },
         child: Text(context.tr('Save policy', '保存策略')),

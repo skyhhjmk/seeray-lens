@@ -29,4 +29,11 @@ public class TagContainerSecurityPolicy extends PanacheEntityBase {
 
     @Column(name = "updated_at", nullable = false)
     public Instant updatedAt;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "allowed_tag_types_json", nullable = false, columnDefinition = "jsonb")
+    public String allowedTagTypesJson;
+
+    @Column(name = "allow_custom_js_triggers", nullable = false)
+    public boolean allowCustomJsTriggers;
 }
