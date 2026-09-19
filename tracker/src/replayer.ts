@@ -109,6 +109,108 @@ class SeeRayReplayerElement extends HTMLElement {
         z-index: 1;
         pointer-events: none;
       }
+      .seeray-replay-controls {
+        color: #e8eaf7;
+        background: linear-gradient(180deg, #22253a 0%, #171927 100%);
+        border-top: 1px solid #343852;
+        box-shadow: 0 -8px 24px rgba(9, 11, 25, 0.16);
+        color-scheme: dark;
+      }
+      .seeray-replay-timeline {
+        position: relative;
+        height: 24px;
+        width: 100%;
+        padding: 0 2px;
+        box-sizing: border-box;
+      }
+      .seeray-replay-track,
+      .seeray-replay-fill {
+        position: absolute;
+        left: 2px;
+        right: 2px;
+        top: 50%;
+        height: 4px;
+        border-radius: 999px;
+        transform: translateY(-50%);
+        pointer-events: none;
+      }
+      .seeray-replay-track { background: #4a4f69; }
+      .seeray-replay-fill {
+        right: auto;
+        width: 0;
+        background: #8188ff;
+        box-shadow: 0 0 8px rgba(129, 136, 255, 0.5);
+      }
+      .seeray-replay-range {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 24px;
+        margin: 0;
+        appearance: none;
+        background: transparent;
+        cursor: pointer;
+      }
+      .seeray-replay-range:focus-visible { outline: 2px solid #aeb3ff; outline-offset: 3px; }
+      .seeray-replay-range::-webkit-slider-runnable-track { height: 4px; background: transparent; }
+      .seeray-replay-range::-moz-range-track { height: 4px; background: transparent; }
+      .seeray-replay-range::-webkit-slider-thumb {
+        width: 13px;
+        height: 13px;
+        margin-top: -4.5px;
+        appearance: none;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        background: #8188ff;
+        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+      }
+      .seeray-replay-range::-moz-range-thumb {
+        width: 10px;
+        height: 10px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        background: #8188ff;
+        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+      }
+      .seeray-replay-controls button,
+      .seeray-replay-controls select {
+        min-height: 30px;
+        border: 1px solid #4a4f69;
+        border-radius: 6px;
+        color: #eef0ff;
+        background: #2d3149;
+        font: inherit;
+        box-sizing: border-box;
+      }
+      .seeray-replay-controls button {
+        min-width: 30px;
+        padding: 3px 9px;
+        cursor: pointer;
+        transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+      }
+      .seeray-replay-controls button:hover,
+      .seeray-replay-controls select:hover { background: #3a3f5c; border-color: #7178c7; }
+      .seeray-replay-controls button:active { transform: translateY(1px); }
+      .seeray-replay-controls button:focus-visible,
+      .seeray-replay-controls select:focus-visible { outline: 2px solid #aeb3ff; outline-offset: 2px; }
+      .seeray-replay-controls .seeray-replay-primary {
+        min-width: 36px;
+        border-color: #8188ff;
+        background: #5961d8;
+        font-size: 15px;
+      }
+      .seeray-replay-controls .seeray-replay-time {
+        min-width: 94px;
+        color: #f4f5ff;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .seeray-replay-controls .seeray-replay-hint {
+        margin-left: auto;
+        color: #aeb3c9;
+        font-size: 11px;
+        white-space: nowrap;
+      }
     `;
     this.root.append(playerStyles);
     let playerRoot: HTMLDivElement = this.root;
@@ -244,30 +346,41 @@ class SeeRayReplayerElement extends HTMLElement {
     const duration = Math.max(1, events[events.length - 1].timestamp - firstTimestamp);
     const controls = document.createElement('div');
     controls.className = 'seeray-replay-controls';
-    controls.style.cssText = 'position:relative;flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px;background:#fffffff2;border-top:1px solid #ddd;z-index:10;font:12px sans-serif';
-    const button = (label: string, action: () => void): HTMLButtonElement => {
+    controls.style.cssText = 'position:relative;flex:0 0 auto;display:flex;flex-direction:column;gap:7px;padding:8px 10px 9px;z-index:10;font:12px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    const button = (label: string, action: () => void, ariaLabel: string, className?: string): HTMLButtonElement => {
       const value = document.createElement('button');
+      value.type = 'button';
       value.textContent = label;
+      value.title = ariaLabel;
+      value.setAttribute('aria-label', ariaLabel);
+      if (className) value.className = className;
       value.onclick = action;
       return value;
     };
     const timeline = document.createElement('div');
-    timeline.style.cssText = 'position:relative;height:22px;width:100%';
+    timeline.className = 'seeray-replay-timeline';
+    const track = document.createElement('div');
+    track.className = 'seeray-replay-track';
+    const fill = document.createElement('div');
+    fill.className = 'seeray-replay-fill';
+    timeline.append(track, fill);
     const progress = document.createElement('input');
+    progress.className = 'seeray-replay-range';
     progress.type = 'range';
     progress.min = '0';
     progress.max = String(duration);
     progress.step = '1';
     progress.value = '0';
     progress.setAttribute('aria-label', chinese ? '回放进度' : 'Playback progress');
-    progress.style.cssText = 'position:absolute;inset:0;width:100%;height:22px;margin:0;accent-color:#4950f6;cursor:pointer';
+    progress.title = chinese ? '拖动调整回放位置' : 'Drag to seek';
     timeline.append(progress);
     const timeLabel = document.createElement('span');
+    timeLabel.className = 'seeray-replay-time';
     timeLabel.textContent = `00:00 / ${formatTime(duration)}`;
-    timeLabel.style.cssText = 'min-width:78px;text-align:center;font-variant-numeric:tabular-nums';
     const updateProgress = (offset: number): void => {
       const clamped = Math.max(0, Math.min(duration, offset));
       progress.value = String(clamped);
+      fill.style.width = `${duration > 0 ? (clamped / duration) * 100 : 0}%`;
       timeLabel.textContent = `${formatTime(clamped)} / ${formatTime(duration)}`;
     };
     let scrubbing = false;
@@ -316,12 +429,17 @@ class SeeRayReplayerElement extends HTMLElement {
     }
 
     const controlsRow = document.createElement('div');
-    controlsRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+    controlsRow.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap';
     const scrollHint = document.createElement('span');
+    scrollHint.className = 'seeray-replay-hint';
     scrollHint.textContent = chinese
       ? '可手动滚动；播放时跟随访客视角'
       : 'Scroll manually; playback follows the visitor';
-    scrollHint.style.cssText = 'margin-right:auto;color:#555';
+    const seekRelative = (delta: number): void => {
+      const current = replayer.getCurrentTime();
+      seek(Math.max(0, Math.min(duration, (Number.isFinite(current) ? current : 0) + delta)));
+    };
+    let isPlaying = false;
     const play = (): void => {
       const current = replayer.getCurrentTime();
       const offset = Number.isFinite(current) && current > 0 && current < duration
@@ -329,16 +447,40 @@ class SeeRayReplayerElement extends HTMLElement {
         : 0;
       replayer.play(offset);
     };
+    const playButton = button('▶', () => {
+      if (isPlaying) replayer.pause();
+      else play();
+    }, chinese ? '播放' : 'Play', 'seeray-replay-primary');
+    const setPlayingUi = (playing: boolean): void => {
+      isPlaying = playing;
+      playButton.textContent = playing ? 'Ⅱ' : '▶';
+      const label = playing ? (chinese ? '暂停' : 'Pause') : (chinese ? '播放' : 'Play');
+      playButton.title = label;
+      playButton.setAttribute('aria-label', label);
+    };
+    const speed = document.createElement('select');
+    speed.setAttribute('aria-label', chinese ? '播放速度' : 'Playback speed');
+    speed.title = chinese ? '播放速度' : 'Playback speed';
+    for (const value of [1, 2, 4]) {
+      const option = document.createElement('option');
+      option.value = String(value);
+      option.textContent = `${value}×`;
+      speed.append(option);
+    }
+    speed.addEventListener('change', () => replayer.setConfig({ speed: Number(speed.value) }));
     replayer.on(ReplayerEvents.Start, () => {
+      setPlayingUi(true);
       if (this.progressTimer !== undefined) window.clearInterval(this.progressTimer);
       this.progressTimer = window.setInterval(() => updateProgress(replayer.getCurrentTime()), 100);
     });
     replayer.on(ReplayerEvents.Pause, () => {
+      setPlayingUi(false);
       if (this.progressTimer !== undefined) window.clearInterval(this.progressTimer);
       this.progressTimer = undefined;
       updateProgress(replayer.getCurrentTime());
     });
     replayer.on(ReplayerEvents.Finish, () => {
+      setPlayingUi(false);
       if (this.progressTimer !== undefined) window.clearInterval(this.progressTimer);
       this.progressTimer = undefined;
       updateProgress(duration);
@@ -352,11 +494,10 @@ class SeeRayReplayerElement extends HTMLElement {
     );
     controlsRow.append(
       timeLabel,
-      button(chinese ? '播放' : 'Play', play),
-      button(chinese ? '暂停' : 'Pause', () => replayer.pause()),
-      button('1×', () => replayer.setConfig({ speed: 1 })),
-      button('2×', () => replayer.setConfig({ speed: 2 })),
-      button('4×', () => replayer.setConfig({ speed: 4 })),
+      playButton,
+      button('↶ 10', () => seekRelative(-10000), chinese ? '后退 10 秒' : 'Back 10 seconds'),
+      button('10 ↷', () => seekRelative(10000), chinese ? '前进 10 秒' : 'Forward 10 seconds'),
+      speed,
       scrollHint,
     );
     this.root.append(controls);
