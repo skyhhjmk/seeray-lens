@@ -87,7 +87,7 @@ Manual PNG/JPEG snapshots are stored under `/var/lib/seeray-lens/heatmaps` by de
 For local Flutter Web development, use the backend's configured development origin:
 
 ```sh
-(cd admin && flutter run -d chrome --web-port 3000)
+(cd admin && fvm flutter run -d chrome --web-port 3000)
 ```
 
 Quarkus Dev Mode has safe local defaults for the encryption key and trusted
@@ -102,7 +102,7 @@ With the Quarkus control plane and PostgreSQL running, the real Flutter REST
 loop can be exercised with:
 
 ```sh
-(cd admin && flutter test test/real_control_plane_integration_test.dart \
+(cd admin && fvm flutter test test/real_control_plane_integration_test.dart \
   --dart-define=SEERAY_RUN_REAL_API_TESTS=true)
 ```
 
@@ -112,7 +112,7 @@ The admin keeps its access and refresh credentials in memory for this release, s
 
 ```sh
 ./gradlew check
-(cd admin && flutter pub get && flutter analyze && flutter test)
+(cd admin && fvm flutter pub get && fvm flutter analyze && fvm flutter test)
 (cd tracker && npm ci && npm run lint && npm test && npm run build)
 podman compose -f deploy/compose/docker-compose.yml config --quiet
 ```

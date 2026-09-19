@@ -3,7 +3,7 @@
 ## Verified in the repository
 
 - Server compilation, formatting, and JUnit suite: `./gradlew check`.
-- Flutter analysis and widget suite: `flutter analyze && flutter test` in `admin/`.
+- Flutter analysis and widget suite: `fvm flutter analyze && fvm flutter test` in `admin/`.
 - Tracker unit suite, lint, and distributable build: `npm test && npm run lint && npm run build` in `tracker/`.
 - Compose configuration parses with the supplied RabbitMQ heatmap queue definitions.
 - The Tracker lifecycle regression covers repeated `pageReady`, same-URL explicit navigation, and the global lifecycle facade.
