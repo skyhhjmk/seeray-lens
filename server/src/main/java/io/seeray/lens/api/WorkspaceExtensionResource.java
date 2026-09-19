@@ -1,6 +1,7 @@
 package io.seeray.lens.api;
 
 import io.quarkus.security.Authenticated;
+import io.seeray.lens.application.WorkspaceExtensionDeliveryService;
 import io.seeray.lens.application.WorkspaceExtensionService;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
@@ -14,9 +15,12 @@ import java.util.UUID;
 @Produces(MediaType.APPLICATION_JSON)
 public class WorkspaceExtensionResource {
     private final WorkspaceExtensionService extensions;
+    private final WorkspaceExtensionDeliveryService deliveryService;
 
-    public WorkspaceExtensionResource(WorkspaceExtensionService extensions) {
+    public WorkspaceExtensionResource(
+            WorkspaceExtensionService extensions, WorkspaceExtensionDeliveryService deliveryService) {
         this.extensions = extensions;
+        this.deliveryService = deliveryService;
     }
 
     @GET
@@ -59,5 +63,14 @@ public class WorkspaceExtensionResource {
     public WorkspaceExtensionService.TestResult test(
             @PathParam("workspaceId") UUID workspaceId, @PathParam("extensionId") UUID extensionId) {
         return extensions.test(workspaceId, extensionId);
+    }
+
+    @GET
+    @Path("/{extensionId}/deliveries")
+    public List<io.seeray.lens.application.WorkspaceExtensionDeliveryService.DeliveryView> deliveries(
+            @PathParam("workspaceId") UUID workspaceId,
+            @PathParam("extensionId") UUID extensionId,
+            @QueryParam("limit") @DefaultValue("25") int limit) {
+        return deliveryService.list(workspaceId, extensionId, limit);
     }
 }

@@ -2,6 +2,7 @@ package io.seeray.lens.infrastructure.ingestion;
 
 import io.seeray.lens.application.TrackingMessage;
 import io.seeray.lens.application.TrackingSanitizer.CleanUrl;
+import io.seeray.lens.application.WorkspaceExtensionDeliveryService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
@@ -13,10 +14,12 @@ import org.hibernate.Session;
 @ApplicationScoped
 public class IngestionPersistence {
     private final EntityManager entityManager;
+    private final WorkspaceExtensionDeliveryService extensionDeliveries;
 
     @Inject
-    public IngestionPersistence(EntityManager entityManager) {
+    public IngestionPersistence(EntityManager entityManager, WorkspaceExtensionDeliveryService extensionDeliveries) {
         this.entityManager = entityManager;
+        this.extensionDeliveries = extensionDeliveries;
     }
 
     @Transactional
@@ -64,6 +67,7 @@ public class IngestionPersistence {
                 statement.executeBatch();
             }
         });
+        extensionDeliveries.enqueue(events);
     }
 
     private static void setPage(java.sql.PreparedStatement s, int start, CleanUrl p) throws java.sql.SQLException {

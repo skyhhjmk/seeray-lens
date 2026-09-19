@@ -524,3 +524,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0075-workspace-extension-secret-audit-action.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0076-workspace-extension-deliveries
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0076-workspace-extension-deliveries.sql
+            relativeToChangelogFile: false

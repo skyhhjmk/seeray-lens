@@ -18,6 +18,9 @@ import io.seeray.lens.application.MetaAdsCapiGateway;
 import io.seeray.lens.application.MicrosoftAdsCapiGateway;
 import io.seeray.lens.application.RawAnalyticsRetentionService;
 import io.seeray.lens.application.SearchConsoleGateway;
+import io.seeray.lens.application.TrackingMessage;
+import io.seeray.lens.application.TrackingSanitizer;
+import io.seeray.lens.application.WorkspaceExtensionDeliveryService;
 import io.seeray.lens.application.XAdsConversionsGateway;
 import io.seeray.lens.application.YandexWebmasterGateway;
 import io.seeray.lens.domain.auth.AppUser;
@@ -65,6 +68,9 @@ class ControlPlaneResourceTest {
 
     @Inject
     HeatmapAggregationService heatmapAggregation;
+
+    @Inject
+    WorkspaceExtensionDeliveryService extensionDeliveries;
 
     @Test
     void registerLoginRefreshAndProtectedWorkspaceWork() throws Exception {
@@ -584,6 +590,74 @@ class ControlPlaneResourceTest {
                 .get(path)
                 .then()
                 .statusCode(404);
+    }
+
+    @Test
+    void persistedAnalyticsEventsEnterExtensionOutboxWithoutVisitorIdentifiers() throws Exception {
+        Tokens owner = register("extension-outbox-owner" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        String siteId = createSite(owner.access(), workspaceId, "Extension outbox site");
+        String path = "/api/v1/workspaces/" + workspaceId + "/extensions";
+        String extensionId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"extensionKey\":\"warehouse.events\",\"name\":\"Warehouse events\",\"version\":\"1.0.0\","
+                        + "\"endpointUrl\":\"https://extensions.example.test/events\","
+                        + "\"subscriptions\":[\"analytics.event\"]}")
+                .post(path)
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("extension.id");
+        UUID siteUuid = UUID.fromString(siteId);
+        UUID clientEventId = UUID.randomUUID();
+        extensionDeliveries.enqueue(List.of(new TrackingMessage(
+                1,
+                UUID.randomUUID(),
+                clientEventId,
+                siteUuid,
+                Instant.now(),
+                Instant.now(),
+                "event",
+                new TrackingSanitizer.CleanUrl(
+                        "https",
+                        "shop.example.test",
+                        "/checkout",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "Checkout",
+                        null,
+                        null,
+                        null,
+                        null),
+                null,
+                "{\"visitorId\":\"private-visitor\",\"sessionId\":\"private-session\",\"name\":\"purchase\"}",
+                null,
+                "private-visitor",
+                "private-session",
+                null)));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(path + "/" + extensionId + "/deliveries")
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].eventType", is("analytics.event"))
+                .body("[0].status", is("pending"))
+                .body("[0].attempts", is(0));
+        try (var connection = dataSource.getConnection();
+                var statement = connection.prepareStatement(
+                        "select payload_json::text from workspace_extension_delivery where extension_id=?")) {
+            statement.setObject(1, UUID.fromString(extensionId));
+            try (var rows = statement.executeQuery()) {
+                assertTrue(rows.next());
+                String payload = rows.getString(1);
+                assertFalse(payload.contains("private-visitor"));
+                assertFalse(payload.contains("private-session"));
+                assertTrue(payload.contains("purchase"));
+            }
+        }
     }
 
     @Test

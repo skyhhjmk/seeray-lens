@@ -217,6 +217,11 @@ class _WorkspaceExtensionsPageState
                   label: Text(context.tr('Send test', '发送测试')),
                 ),
                 OutlinedButton.icon(
+                  onPressed: () => _showDeliveries(extension),
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  label: Text(context.tr('Delivery activity', '投递活动')),
+                ),
+                OutlinedButton.icon(
                   onPressed: archived ? null : () => _rotate(extension),
                   icon: const Icon(Icons.key_outlined),
                   label: Text(context.tr('Rotate secret', '轮换密钥')),
@@ -333,6 +338,112 @@ class _WorkspaceExtensionsPageState
       _showError(error);
     }
   }
+
+  Future<void> _showDeliveries(Map<String, dynamic> extension) async {
+    final future = ref
+        .read(apiProvider)
+        .request(
+          'GET',
+          '/api/v1/workspaces/${widget.workspaceId}/extensions/${extension['id']}/deliveries?limit=25',
+        );
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          context.tr(
+            '${extension['name']} delivery activity',
+            '${extension['name']} 投递活动',
+          ),
+        ),
+        content: SizedBox(
+          width: 560,
+          child: FutureBuilder<dynamic>(
+            future: future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const SizedBox(
+                  height: 160,
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (snapshot.hasError || snapshot.data is! List) {
+                return Text(
+                  context.tr(
+                    'Delivery history is temporarily unavailable.',
+                    '暂时无法读取投递历史。',
+                  ),
+                );
+              }
+              final rows = (snapshot.data as List)
+                  .whereType<Map>()
+                  .map((item) => Map<String, dynamic>.from(item))
+                  .toList(growable: false);
+              if (rows.isEmpty) {
+                return Text(
+                  context.tr(
+                    'No analytics events have been delivered yet.',
+                    '还没有投递过分析事件。',
+                  ),
+                );
+              }
+              return SizedBox(
+                height: 360,
+                child: ListView.separated(
+                  itemCount: rows.length,
+                  separatorBuilder: (_, index) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final row = rows[index];
+                    final status = row['status'] as String? ?? 'pending';
+                    final color = _deliveryColor(status);
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(_deliveryIcon(status), color: color),
+                      title: Text(_deliveryLabel(context, status)),
+                      subtitle: Text(
+                        '${row['eventType'] ?? ''} · ${row['attempts'] ?? 0} ${context.tr('attempts', '次尝试')}',
+                      ),
+                      trailing: row['responseStatus'] == null
+                          ? null
+                          : Text('${row['responseStatus']}'),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(context.tr('Close', '关闭')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _deliveryLabel(BuildContext context, String status) =>
+      switch (status) {
+        'delivered' => context.tr('Delivered', '已投递'),
+        'sending' => context.tr('Sending', '投递中'),
+        'failed' => context.tr('Failed', '失败'),
+        _ => context.tr('Waiting for delivery', '等待投递'),
+      };
+
+  Color _deliveryColor(String status) => switch (status) {
+    'delivered' => Colors.green,
+    'failed' => Colors.red,
+    'sending' => Colors.orange,
+    _ => Colors.blue,
+  };
+
+  IconData _deliveryIcon(String status) => switch (status) {
+    'delivered' => Icons.check_circle_outline,
+    'failed' => Icons.error_outline,
+    'sending' => Icons.sync,
+    _ => Icons.schedule,
+  };
 
   Future<Map<String, dynamic>?> _showForm(
     Map<String, dynamic>? existing,
