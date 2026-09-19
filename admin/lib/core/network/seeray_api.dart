@@ -27,12 +27,29 @@ class SeeRayApi {
     String path, {
     Object? body,
     bool retried = false,
+  }) => _request(method, path, body: body, retried: retried);
+
+  /// Sends a public authentication request without forwarding a stale bearer.
+  /// Refresh endpoints must not receive the access token that just expired.
+  Future<dynamic> requestUnauthenticated(
+    String method,
+    String path, {
+    Object? body,
+  }) => _request(method, path, body: body, retried: true, includeAuth: false);
+
+  Future<dynamic> _request(
+    String method,
+    String path, {
+    Object? body,
+    bool retried = false,
+    bool includeAuth = true,
   }) async {
     try {
       final outgoing = http.Request(method, Uri.parse('$baseUrl$path'))
         ..headers.addAll({
           'Content-Type': 'application/json',
-          if (accessToken != null) 'Authorization': 'Bearer $accessToken',
+          if (includeAuth && accessToken != null)
+            'Authorization': 'Bearer $accessToken',
         })
         ..body = body == null ? '' : jsonEncode(body);
       final response = await _client
@@ -45,7 +62,13 @@ class SeeRayApi {
         final token = await refresh!();
         if (token != null) {
           accessToken = token;
-          return request(method, path, body: body, retried: true);
+          return await _request(
+            method,
+            path,
+            body: body,
+            retried: true,
+            includeAuth: includeAuth,
+          );
         }
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {

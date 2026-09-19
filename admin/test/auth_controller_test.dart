@@ -49,6 +49,25 @@ void main() {
     expect(container.read(authProvider).refreshToken, 'refresh-b');
   });
 
+  test('refresh does not send the expired access token as a bearer', () async {
+    final client = _RefreshAuthorizationClient();
+    final container = ProviderContainer(
+      overrides: [
+        apiProvider.overrideWithValue(SeeRayApi(client: client)),
+        authTokenStoreProvider.overrideWithValue(_MemoryTokenStore()),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container
+        .read(authProvider.notifier)
+        .login('person@example.com', 'password');
+    await container.read(authProvider.notifier).refresh();
+
+    expect(client.refreshAuthorizationHeaders, [null]);
+    expect(container.read(authProvider).phase, AuthPhase.authenticated);
+  });
+
   test('failed refresh expires the session', () async {
     final client = _Client(
       ['{"accessToken":"access-a","refreshToken":"refresh-a"}', '{}'],
@@ -209,6 +228,32 @@ class _DeferredRestoreClient extends http.BaseClient {
       ),
     );
   }
+}
+
+class _RefreshAuthorizationClient extends http.BaseClient {
+  final refreshAuthorizationHeaders = <String?>[];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request.url.path.endsWith('/auth/refresh')) {
+      refreshAuthorizationHeaders.add(request.headers['Authorization']);
+      return _jsonResponse(
+        '{"accessToken":"refreshed-access","refreshToken":"refreshed-refresh"}',
+        200,
+      );
+    }
+    return _jsonResponse(
+      '{"accessToken":"initial-access","refreshToken":"initial-refresh"}',
+      200,
+    );
+  }
+
+  http.StreamedResponse _jsonResponse(String body, int status) =>
+      http.StreamedResponse(
+        Stream<List<int>>.value(body.codeUnits),
+        status,
+        headers: const {'content-type': 'application/json'},
+      );
 }
 
 class _RejectStaleBearerOnLoginClient extends http.BaseClient {

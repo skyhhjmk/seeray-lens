@@ -121,11 +121,10 @@ class AuthController extends Notifier<AuthState> {
     }
     state = AuthState(AuthPhase.refreshing, refreshToken: token);
     try {
-      final d = await _api.request(
+      final d = await _api.requestUnauthenticated(
         'POST',
         '/api/v1/auth/refresh',
         body: {'refreshToken': token},
-        retried: true,
       );
       if (generation != _sessionGeneration) return null;
       await _set(d);
