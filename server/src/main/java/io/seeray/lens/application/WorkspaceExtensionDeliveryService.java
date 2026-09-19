@@ -106,6 +106,59 @@ public class WorkspaceExtensionDeliveryService {
     }
 
     @Transactional
+    public void enqueueDiagnosticsAlerts(UUID workspaceId, List<DiagnosticAlert> alerts) {
+        if (alerts == null || alerts.isEmpty()) return;
+        List<WorkspaceExtension> extensions =
+                WorkspaceExtension.list("organization.id = ?1 and status = 'enabled'", workspaceId);
+        for (DiagnosticAlert alert : alerts) {
+            UUID clientEventId =
+                    UUID.nameUUIDFromBytes((workspaceId + "|diagnostics.alert|" + alert.key() + "|" + alert.status()
+                                    + "|" + alert.detail() + "|" + Instant.now().toEpochMilli() / 3_600_000)
+                            .getBytes(StandardCharsets.UTF_8));
+            String payload;
+            try {
+                payload = mapper.writeValueAsString(Map.of(
+                        "schemaVersion",
+                        1,
+                        "event",
+                        "diagnostics.alert",
+                        "eventId",
+                        clientEventId,
+                        "workspaceId",
+                        workspaceId,
+                        "occurredAt",
+                        Instant.now(),
+                        "alert",
+                        Map.of(
+                                "key", alert.key(),
+                                "status", alert.status(),
+                                "title", alert.title(),
+                                "detail", alert.detail(),
+                                "remediation", Objects.toString(alert.remediation(), ""))));
+            } catch (Exception error) {
+                throw new IllegalStateException("Could not encode diagnostics alert", error);
+            }
+            for (WorkspaceExtension extension : extensions) {
+                if (!subscriptions(extension).contains("diagnostics.alert")) continue;
+                entityManager
+                        .createNativeQuery(
+                                """
+                                INSERT INTO workspace_extension_delivery
+                                  (id, extension_id, client_event_id, event_type, payload_json, status, attempts,
+                                   available_at, created_at, updated_at)
+                                VALUES (?, ?, ?, 'diagnostics.alert', ?::jsonb, 'pending', 0, now(), now(), now())
+                                ON CONFLICT (extension_id, client_event_id, event_type) DO NOTHING
+                                """)
+                        .setParameter(1, UuidV7.next())
+                        .setParameter(2, extension.id)
+                        .setParameter(3, clientEventId)
+                        .setParameter(4, payload)
+                        .executeUpdate();
+            }
+        }
+    }
+
+    @Transactional
     public DeliveryView retry(UUID workspaceId, UUID extensionId, UUID deliveryId) {
         var member = access.require(workspaceId, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
         WorkspaceExtensionDelivery delivery = WorkspaceExtensionDelivery.find(
@@ -296,4 +349,6 @@ public class WorkspaceExtensionDeliveryService {
             String lastError,
             Instant createdAt,
             Instant deliveredAt) {}
+
+    public record DiagnosticAlert(String key, String status, String title, String detail, String remediation) {}
 }

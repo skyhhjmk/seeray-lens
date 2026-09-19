@@ -457,6 +457,40 @@ class ControlPlaneResourceTest {
                 .statusCode(404);
     }
 
+    @Test
+    void diagnosticWarningsCreateIdempotentExtensionAlerts() {
+        Tokens owner = register("diagnostics-extension-owner" + System.nanoTime() + "@example.test");
+        String workspaceId = workspace(owner.access()).extract().path("[0].id");
+        createSite(owner.access(), workspaceId, "Alert site");
+        String extensionPath = "/api/v1/workspaces/" + workspaceId + "/extensions";
+        String extensionId = given().header("Authorization", "Bearer " + owner.access())
+                .contentType("application/json")
+                .body("{\"extensionKey\":\"ops.alerts\",\"name\":\"Ops alerts\",\"version\":\"1.0.0\","
+                        + "\"endpointUrl\":\"https://extensions.example.test/alerts\","
+                        + "\"subscriptions\":[\"diagnostics.alert\"]}")
+                .post(extensionPath)
+                .then()
+                .statusCode(201)
+                .extract()
+                .path("extension.id");
+        String diagnosticsPath = "/api/v1/workspaces/" + workspaceId + "/diagnostics";
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(diagnosticsPath)
+                .then()
+                .statusCode(200)
+                .body("checks.find { it.key == 'origins' }.status", is("warning"));
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(diagnosticsPath)
+                .then()
+                .statusCode(200);
+        given().header("Authorization", "Bearer " + owner.access())
+                .get(extensionPath + "/" + extensionId + "/deliveries")
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].eventType", is("diagnostics.alert"));
+    }
+
     private String createSite(String access, String workspaceId, String name) {
         return given().header("Authorization", "Bearer " + access)
                 .contentType("application/json")

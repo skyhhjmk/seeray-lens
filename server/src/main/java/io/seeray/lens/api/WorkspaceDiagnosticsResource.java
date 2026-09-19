@@ -2,6 +2,7 @@ package io.seeray.lens.api;
 
 import io.quarkus.security.Authenticated;
 import io.seeray.lens.application.WorkspaceAccess;
+import io.seeray.lens.application.WorkspaceExtensionDeliveryService;
 import io.seeray.lens.domain.site.Site;
 import io.seeray.lens.domain.site.SiteAllowedDomain;
 import io.seeray.lens.domain.workspace.WorkspaceRole;
@@ -24,6 +25,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @Produces(MediaType.APPLICATION_JSON)
 public class WorkspaceDiagnosticsResource {
     private final WorkspaceAccess access;
+    private final WorkspaceExtensionDeliveryService extensionDeliveries;
 
     @Inject
     EntityManager entityManager;
@@ -31,8 +33,9 @@ public class WorkspaceDiagnosticsResource {
     @ConfigProperty(name = "seeray.app.release-version", defaultValue = "development")
     String releaseVersion;
 
-    public WorkspaceDiagnosticsResource(WorkspaceAccess access) {
+    public WorkspaceDiagnosticsResource(WorkspaceAccess access, WorkspaceExtensionDeliveryService extensionDeliveries) {
         this.access = access;
+        this.extensionDeliveries = extensionDeliveries;
     }
 
     @GET
@@ -132,6 +135,14 @@ public class WorkspaceDiagnosticsResource {
         String overall = checks.stream().anyMatch(check -> "error".equals(check.status))
                 ? "error"
                 : checks.stream().anyMatch(check -> "warning".equals(check.status)) ? "warning" : "pass";
+        extensionDeliveries.enqueueDiagnosticsAlerts(
+                workspaceId,
+                checks.stream()
+                        .filter(check -> !"extension-delivery".equals(check.key))
+                        .filter(check -> "warning".equals(check.status) || "error".equals(check.status))
+                        .map(check -> new WorkspaceExtensionDeliveryService.DiagnosticAlert(
+                                check.key, check.status, check.title, check.detail, check.remediation))
+                        .toList());
         return new DiagnosticsView(overall, checkedAt, List.copyOf(checks));
     }
 
