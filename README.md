@@ -4,9 +4,15 @@
   <img src="docs/assets/seeray-lens-logo.svg" alt="SeeRay Lens logo" width="96" height="96">
 </p>
 
-<p align="center"><strong>轻量、自托管、隐私优先的产品分析平台</strong></p>
+<p align="center"><strong>自托管、隐私优先、面向完整分析场景的产品分析平台</strong></p>
 
-Lightweight, self-hosted, privacy-first web analytics. See [architecture](docs/architecture/overview.md) and [ADRs](docs/adr/).
+SeeRay Lens is a self-hosted, privacy-first product analytics platform inspired by [Matomo](https://matomo.org/). It combines a more modern UI with a broad analytics workflow: collection, live visits, reports, attribution, behaviour analysis, experimentation, SDKs and workspace management.
+
+SeeRay Lens 受 Matomo 启发，但不以“轻量”作为产品定位：它面向完整的产品分析场景，并持续补齐从采集到管理的能力。项目的大多数产品设计、代码实现和文档整理由 GPT 辅助完成，再由项目维护者负责取舍、审查和验证。
+
+产品介绍站：[中文](https://seeray-lens.github.io/seeray-lens-site/) · [English](https://seeray-lens.github.io/seeray-lens-site/en/)
+
+See [architecture](docs/architecture/overview.md), [product parity](docs/product-parity.md) and [ADRs](docs/adr/).
 
 ## Current scope
 
