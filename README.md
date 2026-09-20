@@ -1,5 +1,11 @@
 # SeeRay Lens
 
+<p align="center">
+  <img src="docs/assets/seeray-lens-logo.svg" alt="SeeRay Lens logo" width="96" height="96">
+</p>
+
+<p align="center"><strong>轻量、自托管、隐私优先的产品分析平台</strong></p>
+
 Lightweight, self-hosted, privacy-first web analytics. See [architecture](docs/architecture/overview.md) and [ADRs](docs/adr/).
 
 ## Current scope
