@@ -85,4 +85,28 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test('allows only explicit loopback HTTP for local development', () async {
+    final analytics = await SeeRayAnalytics.create(
+      const SeeRayAnalyticsOptions(
+        siteId: 'srl_demo',
+        apiOrigin: 'http://localhost:8080',
+        allowInsecureLocalhost: true,
+      ),
+      client: MockClient((_) async => http.Response('', 202)),
+    );
+    expect(analytics.consentState, SeeRayConsentState.granted);
+    analytics.close();
+
+    expect(
+      () => SeeRayAnalytics.create(
+        const SeeRayAnalyticsOptions(
+          siteId: 'srl_demo',
+          apiOrigin: 'http://analytics.example.test',
+          allowInsecureLocalhost: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
 }

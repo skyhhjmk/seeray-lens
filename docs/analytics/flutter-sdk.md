@@ -62,4 +62,6 @@ The SDK does not observe Flutter routes automatically. Call `trackScreen` when a
 - Query strings and fragments are removed before collection. Do not put personal data in URL paths, screen names, goal names, or event properties.
 - The client uses bounded in-memory batches (10 events) and retries failed delivery only while the process remains alive. It records platform, language, display dimensions, and pixel ratio, but never advertising IDs, device model, contacts, location, UI hierarchy, route names, or screen content.
 
+For local development only, `allowInsecureLocalhost: true` permits a collector at `http://localhost`, `http://127.0.0.1`, or `http://[::1]`. Production and non-loopback collectors must use HTTPS.
+
 Flutter and native crash diagnostics, automatic route tracking, heatmaps, recordings, tag manager execution, and automatic content/media/form collection are intentionally outside this first release.

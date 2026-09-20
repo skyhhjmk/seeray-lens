@@ -12,6 +12,7 @@ class SeeRayAnalyticsOptions {
     required this.siteId,
     required this.apiOrigin,
     this.requireConsent = false,
+    this.allowInsecureLocalhost = false,
     this.batchSize = 10,
     this.flushInterval = const Duration(seconds: 10),
   });
@@ -19,6 +20,8 @@ class SeeRayAnalyticsOptions {
   final String siteId;
   final String apiOrigin;
   final bool requireConsent;
+  /// Allows `http://localhost`, loopback IPv4, or loopback IPv6 for local development only.
+  final bool allowInsecureLocalhost;
   final int batchSize;
   final Duration flushInterval;
 }
@@ -259,13 +262,20 @@ class SeeRayAnalytics {
       throw ArgumentError.value(options.siteId, 'siteId', 'must be a valid tracking ID');
     }
     final origin = Uri.tryParse(options.apiOrigin);
-    if (origin == null || origin.scheme != 'https' || origin.host.isEmpty) {
+    final localDevelopment = origin != null &&
+        origin.scheme == 'http' &&
+        options.allowInsecureLocalhost &&
+        _isLoopback(origin.host);
+    if (origin == null || (origin.scheme != 'https' && !localDevelopment) || origin.host.isEmpty) {
       throw ArgumentError.value(options.apiOrigin, 'apiOrigin', 'must be an HTTPS origin');
     }
     if (options.flushInterval <= Duration.zero) {
       throw ArgumentError.value(options.flushInterval, 'flushInterval', 'must be positive');
     }
   }
+
+  static bool _isLoopback(String host) =>
+      host == 'localhost' || host == '127.0.0.1' || host == '::1';
 
   static Duration _boundedInterval(Duration value) => Duration(
     milliseconds: value.inMilliseconds.clamp(200, 60000),
