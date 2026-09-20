@@ -11,6 +11,7 @@ import '../../auth/application/auth_controller.dart';
 import '../../sites/application/site_controller.dart';
 import 'android_sdk_setup.dart';
 import 'crash_analytics_setup.dart';
+import 'flutter_sdk_setup.dart';
 import 'ios_sdk_setup.dart';
 import 'product_features_page.dart';
 
@@ -48,21 +49,23 @@ class IntegrationPage extends ConsumerWidget {
         ? 1
         : requestedTab == 'ios-sdk'
         ? 2
+        : requestedTab == 'flutter-sdk'
+        ? 3
         : requestedTab == 'web-vitals'
-        ? 8
+        ? 9
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'forms'
-        ? 15
-        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
         ? 16
+        : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] == 'media'
+        ? 17
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
               'hosted-privacy'
-        ? 14
+        ? 15
         : GoRouter.maybeOf(context)?.state.uri.queryParameters['tab'] ==
               'crashes'
-        ? 17
+        ? 18
         : 0;
     return DefaultTabController(
-      length: 19,
+      length: 20,
       initialIndex: initialTab,
       child: Scaffold(
         appBar: embedded
@@ -105,6 +108,11 @@ class IntegrationPage extends ConsumerWidget {
                     requireConsent: site.requireConsent,
                   ),
                   IosSdkSetup(
+                    trackingId: site.trackingId,
+                    apiOrigin: Uri.parse(base).origin,
+                    requireConsent: site.requireConsent,
+                  ),
+                  FlutterSdkSetup(
                     trackingId: site.trackingId,
                     apiOrigin: Uri.parse(base).origin,
                     requireConsent: site.requireConsent,
@@ -384,45 +392,46 @@ List<_IntegrationGroup> _integrationGroups(BuildContext context) => [
       _IntegrationItem(0, context.tr('JavaScript', 'JavaScript')),
       _IntegrationItem(1, context.tr('Android SDK', 'Android SDK')),
       _IntegrationItem(2, context.tr('iOS SDK', 'iOS SDK')),
-      _IntegrationItem(3, context.tr('Image fallback', '图片回退')),
-      _IntegrationItem(4, context.tr('SVG fallback', 'SVG 回退')),
+      _IntegrationItem(3, context.tr('Flutter SDK', 'Flutter SDK')),
+      _IntegrationItem(4, context.tr('Image fallback', '图片回退')),
+      _IntegrationItem(5, context.tr('SVG fallback', 'SVG 回退')),
     ],
   ),
   _IntegrationGroup(
     label: context.tr('Analytics', '分析能力'),
     icon: Icons.insights_outlined,
     items: [
-      _IntegrationItem(5, context.tr('Goals', '目标事件')),
-      _IntegrationItem(6, context.tr('Site search', '站内搜索')),
-      _IntegrationItem(7, context.tr('Content analytics', '内容分析')),
-      _IntegrationItem(8, context.tr('Web Vitals', 'Web Vitals')),
+      _IntegrationItem(6, context.tr('Goals', '目标事件')),
+      _IntegrationItem(7, context.tr('Site search', '站内搜索')),
+      _IntegrationItem(8, context.tr('Content analytics', '内容分析')),
+      _IntegrationItem(9, context.tr('Web Vitals', 'Web Vitals')),
     ],
   ),
   _IntegrationGroup(
     label: context.tr('Behaviour tools', '行为工具'),
     icon: Icons.auto_graph,
     items: [
-      _IntegrationItem(9, context.tr('Heatmaps', '行为热图')),
-      _IntegrationItem(10, context.tr('Funnels', '漏斗')),
-      _IntegrationItem(11, context.tr('A/B tests', 'A/B 测试')),
-      _IntegrationItem(12, context.tr('Tag Manager', 'Tag Manager')),
+      _IntegrationItem(10, context.tr('Heatmaps', '行为热图')),
+      _IntegrationItem(11, context.tr('Funnels', '漏斗')),
+      _IntegrationItem(12, context.tr('A/B tests', 'A/B 测试')),
+      _IntegrationItem(13, context.tr('Tag Manager', 'Tag Manager')),
     ],
   ),
   _IntegrationGroup(
     label: context.tr('Privacy & quality', '隐私与质量'),
     icon: Icons.verified_user_outlined,
     items: [
-      _IntegrationItem(13, context.tr('Consent & privacy', '同意与隐私')),
-      _IntegrationItem(14, context.tr('Hosted privacy', '托管隐私')),
-      _IntegrationItem(15, context.tr('Form analytics', '表单分析')),
-      _IntegrationItem(16, context.tr('Media analytics', '媒体分析')),
-      _IntegrationItem(17, context.tr('Crash analytics', '崩溃分析')),
+      _IntegrationItem(14, context.tr('Consent & privacy', '同意与隐私')),
+      _IntegrationItem(15, context.tr('Hosted privacy', '托管隐私')),
+      _IntegrationItem(16, context.tr('Form analytics', '表单分析')),
+      _IntegrationItem(17, context.tr('Media analytics', '媒体分析')),
+      _IntegrationItem(18, context.tr('Crash analytics', '崩溃分析')),
     ],
   ),
   _IntegrationGroup(
     label: context.tr('Identity', '身份关联'),
     icon: Icons.person_outline,
-    items: [_IntegrationItem(18, context.tr('User identity', '用户身份关联'))],
+    items: [_IntegrationItem(19, context.tr('User identity', '用户身份关联'))],
   ),
 ];
 

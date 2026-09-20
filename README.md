@@ -6,6 +6,8 @@ Lightweight, self-hosted, privacy-first web analytics. See [architecture](docs/a
 
 The control plane implements local authentication, Workspaces, Sites, allowed domains, API tokens, browser collection, RabbitMQ-backed ingestion, daily analytics aggregation, and the Flutter reporting dashboard. The Flutter Web admin uses the real versioned REST endpoints.
 
+Mobile, desktop, and Flutter Web applications can use the explicit, consent-aware [Flutter SDK](docs/analytics/flutter-sdk.md). It shares the public schema-v1 collector with the Web, Android, and iOS clients.
+
 Custom event properties can be registered as named report dimensions and managed from the site analytics UI. See [custom dimensions](docs/analytics/custom-dimensions.md) for the tracker integration and report behavior.
 
 Reusable audience segments can be composed in the site UI and applied across core reports, including custom-dimension values. See [audience segments](docs/analytics/segments.md) for supported rules and current report coverage.

@@ -165,6 +165,57 @@ void main() {
     expect(find.text('Copy tracking examples'), findsOneWidget);
   });
 
+  testWidgets('provides a site-specific Flutter SDK setup flow', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(_IntegrationApi()),
+        ],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Collection & SDK', 'Flutter SDK');
+
+    expect(find.text('Connect a Flutter app'), findsOneWidget);
+    expect(find.text('Public source package · v0.1.0'), findsOneWidget);
+    expect(find.textContaining('path: sdk/flutter'), findsOneWidget);
+    expect(find.textContaining('srl_demo'), findsWidgets);
+    expect(find.textContaining('https://lens.example.test'), findsWidgets);
+    expect(find.text('Copy initialization code'), findsOneWidget);
+    expect(find.text('Copy consent call'), findsOneWidget);
+    expect(find.text('Copy tracking examples'), findsOneWidget);
+  });
+
+  testWidgets('blocks generated Flutter initialization over plaintext HTTP', (tester) async {
+    tester.view.physicalSize = const Size(1100, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sitesProvider.overrideWith(_SitesController.new),
+          apiProvider.overrideWithValue(SeeRayApi(baseUrl: 'http://localhost:8080')),
+        ],
+        child: const MaterialApp(
+          home: IntegrationPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _selectIntegrationTab(tester, 'Collection & SDK', 'Flutter SDK');
+
+    expect(find.text('HTTPS required for Flutter'), findsOneWidget);
+    expect(find.text('Copy initialization code'), findsNothing);
+    expect(find.text('Copy tracking examples'), findsOneWidget);
+  });
+
   testWidgets('provides an opt-in Core Web Vitals snippet', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
