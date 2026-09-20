@@ -1,0 +1,79 @@
+name: Native image
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*.*.*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/skyhhjmk/seeray-lens
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Quarkus native executable
+        run: >-
+          ./gradlew :server:quarkusBuild
+          -Dquarkus.native.enabled=true
+          -Dquarkus.package.jar.enabled=false
+          -Dquarkus.native.container-build=true
+          -Dquarkus.native.additional-build-args=--initialize-at-run-time=io.seeray.lens.application.AnalyticsAlertService,--initialize-at-run-time=io.seeray.lens.infrastructure.bing.BingWebmasterHttpGateway,--initialize-at-run-time=io.seeray.lens.infrastructure.google.GoogleAdsDataManagerHttpGateway,--initialize-at-run-time=io.seeray.lens.infrastructure.google.GoogleSearchConsoleHttpGateway,--initialize-at-run-time=io.seeray.lens.infrastructure.linkedin.LinkedInConversionsHttpGateway,--initialize-at-run-time=io.seeray.lens.infrastructure.meta.MetaAdsCapiHttpGateway,--initialize-at-run-time=io.seeray.lens.infrastructure.microsoft.MicrosoftAdsCapiHttpGateway,--initialize-at-run-time=io.seeray.lens.infrastructure.xads.XAdsConversionsHttpGateway,--initialize-at-run-time=io.seeray.lens.infrastructure.yandex.YandexWebmasterHttpGateway,--initialize-at-run-time=io.seeray.lens.application.PageOverlayService,--initialize-at-run-time=io.seeray.lens.application.SecretEncryptionService,--initialize-at-run-time=io.seeray.lens.application.TagManagerService,--initialize-at-run-time=io.seeray.lens.application.WorkspaceExtensionService,--initialize-at-run-time=io.seeray.lens.application.WorkspaceInvitationService,--initialize-at-run-time=io.seeray.lens.domain.common.UuidV7
+          -x test
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/src/main/docker/Dockerfile.native
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
