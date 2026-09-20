@@ -89,6 +89,9 @@ public class PixelTrackingResource {
                     null,
                     visitor.toString(),
                     session.toString(),
+                    null,
+                    null,
+                    null,
                     null);
             publisher
                     .sendMessage(Message.of(mapper.writeValueAsString(message)))

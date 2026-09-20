@@ -290,6 +290,19 @@ class _VisitorProfileBodyState extends ConsumerState<_VisitorProfileBody> {
                       ),
                       const SizedBox(height: 3),
                       SelectableText(shortId),
+                      if (profile.fingerprintRiskLevel != 'none')
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            context.tr(
+                              'Possible same browser: ${profile.fingerprintRelatedVisitorCount} other visitor(s)',
+                              '可能来自同一浏览器：${profile.fingerprintRelatedVisitorCount} 个其他访客',
+                            ),
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

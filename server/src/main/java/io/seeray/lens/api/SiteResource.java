@@ -38,7 +38,9 @@ public class SiteResource {
                 r.trackingEnabled,
                 r.requireConsent,
                 r.rawRetentionDays,
-                r.aggregateRetentionDays));
+                r.aggregateRetentionDays,
+                r.fingerprintRiskEnabled,
+                r.fingerprintRetentionDays));
     }
 
     @DELETE
@@ -59,7 +61,9 @@ public class SiteResource {
                 s.trackingEnabled,
                 s.requireConsent,
                 s.rawRetentionDays,
-                s.aggregateRetentionDays);
+                s.aggregateRetentionDays,
+                s.fingerprintRiskEnabled,
+                s.fingerprintRetentionDays);
     }
 
     static DomainDto domain(SiteAllowedDomain d) {
@@ -72,7 +76,9 @@ public class SiteResource {
             String defaultLanguage,
             Boolean requireConsent,
             Integer rawRetentionDays,
-            Integer aggregateRetentionDays) {}
+            Integer aggregateRetentionDays,
+            Boolean fingerprintRiskEnabled,
+            Integer fingerprintRetentionDays) {}
 
     public record SitePatch(
             String name,
@@ -81,7 +87,9 @@ public class SiteResource {
             Boolean trackingEnabled,
             Boolean requireConsent,
             Integer rawRetentionDays,
-            Integer aggregateRetentionDays) {}
+            Integer aggregateRetentionDays,
+            Boolean fingerprintRiskEnabled,
+            Integer fingerprintRetentionDays) {}
 
     public record SiteDto(
             UUID id,
@@ -93,7 +101,9 @@ public class SiteResource {
             boolean trackingEnabled,
             boolean requireConsent,
             int rawRetentionDays,
-            int aggregateRetentionDays) {}
+            int aggregateRetentionDays,
+            boolean fingerprintRiskEnabled,
+            int fingerprintRetentionDays) {}
 
     public record DomainRequest(@NotBlank String host, boolean allowSubdomains, boolean enabled) {}
 

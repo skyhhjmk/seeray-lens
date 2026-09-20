@@ -40,6 +40,9 @@ class IntegrationPage extends ConsumerWidget {
     final consentAttribute = site.requireConsent
         ? ' data-require-consent="true"'
         : '';
+    final fingerprintAttribute = site.fingerprintRiskEnabled
+        ? ' data-fingerprint-risk="true"'
+        : '';
     final gif = '$base/api/v1/pixel/${site.trackingId}.gif';
     final svg = '$base/api/v1/pixel/${site.trackingId}.svg';
     final requestedTab = GoRouter.maybeOf(
@@ -96,7 +99,7 @@ class IntegrationPage extends ConsumerWidget {
                       '推荐的 JavaScript 代码',
                     ),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute></script>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute$fingerprintAttribute></script>',
                     note: context.tr(
                       'The tracker URL and collector path stay fixed. Do not add generated query parameters; site identity is the stable data-site-id value.',
                       '追踪器 URL 和 Collector 路径保持固定。不要添加自动生成的查询参数；站点身份使用稳定的 data-site-id。',
@@ -190,7 +193,7 @@ class IntegrationPage extends ConsumerWidget {
                       '测量 Core Web Vitals',
                     ),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-web-vitals></script>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute$fingerprintAttribute data-web-vitals></script>',
                     note: context.tr(
                       'This opt-in collects only LCP, INP and CLS values for the current page; it does not read page text, DOM elements or form input. Final values are sent when available, including when the page is hidden. Measurements follow the tracker’s DNT and consent settings. Browsers without a supported measurement API may not report every metric.',
                       '此功能需显式启用，只采集当前页面的 LCP、INP 和 CLS 数值，不读取页面文本、DOM 元素或表单输入。数值在可用时发送，包括页面隐藏时；并遵循追踪器的 DNT 与同意设置。不支持相关测量 API 的浏览器可能无法报告所有指标。',
@@ -199,7 +202,7 @@ class IntegrationPage extends ConsumerWidget {
                   _Snippet(
                     title: context.tr('Enable behaviour heatmaps', '启用页面行为热图'),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-heatmap></script>\n<script>\n  // Before replacing PJAX content:\n  SeeRay.beginNavigation();\n  // After content and scroll restoration complete:\n  SeeRay.pageReady({ layoutVersion: \'homepage-v2\' });\n</script>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute$fingerprintAttribute data-heatmap></script>\n<script>\n  // Before replacing PJAX content:\n  SeeRay.beginNavigation();\n  // After content and scroll restoration complete:\n  SeeRay.pageReady({ layoutVersion: \'homepage-v2\' });\n</script>',
                     note: context.tr(
                       'First enable Heatmaps in the site settings, then add data-heatmap. Heatmaps are sampled per page instance and remain off if the public configuration cannot be read. Use a new layoutVersion whenever same-sized content moves; register independent scroll containers with a stable ID.',
                       '请先在站点设置中开启热图，再添加 data-heatmap。热图按页面实例采样；公开配置读取失败时保持关闭。相同尺寸的内容位置变化时请更新 layoutVersion；独立滚动容器需使用稳定 ID 注册。',
@@ -231,11 +234,13 @@ class IntegrationPage extends ConsumerWidget {
                     trackingId: site.trackingId,
                     trackerUrl: script,
                     requiredBySite: site.requireConsent,
+                    fingerprintRiskEnabled: site.fingerprintRiskEnabled,
                   ),
                   _HostedPrivacySetup(
                     trackingId: site.trackingId,
                     trackerUrl: script,
                     requiredBySite: site.requireConsent,
+                    fingerprintRiskEnabled: site.fingerprintRiskEnabled,
                   ),
                   _Snippet(
                     title: context.tr(
@@ -243,7 +248,7 @@ class IntegrationPage extends ConsumerWidget {
                       '追踪明确标记的表单互动',
                     ),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-track-forms></script>\n\n<form data-seeray-form="signup">\n  <input type="email" autocomplete="email">\n  <button type="submit">Continue</button>\n</form>\n\n<script>\n  // Call inside your async submit handler after the server responds:\n  SeeRay.trackFormResult(\'signup\', success);\n</script>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute$fingerprintAttribute data-track-forms></script>\n\n<form data-seeray-form="signup">\n  <input type="email" autocomplete="email">\n  <button type="submit">Continue</button>\n</form>\n\n<script>\n  // Call inside your async submit handler after the server responds:\n  SeeRay.trackFormResult(\'signup\', success);\n</script>',
                     note: context.tr(
                       'This is opt-in twice: enable data-track-forms on the tracker and add a stable, non-personal data-seeray-form ID to each form. The tracker records visible form views, starts, generic field categories, time, native validation errors and submit attempts. It never reads field names, values, labels, error text or DOM content; password, hidden and file inputs are excluded. Native submit is not backend success: call trackFormResult only after your application knows the result. Mark sensitive forms with data-seeray-no-track, and call SeeRay.refreshFormTracking() after dynamically adding forms.',
                       '此功能需要两处显式启用：追踪代码添加 data-track-forms，每个表单添加稳定且不含个人信息的 data-seeray-form ID。追踪器记录可见表单、开始填写、通用字段类别、耗时、浏览器原生校验错误和提交尝试；不会读取字段名、值、标签、错误文本或 DOM 内容，并排除密码、隐藏和文件字段。原生提交不代表服务端成功：应用确认处理结果后再调用 trackFormResult。敏感表单请加 data-seeray-no-track；动态添加表单后调用 SeeRay.refreshFormTracking()。',
@@ -255,7 +260,7 @@ class IntegrationPage extends ConsumerWidget {
                       '追踪明确标记的音视频播放',
                     ),
                     body:
-                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute data-track-media></script>\n\n<video data-seeray-media="product-demo" controls>\n  <source src="/media/product-demo.mp4" type="video/mp4">\n</video>',
+                        '<script src="$script" data-site-id="${site.trackingId}"$consentAttribute$fingerprintAttribute data-track-media></script>\n\n<video data-seeray-media="product-demo" controls>\n  <source src="/media/product-demo.mp4" type="video/mp4">\n</video>',
                     note: context.tr(
                       'This is opt-in twice: enable data-track-media and add a stable, non-personal data-seeray-media ID to each audio/video element. The tracker records one start, 25/50/75/90% playback milestones and natural ended completion per page visit. It does not read or send media source URLs, titles, captions, poster URLs or media content. Seeking directly to a milestone counts as reached playback progress, but seeking to the end is not reported as a completion. Mark sensitive embeds with data-seeray-no-track. For cross-origin media, the owning page must receive the standard HTML media events.',
                       '此功能需要两处显式启用：追踪代码添加 data-track-media，每个 audio/video 元素添加稳定且不含个人信息的 data-seeray-media ID。每次页面访问记录一次开始播放、25/50/75/90% 进度节点和自然 ended 完成事件；不会读取或发送媒体源地址、标题、字幕、封面地址或媒体内容。拖动到进度节点会计为到达该节点，但直接拖到结尾不会计为完成。敏感嵌入请加 data-seeray-no-track。跨域媒体需由所属页面正常接收到 HTML 媒体事件。',
@@ -460,15 +465,17 @@ class _ConsentSetup extends StatelessWidget {
     required this.trackingId,
     required this.trackerUrl,
     required this.requiredBySite,
+    required this.fingerprintRiskEnabled,
   });
 
   final String siteId;
   final String trackingId;
   final String trackerUrl;
   final bool requiredBySite;
+  final bool fingerprintRiskEnabled;
 
   String get _snippet =>
-      '''<script src="$trackerUrl" data-site-id="$trackingId" data-require-consent="true"></script>
+      '''<script src="$trackerUrl" data-site-id="$trackingId" data-require-consent="true"${fingerprintRiskEnabled ? ' data-fingerprint-risk="true"' : ''}></script>
 <aside id="seeray-consent-banner-$trackingId" role="dialog" aria-label="Privacy choices" hidden>
   <p>Allow anonymous analytics and the site's enabled behaviour tools?</p>
   <button type="button" data-seeray-consent-accept>Accept</button>
@@ -571,18 +578,23 @@ class _HostedPrivacySetup extends StatelessWidget {
     required this.trackingId,
     required this.trackerUrl,
     required this.requiredBySite,
+    required this.fingerprintRiskEnabled,
   });
 
   final String trackingId;
   final String trackerUrl;
   final bool requiredBySite;
+  final bool fingerprintRiskEnabled;
 
   String get _snippet {
     final consentAttribute = requiredBySite
         ? ' data-require-consent="true"'
         : '';
     final apiOrigin = Uri.parse(trackerUrl).origin;
-    return '''<script src="$trackerUrl" data-site-id="$trackingId"$consentAttribute></script>
+    final fingerprintAttribute = fingerprintRiskEnabled
+        ? ' data-fingerprint-risk="true"'
+        : '';
+    return '''<script src="$trackerUrl" data-site-id="$trackingId"$consentAttribute$fingerprintAttribute></script>
 <iframe
   data-seeray-privacy
   title="Privacy preferences"

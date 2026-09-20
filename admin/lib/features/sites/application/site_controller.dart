@@ -14,6 +14,8 @@ class Site {
     required this.defaultLanguage,
     required this.trackingEnabled,
     this.requireConsent = false,
+    this.fingerprintRiskEnabled = false,
+    this.fingerprintRetentionDays = 30,
     required this.rawRetentionDays,
     required this.aggregateRetentionDays,
   });
@@ -26,6 +28,8 @@ class Site {
   final String? defaultLanguage;
   final bool trackingEnabled;
   final bool requireConsent;
+  final bool fingerprintRiskEnabled;
+  final int fingerprintRetentionDays;
   final int rawRetentionDays;
   final int aggregateRetentionDays;
 
@@ -38,6 +42,8 @@ class Site {
     defaultLanguage: json['defaultLanguage'] as String?,
     trackingEnabled: json['trackingEnabled'] as bool,
     requireConsent: json['requireConsent'] as bool? ?? false,
+    fingerprintRiskEnabled: json['fingerprintRiskEnabled'] as bool? ?? false,
+    fingerprintRetentionDays: json['fingerprintRetentionDays'] as int? ?? 30,
     rawRetentionDays: json['rawRetentionDays'] as int,
     aggregateRetentionDays: json['aggregateRetentionDays'] as int,
   );

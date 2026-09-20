@@ -17,18 +17,21 @@ public class AnalyticsQueryService {
     private final SiteService sites;
     private final WorkspaceAccess access;
     private final ObjectMapper mapper;
+    private final FingerprintRiskService fingerprintRisk;
 
     @Inject
     public AnalyticsQueryService(
-            DataSource dataSource, SiteService sites, WorkspaceAccess access, ObjectMapper mapper) {
+            DataSource dataSource, SiteService sites, WorkspaceAccess access, ObjectMapper mapper,
+            FingerprintRiskService fingerprintRisk) {
         this.dataSource = dataSource;
         this.sites = sites;
         this.access = access;
         this.mapper = mapper;
+        this.fingerprintRisk = fingerprintRisk;
     }
 
     public AnalyticsQueryService(DataSource dataSource, SiteService sites, WorkspaceAccess access) {
-        this(dataSource, sites, access, new ObjectMapper());
+        this(dataSource, sites, access, new ObjectMapper(), new FingerprintRiskService(dataSource));
     }
 
     public Range range(UUID siteId, String fromValue, String toValue) {
@@ -158,7 +161,7 @@ public class AnalyticsQueryService {
         }
     }
 
-    /** Privacy-preserving session log: anonymous site-local IDs only, never IP, UA fingerprint, or cross-site IDs. */
+    /** Privacy-preserving session log: site-local IDs and optional risk summaries, never raw fingerprint keys or cross-site IDs. */
     public List<VisitorLog> visitorLog(UUID site, Range range, int requestedLimit) {
         int limit = Math.max(1, Math.min(requestedLimit, 200));
         String sql =
@@ -177,7 +180,8 @@ public class AnalyticsQueryService {
             p.setObject(4, range.to);
             p.setInt(5, limit);
             try (ResultSet r = p.executeQuery()) {
-                while (r.next())
+                while (r.next()) {
+                    FingerprintRiskService.Risk risk = fingerprintRisk.risk(site, r.getString(1));
                     out.add(new VisitorLog(
                             r.getString(1),
                             r.getTimestamp(2).toInstant(),
@@ -188,7 +192,9 @@ public class AnalyticsQueryService {
                             r.getInt(7),
                             r.getLong(8),
                             r.getBoolean(9),
-                            r.getString(10)));
+                            r.getString(10), risk.level(), risk.relatedVisitorCount(), risk.relatedAccountCount(),
+                            risk.lastObservedAt(), risk.confidence()));
+                }
             }
             return out;
         } catch (SQLException e) {
@@ -434,7 +440,19 @@ public class AnalyticsQueryService {
             int events,
             long durationMs,
             boolean bounce,
-            String visitorType) {}
+            String visitorType,
+            String fingerprintRiskLevel,
+            int fingerprintRelatedVisitorCount,
+            int fingerprintRelatedAccountCount,
+            Instant fingerprintLastObservedAt,
+            String fingerprintConfidence) {
+        public VisitorLog(
+                String visitorId, Instant startedAt, Instant lastActivityAt, String entryPage, String exitPage,
+                int pageViews, int events, long durationMs, boolean bounce, String visitorType) {
+            this(visitorId, startedAt, lastActivityAt, entryPage, exitPage, pageViews, events, durationMs, bounce,
+                    visitorType, "none", 0, 0, null, "none");
+        }
+    }
 
     public record VisitorProfile(
             String visitorId,
@@ -453,7 +471,12 @@ public class AnalyticsQueryService {
             String nextSessionsCursor,
             List<VisitorProfileAction> actions,
             boolean hasMoreActions,
-            String nextActionsCursor) {}
+            String nextActionsCursor,
+            String fingerprintRiskLevel,
+            int fingerprintRelatedVisitorCount,
+            int fingerprintRelatedAccountCount,
+            Instant fingerprintLastObservedAt,
+            String fingerprintConfidence) {}
 
     public record VisitorProfileHistoryPage(
             List<VisitorProfileSession> sessions,

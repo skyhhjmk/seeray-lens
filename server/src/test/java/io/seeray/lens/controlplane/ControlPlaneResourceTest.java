@@ -672,6 +672,9 @@ class ControlPlaneResourceTest {
                 null,
                 "private-visitor",
                 "private-session",
+                null,
+                null,
+                null,
                 null)));
         String deliveryId = given().header("Authorization", "Bearer " + owner.access())
                 .get(path + "/" + extensionId + "/deliveries")
@@ -963,11 +966,14 @@ class ControlPlaneResourceTest {
         String workspaceId = workspace(owner.access()).extract().path("[0].id");
         var site = given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
-                .body("{\"name\":\"Consent site\",\"timezone\":\"UTC\",\"requireConsent\":true}")
+                .body("{\"name\":\"Consent site\",\"timezone\":\"UTC\",\"requireConsent\":true,"
+                        + "\"fingerprintRiskEnabled\":true,\"fingerprintRetentionDays\":14}")
                 .post("/api/v1/workspaces/" + workspaceId + "/sites")
                 .then()
                 .statusCode(201)
                 .body("requireConsent", is(true))
+                .body("fingerprintRiskEnabled", is(true))
+                .body("fingerprintRetentionDays", is(14))
                 .extract();
         String siteId = site.path("id");
         String path = "/api/v1/sites/" + siteId;
@@ -976,7 +982,9 @@ class ControlPlaneResourceTest {
                 .get(path)
                 .then()
                 .statusCode(200)
-                .body("requireConsent", is(true));
+                .body("requireConsent", is(true))
+                .body("fingerprintRiskEnabled", is(true))
+                .body("fingerprintRetentionDays", is(14));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Consent site renamed\",\"timezone\":\"UTC\","
@@ -985,16 +993,21 @@ class ControlPlaneResourceTest {
                 .patch(path)
                 .then()
                 .statusCode(200)
-                .body("requireConsent", is(true));
+                .body("requireConsent", is(true))
+                .body("fingerprintRiskEnabled", is(true))
+                .body("fingerprintRetentionDays", is(14));
         given().header("Authorization", "Bearer " + owner.access())
                 .contentType("application/json")
                 .body("{\"name\":\"Consent site renamed\",\"timezone\":\"UTC\","
                         + "\"defaultLanguage\":\"en\",\"trackingEnabled\":true,\"requireConsent\":false,"
-                        + "\"rawRetentionDays\":30,\"aggregateRetentionDays\":730}")
+                        + "\"rawRetentionDays\":30,\"aggregateRetentionDays\":730,"
+                        + "\"fingerprintRiskEnabled\":false,\"fingerprintRetentionDays\":60}")
                 .patch(path)
                 .then()
                 .statusCode(200)
-                .body("requireConsent", is(false));
+                .body("requireConsent", is(false))
+                .body("fingerprintRiskEnabled", is(false))
+                .body("fingerprintRetentionDays", is(60));
     }
 
     @Test

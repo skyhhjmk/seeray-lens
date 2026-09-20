@@ -17,4 +17,7 @@ public record TrackingMessage(
         Integer durationMs,
         String visitorId,
         String sessionId,
-        String userIdHash) {}
+        String userIdHash,
+        String fingerprintKey,
+        Integer fingerprintAlgorithmVersion,
+        String fingerprintStability) {}

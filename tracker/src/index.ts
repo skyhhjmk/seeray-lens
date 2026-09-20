@@ -43,11 +43,12 @@ export interface TrackerPlugin {
   readonly version?: string;
   setup(context: TrackerPluginContext): void | (() => void);
 }
-export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; trackErrors?: boolean; crashRelease?: string; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; plugins?: TrackerPlugin[]; }
+export interface TrackerOptions { siteId: string; endpoint?: string; apiOrigin?: string; maxBatchSize?: number; flushInterval?: number; requireConsent?: boolean; fingerprintRisk?: boolean; trackDownloads?: boolean; trackOutlinks?: boolean; trackForms?: boolean; trackMedia?: boolean; trackErrors?: boolean; crashRelease?: string; tagManager?: boolean; tagManagerEnvironment?: string; tagManagerPreview?: TagManagerPreviewOptions; experiments?: boolean; webVitals?: boolean; heatmap?: HeatmapOptions; plugins?: TrackerPlugin[]; }
 export interface SiteSearchOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { category?: string; resultsCount?: number; }
 export interface ContentTrackingOptions extends Omit<TrackOptions, 'category' | 'action' | 'name' | 'properties'> { piece?: string; target?: string; interaction?: string; }
 interface ClientContext { browser: string; browserVersion?: string; operatingSystem: string; operatingSystemVersion?: string; deviceType: string; language?: string; screenWidth?: number; screenHeight?: number; viewportWidth?: number; viewportHeight?: number; pixelRatio?: number; }
-interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId?: string; sessionId?: string; userId?: string; context: ClientContext; }
+interface FingerprintPayload { algorithmVersion: 1; signalHash: string; stability: 'high' | 'medium' | 'low'; }
+interface EventPayload extends TrackOptions { eventId: string; type: string; occurredAt: string; visitorId?: string; sessionId?: string; userId?: string; context: ClientContext; fingerprint?: FingerprintPayload; }
 interface HeatmapConfig { enabled: boolean; sampleRate: number; version?: number; autoSnapshotEnabled: boolean; recordingEnabled: boolean; recordingSampleRate: number; }
 interface TagDefinition { type?: unknown; trigger?: unknown; triggers?: unknown; eventType?: unknown; category?: unknown; action?: unknown; name?: unknown; code?: unknown; properties?: unknown; }
 interface TagPreviewEvent { tagIndex: number; triggerEvent: string; outcome: 'fired' | 'no_match' | 'blocked'; pagePath: string; }
@@ -166,12 +167,85 @@ const clientContext = (): ClientContext => {
   };
 };
 
+const fingerprintHash = (value: string): string => {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ (code + 0x9e3779b9), 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
+    .repeat(2);
+};
+
+/**
+ * Builds a high-entropy browser signal locally. Only its short hash is sent.
+ * Failures are deliberately tolerated because this is an optional risk signal.
+ */
+const browserFingerprint = (): FingerprintPayload | undefined => {
+  try {
+    const nav = globalThis.navigator;
+    const parts: string[] = [
+      nav?.userAgent ?? '',
+      nav?.platform ?? '',
+      nav?.language ?? '',
+      Array.isArray(nav?.languages) ? nav.languages.join(',') : '',
+      Intl.DateTimeFormat().resolvedOptions().timeZone ?? '',
+      String(nav?.hardwareConcurrency ?? ''),
+      String((nav as Navigator & { deviceMemory?: number } | undefined)?.deviceMemory ?? ''),
+      String(nav?.maxTouchPoints ?? ''),
+      String(globalThis.screen?.colorDepth ?? ''),
+      String(globalThis.screen?.pixelDepth ?? ''),
+    ];
+    const document = globalThis.document;
+    const canvas = document?.createElement?.('canvas') as HTMLCanvasElement | undefined;
+    let canvasSignal = '';
+    let webglSignal = '';
+    let fontSignal = '';
+    const context = canvas?.getContext?.('2d');
+    if (context) {
+      context.textBaseline = 'alphabetic';
+      context.fillStyle = '#1693a5';
+      context.fillRect(7, 3, 113, 19);
+      context.fillStyle = '#f5c542';
+      context.font = '16px Arial';
+      context.fillText('SeeRay:lens:指纹', 2, 17);
+      canvasSignal = canvas?.toDataURL?.() ?? '';
+      const candidates = ['Arial', 'Courier New', 'Georgia', 'Helvetica', 'Times New Roman', 'Verdana'];
+      fontSignal = candidates.map(font => `${font}:${context.measureText(`mmmm${font}`).width}`).join('|');
+    }
+    const webgl = canvas?.getContext?.('webgl') ?? canvas?.getContext?.('experimental-webgl');
+    if (webgl && 'getParameter' in webgl) {
+      const gl = webgl as WebGLRenderingContext;
+      const debug = gl.getExtension?.('WEBGL_debug_renderer_info') as { UNMASKED_VENDOR_WEBGL: number; UNMASKED_RENDERER_WEBGL: number } | null;
+      webglSignal = [
+        String(gl.getParameter(gl.VERSION) ?? ''),
+        String(gl.getParameter(gl.SHADING_LANGUAGE_VERSION) ?? ''),
+        debug ? String(gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) ?? '') : '',
+        debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) ?? '') : '',
+        String(gl.getParameter(gl.MAX_TEXTURE_SIZE) ?? ''),
+      ].join('|');
+    }
+    parts.push(canvasSignal, webglSignal, fontSignal);
+    const usable = parts.filter(Boolean).length;
+    if (usable < 5) return undefined;
+    return {
+      algorithmVersion: 1,
+      signalHash: fingerprintHash(parts.join('\u001f')),
+      stability: canvasSignal && webglSignal && fontSignal ? 'high' : canvasSignal || webglSignal ? 'medium' : 'low',
+    };
+  } catch {
+    return undefined;
+  }
+};
+
 export class Tracker {
   private readonly endpoint: string; private readonly heatmapEndpoint: string; private readonly heatmapConfigEndpoint: string; private readonly tagManagerEndpoint: string; private readonly experimentsEndpoint: string; private readonly snapshotPlanEndpoint: string; private readonly snapshotEndpoint: string; private readonly recordingEndpoint: string; private readonly recorderEndpoint: string; private readonly maxBatchSize: number; private readonly flushInterval: number; private visitorId!: string; private sessionId!: string; private recordingId!: string; private identityPersisted = false; private consentOverride?: 'granted' | 'denied';
   private readonly tagManagerPreviewEndpoint?: string;
   private readonly tagManagerPreviewEventsEndpoint?: string;
   private readonly tagManagerPreviewToken?: string;
-  private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false; private userId: string | undefined;
+  private queue: EventPayload[] = []; private timer: ReturnType<typeof setTimeout> | undefined; private currentPageStartedAt: number | undefined; private pageViewRecorded = false; private userId: string | undefined; private fingerprint: FingerprintPayload | undefined;
   private heatmapConfig: HeatmapConfig | undefined; private heatmapQueue: HeatmapEvent[] = []; private heatmapTimer: ReturnType<typeof setTimeout> | undefined; private heatmapInstance: string | undefined; private heatmapUrl = ''; private heatmapLayoutVersion = 'unversioned'; private heatmapSelected = false; private heatmapNavigating = false;
   private moveCount = 0; private clickCount = 0; private dropped = 0; private moveTruncated = false; private clickTruncated = false; private lastMove = 0; private listenersInstalled = false; private behaviourListenerInstalled = false; private siteSearchListenerInstalled = false; private contentListenerInstalled = false; private formListenerInstalled = false; private mediaListenerInstalled = false; private errorListenerInstalled = false; private webVitalsStarted = false; private historyInstalled = false; private navigationSerial = 0; private layoutTimer: ReturnType<typeof setTimeout> | undefined; private heatmapRetry: HeatmapBatch | undefined; private heatmapFlushInFlight = false; private resizeObserver: ResizeObserver | undefined; private contentObserver: IntersectionObserver | undefined; private formViewObserver: IntersectionObserver | undefined; private formMutationObserver: MutationObserver | undefined; private contentSeen = new WeakSet<Element>(); private contentObserved = new WeakSet<Element>(); private formSeen = new WeakSet<Element>(); private formStarted = new WeakSet<Element>(); private interactedFormFields = new WeakSet<Element>(); private activeFormFields = new WeakMap<Element, { formId: string; startedAt: number; fieldType: string }>(); private mediaStarted = new WeakSet<Element>(); private mediaCompleted = new WeakSet<Element>(); private mediaMilestones = new WeakMap<Element, Set<number>>(); private recordingSelected = false; private recorderStop: (() => void) | undefined;
   private readonly containers = new Map<string, ContainerRegistration>(); private readonly scrollBins = new Map<string, Set<number>>(); private readonly lastScroll = new Map<string, number>();
@@ -192,6 +266,7 @@ export class Tracker {
     this.startPageOverlay(apiBase);
     if (this.getConsentState() === 'granted' && !doNotTrack()) this.persistIdentity();
     else this.useEphemeralIdentity();
+    if (this.options.fingerprintRisk && this.collectionAllowed()) this.fingerprint = browserFingerprint();
     const preview = options.tagManagerPreview;
     if (preview?.sessionId && preview.token) {
       const previewPath = `/api/v1/tag-manager/${encodeURIComponent(options.siteId)}/preview/${encodeURIComponent(preview.sessionId)}`;
@@ -247,6 +322,7 @@ export class Tracker {
     this.consentOverride = state;
     try { globalThis.localStorage?.setItem(this.consentKey(), state); } catch { /* Storage may be unavailable in restrictive browser contexts. */ }
     if (!granted) {
+      this.fingerprint = undefined;
       this.userId = undefined;
       this.queue = [];
       this.heatmapQueue = [];
@@ -268,6 +344,7 @@ export class Tracker {
       this.useEphemeralIdentity();
     } else {
       if (!doNotTrack()) this.persistIdentity();
+      if (this.options.fingerprintRisk) this.fingerprint = browserFingerprint();
       this.activateCollectionListeners();
       this.readyPromise = this.loadConfigured();
     }
@@ -678,6 +755,7 @@ export class Tracker {
       sessionId: options.anonymous ? undefined : this.sessionId,
       userId: options.anonymous ? undefined : this.userId,
       context: clientContext(),
+      fingerprint: options.anonymous ? undefined : this.fingerprint,
     };
     this.queue.push(event);
     this.emitPlugin('track', {

@@ -29,9 +29,12 @@ public class SiteService {
             String language,
             Integer raw,
             Integer aggregate,
-            Boolean requireConsent) {
+            Boolean requireConsent,
+            Boolean fingerprintRiskEnabled,
+            Integer fingerprintRetentionDays) {
         OrganizationMember m = access.require(workspace, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
-        return save(null, m.organization, name, timezone, language, true, requireConsent, raw, aggregate);
+        return save(null, m.organization, name, timezone, language, true, requireConsent, raw, aggregate,
+                fingerprintRiskEnabled, fingerprintRetentionDays);
     }
 
     @Transactional
@@ -43,10 +46,13 @@ public class SiteService {
             Boolean enabled,
             Boolean requireConsent,
             Integer raw,
-            Integer aggregate) {
+            Integer aggregate,
+            Boolean fingerprintRiskEnabled,
+            Integer fingerprintRetentionDays) {
         Site s = site(id);
         access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
-        return save(s, s.organization, name, timezone, language, enabled, requireConsent, raw, aggregate);
+        return save(s, s.organization, name, timezone, language, enabled, requireConsent, raw, aggregate,
+                fingerprintRiskEnabled, fingerprintRetentionDays);
     }
 
     public Site site(UUID id) {
@@ -126,7 +132,9 @@ public class SiteService {
             Boolean enabled,
             Boolean requireConsent,
             Integer raw,
-            Integer aggregate) {
+            Integer aggregate,
+            Boolean fingerprintRiskEnabled,
+            Integer fingerprintRetentionDays) {
         if (name == null || name.isBlank()) throw new ControlPlaneException(400, "INVALID_SITE", "Name is required");
         try {
             ZoneId.of(timezone);
@@ -152,6 +160,15 @@ public class SiteService {
         s.defaultLanguage = language == null || language.isBlank() ? "en" : language;
         s.trackingEnabled = enabled == null ? (s == null || s.trackingEnabled) : enabled;
         s.requireConsent = requireConsent == null ? (newSite ? false : s.requireConsent) : requireConsent;
+        s.fingerprintRiskEnabled = fingerprintRiskEnabled == null
+                ? (newSite ? false : s.fingerprintRiskEnabled)
+                : fingerprintRiskEnabled;
+        int fingerprintRetention = fingerprintRetentionDays == null
+                ? (newSite ? 30 : s.fingerprintRetentionDays)
+                : fingerprintRetentionDays;
+        if (fingerprintRetention < 1 || fingerprintRetention > 365)
+            throw new ControlPlaneException(400, "INVALID_FINGERPRINT_RETENTION", "Fingerprint retention must be between 1 and 365 days");
+        s.fingerprintRetentionDays = fingerprintRetention;
         s.rawRetentionDays = r;
         s.aggregateRetentionDays = a;
         s.updatedAt = now;

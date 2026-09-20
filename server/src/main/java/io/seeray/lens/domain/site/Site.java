@@ -34,6 +34,12 @@ public class Site extends PanacheEntityBase {
     @Column(name = "require_consent", nullable = false)
     public boolean requireConsent;
 
+    @Column(name = "fingerprint_risk_enabled", nullable = false)
+    public boolean fingerprintRiskEnabled;
+
+    @Column(name = "fingerprint_retention_days", nullable = false)
+    public int fingerprintRetentionDays;
+
     @Column(name = "raw_retention_days", nullable = false)
     public int rawRetentionDays;
 

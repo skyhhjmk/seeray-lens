@@ -13,6 +13,7 @@
     siteId,
     apiOrigin,
     requireConsent: script.getAttribute('data-require-consent') === 'true',
+    fingerprintRisk: script.getAttribute('data-fingerprint-risk') === 'true',
     tagManager: tagManagerPreview !== undefined || script.getAttribute('data-tag-manager') === 'true',
     tagManagerEnvironment: script.getAttribute('data-tag-manager-environment') || 'production',
     tagManagerPreview,

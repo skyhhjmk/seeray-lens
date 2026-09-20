@@ -32,6 +32,8 @@ public class RawAnalyticsRetentionService {
                 Instant rawCutoff = now.minus(Duration.ofDays(policy.rawRetentionDays));
                 LocalDate aggregateCutoff = LocalDate.now(policy.zone).minusDays(policy.aggregateRetentionDays);
                 rawEvents += deleteRawEvents(connection, policy.siteId, rawCutoff);
+                deleteFingerprintObservations(connection, policy.siteId,
+                        now.minus(Duration.ofDays(policy.fingerprintRetentionDays)));
                 aggregateRows += deleteDatedAggregates(connection, policy.siteId, aggregateCutoff);
                 Instant aggregateInstantCutoff =
                         aggregateCutoff.atStartOfDay(policy.zone).toInstant();
@@ -49,11 +51,11 @@ public class RawAnalyticsRetentionService {
     private static List<Policy> policies(Connection connection) throws SQLException {
         List<Policy> result = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(
-                        "select id,timezone,raw_retention_days,aggregate_retention_days from site");
+                        "select id,timezone,raw_retention_days,aggregate_retention_days,fingerprint_retention_days from site");
                 ResultSet rows = statement.executeQuery()) {
             while (rows.next())
                 result.add(new Policy(
-                        rows.getObject(1, UUID.class), ZoneId.of(rows.getString(2)), rows.getInt(3), rows.getInt(4)));
+                        rows.getObject(1, UUID.class), ZoneId.of(rows.getString(2)), rows.getInt(3), rows.getInt(4), rows.getInt(5)));
         }
         return result;
     }
@@ -92,6 +94,17 @@ public class RawAnalyticsRetentionService {
                     });
         }
         return deleted;
+    }
+
+    private static long deleteFingerprintObservations(Connection connection, UUID siteId, Instant cutoff)
+            throws SQLException {
+        return deleteInBatches(
+                connection,
+                "delete from fingerprint_observation where ctid in (select ctid from fingerprint_observation where site_id=? and observed_at < ? order by observed_at,id limit ?)",
+                statement -> {
+                    statement.setObject(1, siteId);
+                    statement.setTimestamp(2, Timestamp.from(cutoff));
+                });
     }
 
     private static long deleteOldSessions(Connection connection, UUID siteId, Instant cutoff) throws SQLException {
@@ -144,7 +157,8 @@ public class RawAnalyticsRetentionService {
         }
     }
 
-    private record Policy(UUID siteId, ZoneId zone, int rawRetentionDays, int aggregateRetentionDays) {}
+    private record Policy(UUID siteId, ZoneId zone, int rawRetentionDays, int aggregateRetentionDays,
+                          int fingerprintRetentionDays) {}
 
     @FunctionalInterface
     private interface Binder {

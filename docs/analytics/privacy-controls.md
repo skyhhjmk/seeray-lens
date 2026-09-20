@@ -25,3 +25,9 @@ The hosted page is public and embeddable by design; its response uses a restrict
 Run the Chromium browser acceptance with `npm --prefix tracker run test:e2e:privacy` (from `tracker/`, install Chromium once with `npx playwright install chromium`). It loads the published tracker and hosted-page assets on distinct origins and verifies consent gating, cross-origin allow/withdraw, persistence, identity cleanup, and collection stopping. Its fixture uses a test analytics server and a valid synthetic site ID; the Quarkus integration test separately verifies the database-backed active-site endpoint. Production-host deployment and assistive-technology acceptance remain separate checks.
 
 For authenticated cross-device visitor timelines, see [cross-device visitor profiles](visitor-identities.md). User IDs are optional and must be opaque, non-personal application identifiers; the browser integration must wait for both login and consent.
+
+## Browser fingerprint risk detection
+
+Site settings can enable **Browser fingerprint risk detection** separately from ordinary analytics. The feature is disabled by default and affects neither visitor counts nor visitor/User ID merging. A generated Web Tracker snippet then uses `data-fingerprint-risk="true"`; replace installed snippets after changing the setting.
+
+When enabled, the tracker derives a local signal from browser rendering and environment capabilities, sends only a versioned short hash, and never sends the canvas output, renderer value, font measurements, or hardware values. If the site requires consent, the signal is created and sent only after consent; DNT and withdrawal suppress it. SeeRay stores the signal as a site-scoped, non-reversible risk key for the configured retention period and exposes only a risk level and related-visitor/account counts to the management UI. It is evidence for investigation, not proof that two visitors are the same person.

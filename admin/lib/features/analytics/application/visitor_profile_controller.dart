@@ -15,6 +15,10 @@ class AnalyticsVisitorLogEntry {
     required this.durationMs,
     required this.bounce,
     required this.visitorType,
+    required this.fingerprintRiskLevel,
+    required this.fingerprintRelatedVisitorCount,
+    required this.fingerprintRelatedAccountCount,
+    required this.fingerprintConfidence,
   });
 
   final String visitorId;
@@ -27,22 +31,31 @@ class AnalyticsVisitorLogEntry {
   final int durationMs;
   final bool bounce;
   final String visitorType;
+  final String fingerprintRiskLevel;
+  final int fingerprintRelatedVisitorCount;
+  final int fingerprintRelatedAccountCount;
+  final String fingerprintConfidence;
 
-  factory AnalyticsVisitorLogEntry.fromJson(Map<String, dynamic> json) =>
-      AnalyticsVisitorLogEntry(
-        visitorId: json['visitorId'] as String? ?? '',
-        startedAt: DateTime.parse(json['startedAt'] as String).toLocal(),
-        lastActivityAt: DateTime.parse(
-          json['lastActivityAt'] as String,
-        ).toLocal(),
-        entryPage: json['entryPage'] as String?,
-        exitPage: json['exitPage'] as String?,
-        pageViews: (json['pageViews'] as num?)?.toInt() ?? 0,
-        events: (json['events'] as num?)?.toInt() ?? 0,
-        durationMs: (json['durationMs'] as num?)?.toInt() ?? 0,
-        bounce: json['bounce'] as bool? ?? false,
-        visitorType: json['visitorType'] as String? ?? 'unknown',
-      );
+  factory AnalyticsVisitorLogEntry.fromJson(
+    Map<String, dynamic> json,
+  ) => AnalyticsVisitorLogEntry(
+    visitorId: json['visitorId'] as String? ?? '',
+    startedAt: DateTime.parse(json['startedAt'] as String).toLocal(),
+    lastActivityAt: DateTime.parse(json['lastActivityAt'] as String).toLocal(),
+    entryPage: json['entryPage'] as String?,
+    exitPage: json['exitPage'] as String?,
+    pageViews: (json['pageViews'] as num?)?.toInt() ?? 0,
+    events: (json['events'] as num?)?.toInt() ?? 0,
+    durationMs: (json['durationMs'] as num?)?.toInt() ?? 0,
+    bounce: json['bounce'] as bool? ?? false,
+    visitorType: json['visitorType'] as String? ?? 'unknown',
+    fingerprintRiskLevel: json['fingerprintRiskLevel'] as String? ?? 'none',
+    fingerprintRelatedVisitorCount:
+        (json['fingerprintRelatedVisitorCount'] as num?)?.toInt() ?? 0,
+    fingerprintRelatedAccountCount:
+        (json['fingerprintRelatedAccountCount'] as num?)?.toInt() ?? 0,
+    fingerprintConfidence: json['fingerprintConfidence'] as String? ?? 'none',
+  );
 }
 
 final analyticsVisitorLogProvider =
@@ -118,6 +131,10 @@ class AnalyticsVisitorProfile {
     required this.actions,
     required this.hasMoreActions,
     required this.nextActionsCursor,
+    required this.fingerprintRiskLevel,
+    required this.fingerprintRelatedVisitorCount,
+    required this.fingerprintRelatedAccountCount,
+    required this.fingerprintConfidence,
   });
 
   final String visitorId;
@@ -137,6 +154,10 @@ class AnalyticsVisitorProfile {
   final List<AnalyticsVisitorProfileAction> actions;
   final bool hasMoreActions;
   final String? nextActionsCursor;
+  final String fingerprintRiskLevel;
+  final int fingerprintRelatedVisitorCount;
+  final int fingerprintRelatedAccountCount;
+  final String fingerprintConfidence;
 
   factory AnalyticsVisitorProfile.fromJson(
     Map<String, dynamic> json,
@@ -173,6 +194,12 @@ class AnalyticsVisitorProfile {
         .toList(growable: false),
     hasMoreActions: json['hasMoreActions'] as bool? ?? false,
     nextActionsCursor: json['nextActionsCursor'] as String?,
+    fingerprintRiskLevel: json['fingerprintRiskLevel'] as String? ?? 'none',
+    fingerprintRelatedVisitorCount:
+        (json['fingerprintRelatedVisitorCount'] as num?)?.toInt() ?? 0,
+    fingerprintRelatedAccountCount:
+        (json['fingerprintRelatedAccountCount'] as num?)?.toInt() ?? 0,
+    fingerprintConfidence: json['fingerprintConfidence'] as String? ?? 'none',
   );
 }
 

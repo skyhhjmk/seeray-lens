@@ -208,17 +208,35 @@ class _VisitorVisitTile extends StatelessWidget {
           [
             if (path.isNotEmpty) path.join('  →  '),
             '${_date(entry.startedAt)} · ${entry.pageViews} ${context.tr('pages', '页')} · ${entry.events} ${context.tr('events', '事件')}',
+            if (entry.fingerprintRiskLevel != 'none')
+              context.tr(
+                'Possible same browser: ${entry.fingerprintRelatedVisitorCount} other visitor(s)',
+                '可能来自同一浏览器：${entry.fingerprintRelatedVisitorCount} 个其他访客',
+              ),
           ].join('\n'),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
         isThreeLine: true,
-        trailing: IconButton(
-          tooltip: context.tr('Open visitor profile', '打开访客画像'),
-          onPressed: () => context.go(
-            '/sites/$siteId/visitors/${Uri.encodeComponent(entry.visitorId)}',
-          ),
-          icon: const Icon(Icons.arrow_forward),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (entry.fingerprintRiskLevel != 'none')
+              Tooltip(
+                message: context.tr('Fingerprint risk signal', '指纹风险信号'),
+                child: Icon(
+                  Icons.warning_amber_rounded,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            IconButton(
+              tooltip: context.tr('Open visitor profile', '打开访客画像'),
+              onPressed: () => context.go(
+                '/sites/$siteId/visitors/${Uri.encodeComponent(entry.visitorId)}',
+              ),
+              icon: const Icon(Icons.arrow_forward),
+            ),
+          ],
         ),
         onTap: () => context.go(
           '/sites/$siteId/visitors/${Uri.encodeComponent(entry.visitorId)}',

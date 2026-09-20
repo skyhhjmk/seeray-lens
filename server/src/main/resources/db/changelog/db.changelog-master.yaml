@@ -538,3 +538,10 @@ databaseChangeLog:
         - sqlFile:
             path: db/changelog/0077-workspace-extension-delivery-retry-audit.sql
             relativeToChangelogFile: false
+  - changeSet:
+      id: 0078-browser-fingerprint-risk
+      author: seeray
+      changes:
+        - sqlFile:
+            path: db/changelog/0078-browser-fingerprint-risk.sql
+            relativeToChangelogFile: false

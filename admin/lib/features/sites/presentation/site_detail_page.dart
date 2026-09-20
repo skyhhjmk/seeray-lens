@@ -32,6 +32,8 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
   final _aggregate = TextEditingController();
   bool _enabled = true;
   bool _requireConsent = false;
+  bool _fingerprintRiskEnabled = false;
+  final _fingerprintRetention = TextEditingController();
   String? _loadedId;
   bool _saving = false;
 
@@ -42,6 +44,7 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
     _language.dispose();
     _raw.dispose();
     _aggregate.dispose();
+    _fingerprintRetention.dispose();
     super.dispose();
   }
 
@@ -55,6 +58,8 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
     _aggregate.text = '${site.aggregateRetentionDays}';
     _enabled = site.trackingEnabled;
     _requireConsent = site.requireConsent;
+    _fingerprintRiskEnabled = site.fingerprintRiskEnabled;
+    _fingerprintRetention.text = '${site.fingerprintRetentionDays}';
   }
 
   Future<void> _save() async {
@@ -69,6 +74,8 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
             : _language.text.trim(),
         'trackingEnabled': _enabled,
         'requireConsent': _requireConsent,
+        'fingerprintRiskEnabled': _fingerprintRiskEnabled,
+        'fingerprintRetentionDays': int.parse(_fingerprintRetention.text),
         'rawRetentionDays': int.parse(_raw.text),
         'aggregateRetentionDays': int.parse(_aggregate.text),
       });
@@ -203,6 +210,35 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
                         ),
                       ),
                     ),
+                    SwitchListTile(
+                      value: _fingerprintRiskEnabled,
+                      onChanged: (value) =>
+                          setState(() => _fingerprintRiskEnabled = value),
+                      title: Text(
+                        context.tr(
+                          'Browser fingerprint risk detection',
+                          '浏览器指纹风险检测',
+                        ),
+                      ),
+                      subtitle: Text(
+                        context.tr(
+                          'Optional high-entropy signals are hashed in the browser and used only to flag possibly related visitor IDs or accounts. They never change visitor counts or merge profiles. Replace installed snippets after changing this setting.',
+                          '可选的高熵信号会在浏览器端先哈希，仅用于标记可能相关的访客 ID 或账号，不会改变访客统计或合并画像。修改后请替换已安装的追踪代码。',
+                        ),
+                      ),
+                    ),
+                    TextFormField(
+                      controller: _fingerprintRetention,
+                      enabled: _fingerprintRiskEnabled,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: context.tr(
+                          'Fingerprint retention days',
+                          '指纹证据保留天数',
+                        ),
+                      ),
+                      validator: _fingerprintDays,
+                    ),
                     TextFormField(
                       controller: _raw,
                       keyboardType: TextInputType.number,
@@ -301,6 +337,12 @@ String? _positive(String? value) =>
     int.tryParse(value ?? '') == null || int.parse(value!) < 1
     ? 'Enter a positive number'
     : null;
+
+String? _fingerprintDays(String? value) {
+  final parsed = int.tryParse(value ?? '');
+  if (parsed == null || parsed < 1 || parsed > 365) return 'Use 1–365 days';
+  return null;
+}
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;

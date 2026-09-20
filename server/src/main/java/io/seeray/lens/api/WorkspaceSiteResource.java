@@ -40,7 +40,9 @@ public class WorkspaceSiteResource {
                 request.defaultLanguage(),
                 request.rawRetentionDays(),
                 request.aggregateRetentionDays(),
-                request.requireConsent());
+                request.requireConsent(),
+                request.fingerprintRiskEnabled(),
+                request.fingerprintRetentionDays());
         audit.record(workspaceId, access.userId(), "CREATE_SITE", "site", site.id);
         return Response.status(Response.Status.CREATED)
                 .entity(SiteResource.dto(site))

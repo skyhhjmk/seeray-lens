@@ -101,7 +101,16 @@ public class TrackingResource {
                     clientError ? null : event.sessionId(),
                     clientError
                             ? null
-                            : io.seeray.lens.application.TrackingIdentityHasher.hash(site.id, event.userId()));
+                            : io.seeray.lens.application.TrackingIdentityHasher.hash(site.id, event.userId()),
+                    clientError || !site.fingerprintRiskEnabled || event.fingerprint() == null
+                            ? null
+                            : TrackingFingerprintHasher.hash(site.id, event.fingerprint()),
+                    clientError || !site.fingerprintRiskEnabled || event.fingerprint() == null
+                            ? null
+                            : event.fingerprint().algorithmVersion(),
+                    clientError || !site.fingerprintRiskEnabled || event.fingerprint() == null
+                            ? null
+                            : event.fingerprint().stability());
             try {
                 publisher
                         .sendMessage(Message.of(mapper.writeValueAsString(message)))

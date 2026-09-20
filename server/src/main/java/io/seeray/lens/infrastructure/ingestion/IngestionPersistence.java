@@ -66,6 +66,30 @@ public class IngestionPersistence {
                 }
                 statement.executeBatch();
             }
+            if (events.stream().anyMatch(event -> event.fingerprintKey() != null
+                    && event.visitorId() != null && event.sessionId() != null)) try (var statement = connection.prepareStatement(
+                    """
+                    INSERT INTO fingerprint_observation
+                      (id, site_id, client_visitor_id, client_session_id, fingerprint_key,
+                       algorithm_version, signal_stability, user_id_hash, observed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO NOTHING
+                    """)) {
+                for (TrackingMessage event : events) {
+                    if (event.fingerprintKey() == null || event.visitorId() == null || event.sessionId() == null) continue;
+                    statement.setObject(1, event.ingestId());
+                    statement.setObject(2, event.siteId());
+                    statement.setString(3, event.visitorId());
+                    statement.setString(4, event.sessionId());
+                    statement.setString(5, event.fingerprintKey());
+                    statement.setInt(6, event.fingerprintAlgorithmVersion() == null ? 1 : event.fingerprintAlgorithmVersion());
+                    statement.setString(7, event.fingerprintStability() == null ? "low" : event.fingerprintStability());
+                    statement.setString(8, event.userIdHash());
+                    statement.setTimestamp(9, java.sql.Timestamp.from(event.receivedAt()));
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            }
         });
         extensionDeliveries.enqueue(events);
     }

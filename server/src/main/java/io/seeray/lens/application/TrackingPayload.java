@@ -34,7 +34,13 @@ public record TrackingPayload(
             Map<String, Object> data,
             JsonNode properties,
             @Valid ClientContext context,
-            @Size(max = 256) @Pattern(regexp = "^[^\\p{Cc}]{1,256}$") String userId) {}
+            @Size(max = 256) @Pattern(regexp = "^[^\\p{Cc}]{1,256}$") String userId,
+            @Valid Fingerprint fingerprint) {}
+
+    public record Fingerprint(
+            @Min(1) @Max(1) Integer algorithmVersion,
+            @Pattern(regexp = "^[0-9a-fA-F]{16,128}$") String signalHash,
+            @Pattern(regexp = "^(high|medium|low)$") String stability) {}
 
     public record ClientContext(
             @Pattern(regexp = "^(Chrome|Safari|Firefox|Edge|Opera|Samsung Internet|Other)$") String browser,

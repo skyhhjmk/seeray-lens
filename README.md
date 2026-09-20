@@ -1,7 +1,7 @@
 # SeeRay Lens
 
 <p align="center">
-  <img src="docs/assets/seeray-lens-logo.svg" alt="SeeRay Lens logo" width="96" height="96">
+  <img src="docs/assets/seeray-lens-logo.png" alt="SeeRay Lens logo" width="1023" height="341">
 </p>
 
 <p align="center"><strong>自托管、隐私优先、面向完整分析场景的产品分析平台</strong></p>

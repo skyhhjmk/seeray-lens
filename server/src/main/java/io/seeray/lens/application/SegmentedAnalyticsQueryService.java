@@ -19,12 +19,15 @@ public class SegmentedAnalyticsQueryService {
     private final DataSource dataSource;
     private final SiteService sites;
     private final SegmentService segments;
+    private final FingerprintRiskService fingerprintRisk;
 
     @Inject
-    public SegmentedAnalyticsQueryService(DataSource dataSource, SiteService sites, SegmentService segments) {
+    public SegmentedAnalyticsQueryService(DataSource dataSource, SiteService sites, SegmentService segments,
+                                         FingerprintRiskService fingerprintRisk) {
         this.dataSource = dataSource;
         this.sites = sites;
         this.segments = segments;
+        this.fingerprintRisk = fingerprintRisk;
     }
 
     public AnalyticsQueryService.Overview overview(UUID siteId, AnalyticsQueryService.Range range, UUID segmentId) {
@@ -713,6 +716,7 @@ public class SegmentedAnalyticsQueryService {
                         actionRows.get(actionRows.size() - 1).ingestId())
                 : null;
 
+        FingerprintRiskService.Risk risk = fingerprintRisk.risk(siteId, visitorId);
         return new AnalyticsQueryService.VisitorProfile(
                 visitorId,
                 firstSeenAt,
@@ -730,7 +734,12 @@ public class SegmentedAnalyticsQueryService {
                 nextSessionsCursor,
                 List.copyOf(actions),
                 hasMoreActions,
-                nextActionsCursor);
+                nextActionsCursor,
+                risk.level(),
+                risk.relatedVisitorCount(),
+                risk.relatedAccountCount(),
+                risk.lastObservedAt(),
+                risk.confidence());
     }
 
     public AnalyticsQueryService.VisitorProfileHistoryPage visitorProfileHistory(
