@@ -2662,17 +2662,147 @@ class _DashboardBody extends StatelessWidget {
           ),
         )
       else
-        for (final item in widgets)
-          Padding(
-            key: ValueKey(item.id),
-            padding: const EdgeInsets.only(bottom: 16),
-            child: _DashboardWidgetContent(
-              definition: item,
-              data: data,
-              query: query,
-            ),
-          ),
+        _DashboardGrid(widgets: widgets, data: data, query: query),
     ],
+  );
+}
+
+class _DashboardGrid extends StatelessWidget {
+  const _DashboardGrid({
+    required this.widgets,
+    required this.data,
+    required this.query,
+  });
+
+  final List<SavedDashboardWidget> widgets;
+  final AnalyticsDashboard data;
+  final AnalyticsDashboardQuery query;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columnCount = _columnCount(constraints.maxWidth);
+      const gap = 16.0;
+      final columnWidth =
+          (constraints.maxWidth - gap * (columnCount - 1)) / columnCount;
+
+      final summary = widgets
+          .where((item) => item.type == 'summary')
+          .firstOrNull;
+      final remaining = widgets
+          .where((item) => item != summary)
+          .toList(growable: false);
+      if (summary != null && columnCount == 3) {
+        final leftItems = <SavedDashboardWidget>[];
+        final rightItems = <SavedDashboardWidget>[];
+        for (var index = 0; index < remaining.length; index++) {
+          if (index % 3 == 0) {
+            rightItems.add(remaining[index]);
+          } else {
+            leftItems.add(remaining[index]);
+          }
+        }
+        final leftColumns = _distribute(leftItems, 2);
+        final leftWidth = columnWidth * 2 + gap;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: leftWidth,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _item(summary, leftWidth),
+                  if (leftColumns.any((items) => items.isNotEmpty))
+                    Padding(
+                      padding: const EdgeInsets.only(top: gap),
+                      child: _columnRow(leftColumns, columnWidth, gap),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: gap),
+            SizedBox(
+              width: columnWidth,
+              child: _column(rightItems, columnWidth, gap),
+            ),
+          ],
+        );
+      }
+
+      if (summary != null) {
+        final columns = _distribute(remaining, columnCount);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _item(summary, constraints.maxWidth),
+            if (remaining.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: gap),
+                child: _columnRow(columns, columnWidth, gap),
+              ),
+          ],
+        );
+      }
+
+      return _columnRow(_distribute(widgets, columnCount), columnWidth, gap);
+    },
+  );
+
+  int _columnCount(double width) {
+    if (width >= 1180) return 3;
+    if (width >= 760) return 2;
+    return 1;
+  }
+
+  List<List<SavedDashboardWidget>> _distribute(
+    Iterable<SavedDashboardWidget> items,
+    int columnCount,
+  ) {
+    final columns = [
+      for (var index = 0; index < columnCount; index++)
+        <SavedDashboardWidget>[],
+    ];
+    var index = 0;
+    for (final item in items) {
+      columns[index % columnCount].add(item);
+      index++;
+    }
+    return columns;
+  }
+
+  Widget _columnRow(
+    List<List<SavedDashboardWidget>> columns,
+    double columnWidth,
+    double gap,
+  ) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      for (var index = 0; index < columns.length; index++) ...[
+        if (index > 0) SizedBox(width: gap),
+        SizedBox(
+          width: columnWidth,
+          child: _column(columns[index], columnWidth, gap),
+        ),
+      ],
+    ],
+  );
+
+  Widget _column(List<SavedDashboardWidget> items, double width, double gap) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var index = 0; index < items.length; index++) ...[
+            _item(items[index], width),
+            if (index < items.length - 1) SizedBox(height: gap),
+          ],
+        ],
+      );
+
+  Widget _item(SavedDashboardWidget item, double width) => SizedBox(
+    key: ValueKey(item.id),
+    width: width,
+    child: _DashboardWidgetContent(definition: item, data: data, query: query),
   );
 }
 
@@ -2779,9 +2909,7 @@ class _DashboardWidgetContent extends ConsumerWidget {
             ['Average visit duration (ms)', overview.averageSessionDurationMs],
           ],
           exportMetadata: exportMetadata,
-          child: Wrap(
-            spacing: 12,
-            runSpacing: 12,
+          child: _MetricGrid(
             children: [
               _MetricCard(
                 icon: Icons.visibility_outlined,
@@ -2841,6 +2969,11 @@ class _DashboardWidgetContent extends ConsumerWidget {
               },
             )
             .toList(growable: false);
+        final valueLabel = switch (item.metric) {
+          'pageViews' => context.tr('Page views', '页面浏览'),
+          'uniqueVisitors' => context.tr('Unique visitors', '独立访客'),
+          _ => context.tr('Visits', '访问次数'),
+        };
         return _Panel(
           title: item.title,
           exportColumns: const [
@@ -2869,6 +3002,10 @@ class _DashboardWidgetContent extends ConsumerWidget {
                       height: 210,
                       child: _TrendChart(
                         values: values,
+                        labels: data.trend
+                            .map((day) => day.date)
+                            .toList(growable: false),
+                        valueLabel: valueLabel,
                         chartType: item.chartType ?? 'line',
                         annotationIndexes: notesByIndex.keys.toSet(),
                       ),
@@ -3783,30 +3920,64 @@ class _MetricCard extends StatelessWidget {
   final String label;
   final String value;
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 190,
-    child: Card(
-      elevation: 0,
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: const Color(0xff3766a0)),
-            const SizedBox(height: 15),
-            Text(
-              value,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
-          ],
-        ),
+  Widget build(BuildContext context) => Card(
+    elevation: 0,
+    color: Colors.white,
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xff3766a0), size: 18),
+          const SizedBox(height: 5),
+          Text(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontSize: 11),
+          ),
+        ],
       ),
     ),
+  );
+}
+
+class _MetricGrid extends StatelessWidget {
+  const _MetricGrid({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columnCount = constraints.maxWidth >= 640
+          ? 5
+          : constraints.maxWidth >= 420
+          ? 3
+          : constraints.maxWidth >= 280
+          ? 2
+          : 1;
+      const gap = 8.0;
+      final width =
+          (constraints.maxWidth - gap * (columnCount - 1)) / columnCount;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final child in children) SizedBox(width: width, child: child),
+        ],
+      );
+    },
   );
 }
 
@@ -4071,27 +4242,151 @@ class _EmptyChart extends StatelessWidget {
   );
 }
 
-class _TrendChart extends StatelessWidget {
+class _TrendChart extends StatefulWidget {
   const _TrendChart({
     required this.values,
+    required this.labels,
+    required this.valueLabel,
     required this.chartType,
     this.annotationIndexes = const {},
   });
   final List<double> values;
+  final List<String> labels;
+  final String valueLabel;
   final String chartType;
   final Set<int> annotationIndexes;
+
   @override
-  Widget build(BuildContext context) => CustomPaint(
-    painter: _TrendPainter(values, chartType, annotationIndexes),
-    child: const SizedBox.expand(),
+  State<_TrendChart> createState() => _TrendChartState();
+}
+
+class _TrendChartState extends State<_TrendChart> {
+  int? _hoveredIndex;
+  int? _selectedIndex;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final size = Size(constraints.maxWidth, constraints.maxHeight);
+      final activeIndex = _selectedIndex ?? _hoveredIndex;
+      final point = activeIndex == null
+          ? null
+          : _trendPoint(activeIndex, size, widget.values, widget.chartType);
+      final label =
+          activeIndex == null ||
+              activeIndex >= widget.labels.length ||
+              activeIndex >= widget.values.length
+          ? null
+          : widget.labels[activeIndex];
+      return MouseRegion(
+        onHover: (event) => _setPointerIndex(event.localPosition, size),
+        onExit: (_) => setState(() => _hoveredIndex = null),
+        child: GestureDetector(
+          key: const ValueKey('trend-chart-interaction'),
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) =>
+              _toggleSelection(_indexForPosition(details.localPosition, size)),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _TrendPainter(
+                    widget.values,
+                    widget.chartType,
+                    widget.annotationIndexes,
+                    activeIndex,
+                  ),
+                ),
+              ),
+              if (point != null && label != null)
+                Positioned(
+                  left: (point.dx - 72).clamp(4.0, size.width - 148),
+                  top: point.dy < 60 ? point.dy + 12 : point.dy - 58,
+                  child: IgnorePointer(
+                    child: _TrendTooltip(
+                      date: label,
+                      valueLabel: widget.valueLabel,
+                      value: widget.values[activeIndex!],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  void _setPointerIndex(Offset position, Size size) {
+    final index = _indexForPosition(position, size);
+    if (index != _hoveredIndex) {
+      setState(() => _hoveredIndex = index);
+    }
+  }
+
+  void _toggleSelection(int? index) {
+    if (index == null) return;
+    setState(() {
+      _selectedIndex = _selectedIndex == index ? null : index;
+    });
+  }
+
+  int? _indexForPosition(Offset position, Size size) {
+    if (widget.values.isEmpty || size.width <= 0) return null;
+    final normalized = (position.dx / size.width).clamp(0.0, 1.0);
+    final rawIndex = widget.chartType == 'bar'
+        ? normalized * widget.values.length - .5
+        : normalized * (widget.values.length - 1);
+    return rawIndex.round().clamp(0, widget.values.length - 1);
+  }
+}
+
+class _TrendTooltip extends StatelessWidget {
+  const _TrendTooltip({
+    required this.date,
+    required this.valueLabel,
+    required this.value,
+  });
+
+  final String date;
+  final String valueLabel;
+  final double value;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: const Color(0xee1d2a3a),
+      borderRadius: BorderRadius.circular(6),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x26000000),
+          blurRadius: 8,
+          offset: Offset(0, 2),
+        ),
+      ],
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      child: Text(
+        '$date\n$valueLabel: ${value.round()}',
+        style: const TextStyle(color: Colors.white, fontSize: 11, height: 1.2),
+      ),
+    ),
   );
 }
 
 class _TrendPainter extends CustomPainter {
-  const _TrendPainter(this.values, this.chartType, this.annotationIndexes);
+  const _TrendPainter(
+    this.values,
+    this.chartType,
+    this.annotationIndexes,
+    this.activeIndex,
+  );
   final List<double> values;
   final String chartType;
   final Set<int> annotationIndexes;
+  final int? activeIndex;
   @override
   void paint(Canvas canvas, Size size) {
     final grid = Paint()
@@ -4124,6 +4419,7 @@ class _TrendPainter extends CustomPainter {
         );
       }
       _paintAnnotationMarkers(canvas, size);
+      _paintActiveMarker(canvas, size);
       return;
     }
     final path = Path();
@@ -4151,6 +4447,32 @@ class _TrendPainter extends CustomPainter {
         ..style = PaintingStyle.stroke,
     );
     _paintAnnotationMarkers(canvas, size);
+    _paintActiveMarker(canvas, size);
+  }
+
+  void _paintActiveMarker(Canvas canvas, Size size) {
+    if (activeIndex == null ||
+        activeIndex! < 0 ||
+        activeIndex! >= values.length) {
+      return;
+    }
+    final point = _trendPoint(activeIndex!, size, values, chartType);
+    final guide = Paint()
+      ..color = const Color(0x883766a0)
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(point.dx, 0),
+      Offset(point.dx, size.height - 12),
+      guide,
+    );
+    canvas.drawCircle(
+      point,
+      5,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawCircle(point, 4, Paint()..color = const Color(0xff3766a0));
   }
 
   void _paintAnnotationMarkers(Canvas canvas, Size size) {
@@ -4174,7 +4496,24 @@ class _TrendPainter extends CustomPainter {
   bool shouldRepaint(covariant _TrendPainter old) =>
       old.values != values ||
       old.chartType != chartType ||
-      old.annotationIndexes != annotationIndexes;
+      old.annotationIndexes != annotationIndexes ||
+      old.activeIndex != activeIndex;
+}
+
+Offset _trendPoint(
+  int index,
+  Size size,
+  List<double> values,
+  String chartType,
+) {
+  final maxValue = math.max(1, values.reduce(math.max));
+  final x = chartType == 'bar'
+      ? (index + .5) * size.width / values.length
+      : values.length == 1
+      ? size.width / 2
+      : index * size.width / (values.length - 1);
+  final y = size.height - (values[index] / maxValue * (size.height - 24)) - 12;
+  return Offset(x, y);
 }
 
 String _formatAnalyticsDate(DateTime value) =>

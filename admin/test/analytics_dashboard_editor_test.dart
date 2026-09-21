@@ -657,6 +657,33 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Campaign launch'), findsOneWidget);
   });
+
+  testWidgets('shows an interactive tooltip for trend points', (tester) async {
+    final api = _DashboardApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiProvider.overrideWithValue(api)],
+        child: const MaterialApp(
+          home: AnalyticsDashboardPage(siteId: 'site-1', embedded: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final chart = find.byWidgetPredicate(
+      (widget) =>
+          widget is CustomPaint &&
+          widget.painter.runtimeType.toString().contains('_TrendPainter'),
+    );
+    expect(chart, findsOneWidget);
+    final interaction = find.byKey(const ValueKey('trend-chart-interaction'));
+    expect(interaction, findsOneWidget);
+    await tester.ensureVisible(interaction);
+    await tester.tap(interaction);
+    await tester.pump();
+
+    expect(find.textContaining('Visits: 24'), findsOneWidget);
+  });
 }
 
 final _eventPropertyId =
