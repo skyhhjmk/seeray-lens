@@ -67,7 +67,14 @@ class SiteTopBar extends StatelessWidget implements PreferredSizeWidget {
     backgroundColor: const Color(0xff202b3b),
     foregroundColor: Colors.white,
     leading: const AppBackButton(fallback: '/sites'),
-    title: const Text('SeeRay Lens'),
+    titleSpacing: 0,
+    title: Container(
+      width: 132,
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      color: Colors.white,
+      child: Image.asset('assets/seeray-lens-logo.png', fit: BoxFit.contain),
+    ),
     actions: [
       if (rangeState != null && onSelectRange != null)
         TextButton.icon(

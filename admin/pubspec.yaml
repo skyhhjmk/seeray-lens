@@ -69,6 +69,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/seeray-lens-logo.png
     - assets/replayer.js
     - assets/maps/world-countries.json
     - assets/fonts/seeray-reports-cjk.ttf

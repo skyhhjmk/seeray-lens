@@ -9,7 +9,17 @@ class LandingPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const Text('SeeRay Lens'),
+      titleSpacing: 0,
+      title: Container(
+        width: 156,
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        color: Colors.white,
+        child: Image.asset(
+          'assets/seeray-lens-logo.png',
+          fit: BoxFit.contain,
+        ),
+      ),
       actions: [
         const LanguageMenu(),
         Padding(
