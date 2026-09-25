@@ -56,3 +56,9 @@ tasks.withType(Test).configureEach {
 tasks.named('check') {
     dependsOn 'spotlessCheck'
 }
+
+// Keep Quarkus dev mode rooted at the repository so the IDE and Gradle task
+// both load the ignored root .env file.
+tasks.named('quarkusDev') {
+    setWorkingDir(rootProject.projectDir.absolutePath)
+}
