@@ -131,4 +131,23 @@ The admin keeps its access and refresh credentials in memory for this release, s
 podman compose -f deploy/compose/docker-compose.yml config --quiet
 ```
 
-Start development dependencies with `podman compose -f deploy/compose/docker-compose.yml up -d`. RabbitMQ Management is available at `http://localhost:15672` for development only.
+For the shared local WindBlog development environment, keep PostgreSQL, Redis,
+and RabbitMQ running from WindBlog's Compose project. SeeRay uses its own
+credentials in its ignored `.env`, a separate `seeray_lens` PostgreSQL database,
+Redis database 5, and SeeRay-prefixed RabbitMQ queues. Start it with
+the IDE's Gradle `:server:quarkusDev` task. The task runs from the repository
+root, so Quarkus loads SeeRay's `.env` directly. The SeeRay Admin
+Flutter Web app can run on port 3001 while WindBlog Admin uses port 3000:
+
+```sh
+(cd admin && fvm flutter run -d web-server --web-hostname 127.0.0.1 --web-port 3001)
+(cd ../windblog_quarkus/admin-flutter && flutter run -d web-server --web-hostname 127.0.0.1 --web-port 3000)
+```
+
+The existing WindBlog backend remains available at `http://localhost:58080`.
+SeeRay's collector is at `http://localhost:8080`; its WindBlog Admin analytics
+settings live in WindBlog's `admin-flutter/lib/config/seeray_analytics_config.dart`.
+If WindBlog's local dependencies are not running, SeeRay can still use its own
+Compose stack with `podman compose -f deploy/compose/docker-compose.yml up -d`.
+RabbitMQ Management is available at `http://localhost:15672` when using that
+standalone stack.

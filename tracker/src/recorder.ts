@@ -23,7 +23,9 @@ export interface CaptureOptions {
 }
 
 const PROTOCOL_VERSION = 1;
-const MAX_CHUNK_BYTES = 192 * 1024;
+// Keep a margin below the server's 256 KiB limit for payloads and future
+// metadata changes. Measure the complete UTF-8 request body, not JS characters.
+const MAX_CHUNK_BYTES = 240 * 1024;
 
 export function startCapture(options: CaptureOptions): () => void {
   let stopped = false;
@@ -33,6 +35,20 @@ export function startCapture(options: CaptureOptions): () => void {
   const pageStartedAt = Date.now();
   let recordingEvents: eventWithTime[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const recordingBody = (events: eventWithTime[], finalChunk = false) => ({
+    protocolVersion: PROTOCOL_VERSION,
+    recordingId: options.recordingId,
+    instanceId: options.identity.instanceId,
+    sequence,
+    startedOffsetMs: Math.max(0, Number(events[0]?.timestamp ?? pageStartedAt) - pageStartedAt),
+    finalChunk,
+    url: options.identity.url,
+    events,
+  });
+
+  const recordingBodyBytes = (events: eventWithTime[]): number =>
+    new TextEncoder().encode(JSON.stringify(recordingBody(events))).byteLength;
 
   const send = async (endpoint: string, body: unknown, unload = false): Promise<boolean> => {
     const value = JSON.stringify(body);
@@ -54,16 +70,7 @@ export function startCapture(options: CaptureOptions): () => void {
     if (!options.captureRecording || !recordingEvents.length) return;
     const events = recordingEvents;
     recordingEvents = [];
-    const accepted = await send(options.recordingEndpoint, {
-      protocolVersion: PROTOCOL_VERSION,
-      recordingId: options.recordingId,
-      instanceId: options.identity.instanceId,
-      sequence,
-      startedOffsetMs: Math.max(0, Number(events[0]?.timestamp ?? pageStartedAt) - pageStartedAt),
-      finalChunk,
-      url: options.identity.url,
-      events,
-    }, unload);
+    const accepted = await send(options.recordingEndpoint, recordingBody(events, finalChunk), unload);
     if (accepted) sequence += 1;
     else if (!unload) recordingEvents.unshift(...events);
   };
@@ -91,8 +98,16 @@ export function startCapture(options: CaptureOptions): () => void {
       }
       if (options.captureRecording) {
         recordingEvents.push(event);
-        if (JSON.stringify(recordingEvents).length >= MAX_CHUNK_BYTES) void flush();
-        else schedule();
+        if (recordingBodyBytes(recordingEvents) >= MAX_CHUNK_BYTES) {
+          recordingEvents.pop();
+          if (recordingEvents.length) void flush();
+          // A single rrweb event can exceed the chunk limit (for example, a
+          // very large DOM mutation). It cannot be split safely, so omit it.
+          if (recordingBodyBytes([event]) < MAX_CHUNK_BYTES) {
+            recordingEvents.push(event);
+            schedule();
+          }
+        } else schedule();
       }
     },
     maskAllInputs: true,
