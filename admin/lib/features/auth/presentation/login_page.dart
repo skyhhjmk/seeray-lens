@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/auth/auth_state.dart';
 import '../../../core/i18n/app_i18n.dart';
@@ -20,17 +21,26 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _form = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  late final TextEditingController _apiAddress = TextEditingController(
+    text: ref.read(apiProvider).baseUrl,
+  );
   bool _rememberPassword = false;
 
   @override
   void dispose() {
     _email.dispose();
     _password.dispose();
+    _apiAddress.dispose();
     super.dispose();
   }
 
   Future<void> _signIn() async {
     if (!_form.currentState!.validate()) return;
+    final apiAddress = _normalizeApiAddress(_apiAddress.text);
+    ref.read(apiProvider).baseUrl = apiAddress;
+    _apiAddress.text = apiAddress;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString('seeray.api.base_url', apiAddress);
     await ref
         .read(authProvider.notifier)
         .login(_email.text.trim(), _password.text);
@@ -38,6 +48,26 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       TextInput.finishAutofillContext(shouldSave: _rememberPassword);
       context.go('/workspaces');
     }
+  }
+
+  String _normalizeApiAddress(String value) {
+    var address = value.trim().replaceAll(RegExp(r'/+$'), '');
+    if (!address.startsWith('http://') && !address.startsWith('https://')) {
+      address = 'https://$address';
+    }
+    return address;
+  }
+
+  String? _validateApiAddress(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return context.tr('Enter an API address', '请输入 API 地址');
+    }
+    final address = _normalizeApiAddress(value);
+    final uri = Uri.tryParse(address);
+    if (uri == null || !uri.hasAuthority || uri.host.isEmpty) {
+      return context.tr('Enter a valid API address', '请输入有效的 API 地址');
+    }
+    return null;
   }
 
   @override
@@ -80,6 +110,18 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                     const SizedBox(height: 24),
+                    TextFormField(
+                      controller: _apiAddress,
+                      keyboardType: TextInputType.url,
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
+                        labelText: context.tr('API address', 'API 地址'),
+                        hintText: 'https://analytics.example.com',
+                        prefixIcon: const Icon(Icons.dns_outlined),
+                      ),
+                      validator: _validateApiAddress,
+                    ),
+                    const SizedBox(height: 12),
                     TextFormField(
                       controller: _email,
                       keyboardType: TextInputType.emailAddress,

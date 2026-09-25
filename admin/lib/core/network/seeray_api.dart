@@ -18,7 +18,7 @@ class SeeRayApi {
     : _client = client ?? http.Client();
 
   final http.Client _client;
-  final String baseUrl;
+  String baseUrl;
   String? accessToken;
   Future<String?> Function()? refresh;
 
