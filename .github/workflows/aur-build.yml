@@ -1,0 +1,54 @@
+name: Build AUR package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/aur-build.yml'
+      - 'admin/**'
+      - 'packaging/aur/seeray-lens-admin/**'
+  pull_request:
+    paths:
+      - '.github/workflows/aur-build.yml'
+      - 'admin/**'
+      - 'packaging/aur/seeray-lens-admin/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Prepare Flutter Linux engine
+        run: flutter precache --linux
+
+      - name: Build PKGBUILD in Arch Linux
+        shell: bash
+        run: |
+          flutter_bin="$(command -v flutter)"
+          flutter_root="$(cd "$(dirname "$(readlink -f "$flutter_bin")")/.." && pwd)"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/packaging/aur/seeray-lens-admin:/work" \
+            -v "$flutter_root:/opt/flutter" \
+            archlinux:latest bash -euc '
+              pacman -Syu --noconfirm --needed base-devel clang cmake git gtk3 alsa-lib at-spi2-core libcups libdrm libxcomposite libxdamage libxi libxfixes libxkbcommon libxrandr libxshmfence libxtst mesa nspr nss ninja pkgconf
+              useradd --create-home builder
+              chown -R builder:builder /work /opt/flutter
+              su builder -s /bin/bash -c "cd /work && PATH=/opt/flutter/bin:\$PATH makepkg --nodeps --clean --noconfirm"
+            '
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: seeray-lens-admin-aur-package
+          path: packaging/aur/seeray-lens-admin/*.pkg.tar.zst
+          retention-days: 30
+          if-no-files-found: error

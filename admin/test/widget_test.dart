@@ -8,7 +8,7 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: SeeRayLensAdminApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('SeeRay Lens'), findsOneWidget);
+    expect(find.text('看得懂、可掌控的隐私优先网站分析。'), findsOneWidget);
     expect(find.text('进入管理台'), findsOneWidget);
   });
 

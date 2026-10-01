@@ -1,0 +1,79 @@
+# Maintainer: Bili_Wind
+pkgname=seeray-lens-admin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Desktop administration client for SeeRay Lens'
+arch=('x86_64')
+url='https://github.com/skyhhjmk/seeray-lens'
+license=('BSD-3-Clause')
+options=('!debug')
+depends=(
+  'alsa-lib'
+  'at-spi2-core'
+  'gtk3'
+  'libdrm'
+  'libcups'
+  'libxcomposite'
+  'libxdamage'
+  'libxi'
+  'libxfixes'
+  'libxkbcommon'
+  'libxrandr'
+  'libxshmfence'
+  'libxtst'
+  'mesa'
+  'nspr'
+  'nss'
+)
+makedepends=('clang' 'cmake' 'flutter>=3.44.9' 'git' 'ninja' 'pkgconf')
+optdepends=('xclip: clipboard paste support in embedded web views')
+_commit='f80e8d6c9586dbad709e4885be049af18be1fccc'
+_source_dir="seeray-lens-${_commit}"
+source=(
+  "${_source_dir}.tar.gz::https://github.com/skyhhjmk/seeray-lens/archive/${_commit}.tar.gz"
+  'seeray-lens-admin.desktop'
+  'seeray-lens-admin.sh'
+)
+sha256sums=(
+  'eb358a47e2205b0ceb42e1fbe964473db45522e4d6d938f4af56b687ef0cf31c'
+  '58ceef4c077d047361a5a6bfd6d5f98e5783ba04a323781e7c9f5c7b3d955cdc'
+  '2fae520b838883f0a36dd56616e746cff1f30083bcfc98841bef3f7acc00c9e0'
+)
+
+prepare() {
+  local cmake_file="${srcdir}/${_source_dir}/admin/linux/CMakeLists.txt"
+
+  # Match Arch's fortify level to CEF's compile flags; avoid unknown Clang warnings.
+  if ! grep -Fq -- '-Wno-error=unknown-warning-option' "${cmake_file}"; then
+    sed -i '/target_compile_options(${TARGET} PRIVATE -Wall -Werror)/a\  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\
+    target_compile_options(${TARGET} PRIVATE -Wno-error=unknown-warning-option)\
+  endif()' "${cmake_file}"
+  fi
+}
+
+build() {
+  cd "${srcdir}/${_source_dir}/admin"
+
+  export PUB_CACHE="${srcdir}/pub-cache"
+  flutter pub get
+  export CFLAGS="${CFLAGS//-Wp,-D_FORTIFY_SOURCE=3/-Wp,-D_FORTIFY_SOURCE=2}"
+  export CXXFLAGS="${CXXFLAGS//-Wp,-D_FORTIFY_SOURCE=3/-Wp,-D_FORTIFY_SOURCE=2}"
+  mkdir -p build/native_assets/linux
+  flutter build linux --release --build-name="${pkgver}" --build-number="${pkgrel}"
+}
+
+package() {
+  local bundle="${srcdir}/${_source_dir}/admin/build/linux/x64/release/bundle"
+
+  install -dm755 "${pkgdir}/opt/${pkgname}"
+  cp -a "${bundle}/." "${pkgdir}/opt/${pkgname}/"
+
+  install -Dm755 "${srcdir}/seeray-lens-admin.sh" \
+    "${pkgdir}/usr/bin/${pkgname}"
+  install -Dm644 "${srcdir}/seeray-lens-admin.desktop" \
+    "${pkgdir}/usr/share/applications/seeray-lens-admin.desktop"
+  install -Dm644 "${srcdir}/${_source_dir}/admin/assets/seeray-lens-logo.png" \
+    "${pkgdir}/usr/share/pixmaps/seeray-lens-admin.png"
+  install -Dm644 "${srcdir}/${_source_dir}/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

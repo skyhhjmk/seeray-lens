@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=SeeRay Lens Admin
+Comment=Desktop administration client for SeeRay Lens
+Exec=seeray-lens-admin
+Icon=seeray-lens-admin
+Terminal=false
+Type=Application
+Categories=Network;Utility;
+StartupNotify=true
