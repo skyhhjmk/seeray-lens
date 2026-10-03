@@ -6,6 +6,9 @@ import io.quarkus.security.identity.request.TokenAuthenticationRequest;
 import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.seeray.lens.application.ApiTokenAuthenticator;
 import io.seeray.lens.application.JwtService;
+import io.seeray.lens.domain.common.ControlPlaneException;
+import io.seeray.lens.domain.auth.AppUser;
+import io.seeray.lens.domain.auth.UserStatus;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.security.Principal;
@@ -45,15 +48,17 @@ public class JwtIdentityProvider implements IdentityProvider<TokenAuthentication
                         .build();
             });
         }
-        try {
-            String subject = jwt.verify(value).toString();
-            return Uni.createFrom()
-                    .item(QuarkusSecurityIdentity.builder()
-                            .setPrincipal((Principal) () -> subject)
-                            .addCredential(credential)
-                            .build());
-        } catch (RuntimeException failure) {
-            return Uni.createFrom().failure(failure);
-        }
+        return context.runBlocking(() -> {
+            JwtService.Claims claims = jwt.verifyClaims(value);
+            AppUser user = AppUser.findById(claims.userId());
+            if (user == null || user.status == UserStatus.DISABLED || user.authVersion != claims.authVersion())
+                throw new ControlPlaneException(401, "INVALID_ACCESS_TOKEN", "Access token is invalid or revoked");
+            return QuarkusSecurityIdentity.builder()
+                    .setPrincipal((Principal) () -> user.id.toString())
+                    .addCredential(credential)
+                    .addAttribute("systemAdmin", user.systemAdmin)
+                    .addAttribute("mustChangePassword", user.mustChangePassword)
+                    .build();
+        });
     }
 }

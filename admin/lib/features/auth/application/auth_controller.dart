@@ -97,6 +97,27 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
+  Future<void> changeTemporaryPassword(String newPassword) async {
+    final generation = _sessionGeneration;
+    try {
+      final data = await _api.request(
+        'POST',
+        '/api/v1/auth/change-password',
+        body: {'newPassword': newPassword},
+      );
+      if (generation == _sessionGeneration) await _set(data);
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      state = AuthState(
+        AuthPhase.authenticated,
+        accessToken: state.accessToken,
+        refreshToken: state.refreshToken,
+        message: error.toString(),
+        mustChangePassword: true,
+      );
+    }
+  }
+
   Future<String?> refresh() {
     final generation = _sessionGeneration;
     final token = state.refreshToken;
@@ -119,7 +140,12 @@ class AuthController extends Notifier<AuthState> {
     if (token == null) {
       return null;
     }
-    state = AuthState(AuthPhase.refreshing, refreshToken: token);
+    state = AuthState(
+      AuthPhase.refreshing,
+      refreshToken: token,
+      isSystemAdmin: state.isSystemAdmin,
+      mustChangePassword: state.mustChangePassword,
+    );
     try {
       final d = await _api.requestUnauthenticated(
         'POST',
@@ -146,6 +172,14 @@ class AuthController extends Notifier<AuthState> {
     );
     _api.accessToken = state.accessToken;
     await _tokens.writeRefreshToken(state.refreshToken!);
+    final profile = await _api.request('GET', '/api/v1/auth/me') as Map;
+    state = AuthState(
+      AuthPhase.authenticated,
+      accessToken: state.accessToken,
+      refreshToken: state.refreshToken,
+      isSystemAdmin: profile['systemAdmin'] == true,
+      mustChangePassword: profile['mustChangePassword'] == true,
+    );
   }
 
   String _loginError(Object error) {

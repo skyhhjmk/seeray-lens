@@ -5,6 +5,8 @@ import io.seeray.lens.domain.auth.*;
 import io.seeray.lens.domain.common.*;
 import io.seeray.lens.domain.workspace.*;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
 import jakarta.transaction.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
@@ -20,15 +22,21 @@ public class AuthService {
     private final JwtService jwt;
     private final WorkspaceInvitationService invitations;
     private final AuthActivityRecorder activity;
+    private final EntityManager entityManager;
 
-    public AuthService(JwtService jwt, WorkspaceInvitationService invitations, AuthActivityRecorder activity) {
+    @Inject
+    public AuthService(
+            JwtService jwt, WorkspaceInvitationService invitations, AuthActivityRecorder activity,
+            EntityManager entityManager) {
         this.jwt = jwt;
         this.invitations = invitations;
         this.activity = activity;
+        this.entityManager = entityManager;
     }
 
     @Transactional
     public Tokens register(String email, String password, String displayName) {
+        lockUserAdministration();
         String normalized = email.trim().toLowerCase(Locale.ROOT);
         if (AppUser.count("email", normalized) > 0)
             throw new ControlPlaneException(409, "EMAIL_EXISTS", "Email already registered");
@@ -40,6 +48,7 @@ public class AuthService {
         String safeDisplayName = displayName == null ? "" : displayName.trim();
         user.displayName = safeDisplayName.isBlank() ? "User" : safeDisplayName;
         user.status = UserStatus.ACTIVE;
+        user.systemAdmin = AppUser.count() == 0;
         user.createdAt = now;
         user.updatedAt = now;
         user.persist();
@@ -61,6 +70,7 @@ public class AuthService {
 
     @Transactional
     public Tokens registerForInvitation(String email, String password, String displayName, String invitationToken) {
+        lockUserAdministration();
         String normalized = email.trim().toLowerCase(Locale.ROOT);
         if (AppUser.count("email", normalized) > 0)
             throw new ControlPlaneException(
@@ -73,6 +83,7 @@ public class AuthService {
         String safeDisplayName = displayName == null ? "" : displayName.trim();
         user.displayName = safeDisplayName.isBlank() ? "User" : safeDisplayName;
         user.status = UserStatus.ACTIVE;
+        user.systemAdmin = AppUser.count() == 0;
         user.createdAt = now;
         user.updatedAt = now;
         user.persist();
@@ -95,6 +106,29 @@ public class AuthService {
         Tokens tokens = issue(user, Instant.now());
         recordActivity(user.id, "LOGIN_SUCCEEDED");
         return tokens;
+    }
+
+    public CurrentUser currentUser(UUID id) {
+        AppUser user = AppUser.findById(id);
+        if (user == null || user.status == UserStatus.DISABLED)
+            throw new ControlPlaneException(401, "AUTH_INVALID_TOKEN", "Authentication failed");
+        return new CurrentUser(user.id, user.email, user.displayName, user.systemAdmin, user.mustChangePassword);
+    }
+
+    @Transactional
+    public Tokens changeTemporaryPassword(UUID userId, String newPassword) {
+        AppUser user = AppUser.findById(userId);
+        if (user == null || user.status == UserStatus.DISABLED)
+            throw new ControlPlaneException(401, "AUTH_INVALID_TOKEN", "Authentication failed");
+        if (!user.mustChangePassword)
+            throw new ControlPlaneException(409, "PASSWORD_CHANGE_NOT_REQUIRED", "Password change is not required");
+        Instant now = Instant.now();
+        user.passwordHash = BcryptUtil.bcryptHash(newPassword);
+        user.mustChangePassword = false;
+        user.authVersion++;
+        AuthSession.update("revokedAt = ?1 where user.id = ?2 and revokedAt is null", now, user.id);
+        recordActivity(user.id, "PASSWORD_CHANGED");
+        return issue(user, now);
     }
 
     @Transactional
@@ -142,7 +176,11 @@ public class AuthService {
         s.createdAt = now;
         s.expiresAt = now.plus(Duration.ofDays(refreshDays));
         s.persist();
-        return new Tokens(jwt.issue(user.id, user.email), refresh);
+        return new Tokens(jwt.issue(user.id, user.authVersion), refresh);
+    }
+
+    private void lockUserAdministration() {
+        entityManager.createNativeQuery("LOCK TABLE app_user IN SHARE ROW EXCLUSIVE MODE").executeUpdate();
     }
 
     static String hash(String value) {
@@ -161,4 +199,6 @@ public class AuthService {
     }
 
     public record Tokens(String accessToken, String refreshToken) {}
+
+    public record CurrentUser(UUID id, String email, String displayName, boolean systemAdmin, boolean mustChangePassword) {}
 }

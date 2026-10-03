@@ -14,11 +14,44 @@ import java.util.*;
 @ApplicationScoped
 public class SiteService {
     private final WorkspaceAccess access;
+    private final SystemAdminAccess systemAdmin;
+    private final SystemAdminAuditRecorder adminAudit;
     private final HeatmapFileCleanupService heatmapFileCleanup;
 
-    public SiteService(WorkspaceAccess access, HeatmapFileCleanupService heatmapFileCleanup) {
+    public SiteService(
+            WorkspaceAccess access, SystemAdminAccess systemAdmin, SystemAdminAuditRecorder adminAudit,
+            HeatmapFileCleanupService heatmapFileCleanup) {
         this.access = access;
+        this.systemAdmin = systemAdmin;
+        this.adminAudit = adminAudit;
         this.heatmapFileCleanup = heatmapFileCleanup;
+    }
+
+    @Transactional
+    public Site createForSystemAdmin(
+            UUID workspaceId, String name, String timezone, String language, Integer raw, Integer aggregate,
+            Boolean requireConsent, Boolean fingerprintRiskEnabled, Integer fingerprintRetentionDays) {
+        Organization organization = Organization.findById(workspaceId);
+        if (organization == null)
+            throw new ControlPlaneException(404, "WORKSPACE_NOT_FOUND", "Workspace not found");
+        return save(null, organization, name, timezone, language, true, requireConsent, raw, aggregate,
+                fingerprintRiskEnabled, fingerprintRetentionDays);
+    }
+
+    @Transactional
+    public Site updateForSystemAdmin(
+            UUID id, String name, String timezone, String language, Boolean enabled, Boolean requireConsent,
+            Integer raw, Integer aggregate, Boolean fingerprintRiskEnabled, Integer fingerprintRetentionDays) {
+        Site site = site(id);
+        return save(site, site.organization, name, timezone, language, enabled, requireConsent, raw, aggregate,
+                fingerprintRiskEnabled, fingerprintRetentionDays);
+    }
+
+    @Transactional
+    public void deleteForSystemAdmin(UUID id) {
+        Site site = site(id);
+        heatmapFileCleanup.queueSite(id);
+        site.delete();
     }
 
     @Transactional
@@ -50,9 +83,11 @@ public class SiteService {
             Boolean fingerprintRiskEnabled,
             Integer fingerprintRetentionDays) {
         Site s = site(id);
-        access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
-        return save(s, s.organization, name, timezone, language, enabled, requireConsent, raw, aggregate,
+        requireSiteAdmin(s);
+        Site updated = save(s, s.organization, name, timezone, language, enabled, requireConsent, raw, aggregate,
                 fingerprintRiskEnabled, fingerprintRetentionDays);
+        if (systemAdmin.isSystemAdmin()) adminAudit.record(access.userId(), null, id, "UPDATE_SITE");
+        return updated;
     }
 
     public Site site(UUID id) {
@@ -69,7 +104,9 @@ public class SiteService {
     @Transactional
     public void delete(UUID id) {
         Site s = site(id);
-        access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
+        if (systemAdmin.isSystemAdmin())
+            throw new ControlPlaneException(409, "SITE_DELETE_CONFIRMATION_REQUIRED", "Use the system administration deletion endpoint");
+        requireSiteAdmin(s);
         heatmapFileCleanup.queueSite(id);
         s.delete();
     }
@@ -77,7 +114,7 @@ public class SiteService {
     @Transactional
     public SiteAllowedDomain addDomain(UUID site, String host, boolean subs, boolean enabled) {
         Site s = site(site);
-        access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
+        requireSiteAdmin(s);
         String normalized = normalize(host);
         if (SiteAllowedDomain.count("site.id=?1 and host=?2", site, normalized) > 0)
             throw new ControlPlaneException(409, "DOMAIN_EXISTS", "Domain already exists");
@@ -89,12 +126,13 @@ public class SiteService {
         d.enabled = enabled;
         d.createdAt = Instant.now();
         d.persist();
+        if (systemAdmin.isSystemAdmin()) adminAudit.record(access.userId(), null, site, "ADD_SITE_DOMAIN");
         return d;
     }
 
     public List<SiteAllowedDomain> domains(UUID site) {
         Site s = site(site);
-        access.member(s.organization.id);
+        if (!systemAdmin.isSystemAdmin()) access.member(s.organization.id);
         return SiteAllowedDomain.list("site.id", site);
     }
 
@@ -106,21 +144,23 @@ public class SiteService {
     @Transactional
     public SiteAllowedDomain updateDomain(UUID site, UUID id, boolean subs, boolean enabled) {
         Site s = site(site);
-        access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
+        requireSiteAdmin(s);
         SiteAllowedDomain d =
                 SiteAllowedDomain.find("id=?1 and site.id=?2", id, site).firstResult();
         if (d == null) throw new ControlPlaneException(404, "DOMAIN_NOT_FOUND", "Domain not found");
         d.allowSubdomains = subs;
         d.enabled = enabled;
+        if (systemAdmin.isSystemAdmin()) adminAudit.record(access.userId(), null, site, "UPDATE_SITE_DOMAIN");
         return d;
     }
 
     @Transactional
     public void deleteDomain(UUID site, UUID id) {
         Site s = site(site);
-        access.require(s.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
+        requireSiteAdmin(s);
         if (SiteAllowedDomain.delete("id=?1 and site.id=?2", id, site) == 0)
             throw new ControlPlaneException(404, "DOMAIN_NOT_FOUND", "Domain not found");
+        if (systemAdmin.isSystemAdmin()) adminAudit.record(access.userId(), null, site, "DELETE_SITE_DOMAIN");
     }
 
     private Site save(
@@ -174,6 +214,10 @@ public class SiteService {
         s.updatedAt = now;
         if (newSite) s.persist();
         return s;
+    }
+
+    private void requireSiteAdmin(Site site) {
+        if (!systemAdmin.isSystemAdmin()) access.require(site.organization.id, WorkspaceRole.OWNER, WorkspaceRole.ADMIN);
     }
 
     static String normalize(String input) {

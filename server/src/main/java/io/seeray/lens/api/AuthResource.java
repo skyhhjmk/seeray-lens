@@ -1,6 +1,9 @@
 package io.seeray.lens.api;
 
 import io.seeray.lens.application.AuthService;
+import io.seeray.lens.application.WorkspaceAccess;
+import io.quarkus.security.Authenticated;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
@@ -10,9 +13,11 @@ import jakarta.ws.rs.core.*;
 @Produces(MediaType.APPLICATION_JSON)
 public class AuthResource {
     private final AuthService auth;
+    private final WorkspaceAccess access;
 
-    public AuthResource(AuthService auth) {
+    public AuthResource(AuthService auth, WorkspaceAccess access) {
         this.auth = auth;
+        this.access = access;
     }
 
     @POST
@@ -46,6 +51,22 @@ public class AuthResource {
         return Response.noContent().build();
     }
 
+    @GET
+    @Path("/me")
+    @Authenticated
+    public AuthService.CurrentUser me() {
+        return auth.currentUser(access.userId());
+    }
+
+    @POST
+    @Path("/change-password")
+    @Authenticated
+    public TokenResponse changePassword(@Valid ChangePasswordRequest request) {
+        if (request == null) throw new io.seeray.lens.domain.common.ControlPlaneException(
+                400, "INVALID_PASSWORD", "A new password is required");
+        return tokens(auth.changeTemporaryPassword(access.userId(), request.newPassword()));
+    }
+
     private static TokenResponse tokens(AuthService.Tokens t) {
         return new TokenResponse(t.accessToken(), t.refreshToken());
     }
@@ -64,6 +85,8 @@ public class AuthResource {
     public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}
 
     public record RefreshRequest(@NotBlank String refreshToken) {}
+
+    public record ChangePasswordRequest(@NotBlank @Size(min = 12, max = 200) String newPassword) {}
 
     public record TokenResponse(String accessToken, String refreshToken) {}
 }

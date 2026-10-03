@@ -8,6 +8,7 @@ import 'core/i18n/app_i18n.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/presentation/login_page.dart';
+import 'features/auth/presentation/temporary_password_page.dart';
 import 'features/workspaces/presentation/workspace_invitation_page.dart';
 import 'features/analytics/presentation/analytics_dashboard_page.dart';
 import 'features/analytics/presentation/analytics_insights_page.dart';
@@ -51,6 +52,7 @@ import 'features/workspaces/presentation/workspace_diagnostics_page.dart';
 import 'features/workspaces/presentation/workspace_branding_page.dart';
 import 'features/workspaces/presentation/workspace_extensions_page.dart';
 import 'features/workspaces/application/workspace_controller.dart';
+import 'features/admin/presentation/system_admin_page.dart';
 
 class SeeRayLensAdminApp extends ConsumerStatefulWidget {
   const SeeRayLensAdminApp({super.key});
@@ -75,6 +77,10 @@ class SeeRayLensAdminApp extends ConsumerStatefulWidget {
         path: '/workspaces',
         builder: (context, state) =>
             const _Authenticated(child: WorkspacePage()),
+      ),
+      GoRoute(
+        path: '/admin',
+        builder: (context, state) => const _Authenticated(child: SystemAdminPage()),
       ),
       GoRoute(
         path: '/sites',
@@ -743,11 +749,13 @@ class _Authenticated extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final phase = ref.watch(authProvider).phase;
+    final auth = ref.watch(authProvider);
+    final phase = auth.phase;
     if (phase == AuthPhase.restoring) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (phase == AuthPhase.authenticated || phase == AuthPhase.refreshing) {
+      if (auth.mustChangePassword) return const TemporaryPasswordPage();
       return child;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => context.go('/login'));

@@ -24,6 +24,15 @@ public class AppUser extends PanacheEntityBase {
     @Column(nullable = false)
     public UserStatus status;
 
+    @Column(name = "is_system_admin", nullable = false)
+    public boolean systemAdmin;
+
+    @Column(name = "auth_version", nullable = false)
+    public long authVersion;
+
+    @Column(name = "must_change_password", nullable = false)
+    public boolean mustChangePassword;
+
     @Column(name = "created_at", nullable = false)
     public Instant createdAt;
 

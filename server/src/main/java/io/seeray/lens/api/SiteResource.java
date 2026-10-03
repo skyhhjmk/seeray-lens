@@ -50,7 +50,7 @@ public class SiteResource {
         return Response.noContent().build();
     }
 
-    static SiteDto dto(Site s) {
+    public static SiteDto dto(Site s) {
         return new SiteDto(
                 s.id,
                 s.organization.id,

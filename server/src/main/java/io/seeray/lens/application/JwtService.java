@@ -21,16 +21,20 @@ public class JwtService {
     @ConfigProperty(name = "seeray.auth.jwt-issuer")
     String issuer;
 
-    public String issue(UUID id, String email) {
+    public String issue(UUID id, long authVersion) {
         long iat = Instant.now().getEpochSecond();
         long exp = iat + lifetime;
         String head = b64("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
-        String payload =
-                b64("{\"sub\":\"" + id + "\",\"iss\":\"" + issuer + "\",\"iat\":" + iat + ",\"exp\":" + exp + "}");
+        String payload = b64("{\"sub\":\"" + id + "\",\"iss\":\"" + issuer + "\",\"av\":"
+                + authVersion + ",\"iat\":" + iat + ",\"exp\":" + exp + "}");
         return head + "." + payload + "." + sign(head + "." + payload);
     }
 
     public UUID verify(String token) {
+        return verifyClaims(token).userId();
+    }
+
+    public Claims verifyClaims(String token) {
         try {
             String[] p = token.split("\\.");
             if (p.length != 3
@@ -41,12 +45,16 @@ public class JwtService {
             long exp = Long.parseLong(json.replaceAll(".*\\\"exp\\\":(\\d+).*", "$1"));
             String sub = json.replaceAll(".*\\\"sub\\\":\\\"([^\\\"]+)\\\".*", "$1");
             String tokenIssuer = json.replaceAll(".*\\\"iss\\\":\\\"([^\\\"]+)\\\".*", "$1");
+            String versionValue = json.replaceAll(".*\\\"av\\\":(\\d+).*", "$1");
+            long authVersion = versionValue.equals(json) ? 0 : Long.parseLong(versionValue);
             if (exp < Instant.now().getEpochSecond() || !issuer.equals(tokenIssuer)) throw bad();
-            return UUID.fromString(sub);
+            return new Claims(UUID.fromString(sub), authVersion);
         } catch (Exception e) {
             throw bad();
         }
     }
+
+    public record Claims(UUID userId, long authVersion) {}
 
     private String sign(String text) {
         try {

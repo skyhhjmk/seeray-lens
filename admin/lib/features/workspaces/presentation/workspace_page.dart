@@ -17,6 +17,12 @@ class WorkspacePage extends ConsumerWidget {
       appBar: AppBar(
         title: Text(context.tr('Workspaces', '工作区')),
         actions: [
+          if (ref.watch(authProvider).isSystemAdmin)
+            TextButton.icon(
+              onPressed: () => context.go('/admin'),
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              label: Text(context.tr('System admin', '系统管理')),
+            ),
           const PageHelpButton(
             englishTitle: 'About workspaces',
             chineseTitle: '工作区是什么？',
